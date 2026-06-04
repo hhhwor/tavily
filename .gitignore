@@ -1,0 +1,29 @@
+# Secrets
+.env
+.env.*
+!.env.example
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# Node
+node_modules/
+
+# Databases
+*.db
+*.sqlite
+*.sqlite3
+
+# Tooling / runtime state — not source
+.claude/
+.claude-flow/
+.swarm/
+.mcp.json
+.ruflo/
+
+# Misc
+*.log
+.DS_Store

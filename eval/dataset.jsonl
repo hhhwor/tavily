@@ -1,0 +1,12 @@
+{"query": "三星堆遗址在哪个省", "type": "factual"}
+{"query": "光合作用的基本过程是什么", "type": "factual"}
+{"query": "2026年人工智能领域有哪些最新进展", "type": "timely"}
+{"query": "最近一届诺贝尔物理学奖授予了哪些研究", "type": "timely"}
+{"query": "Transformer 和 RNN 在长序列建模上的区别", "type": "multihop"}
+{"query": "RAG 检索增强生成和模型微调各自的优缺点", "type": "multihop"}
+{"query": "向量数据库 HNSW 索引的原理", "type": "longtail"}
+{"query": "FlashRank 重排序是怎么工作的", "type": "longtail"}
+{"query": "什么是 Mixture of Experts 架构", "type": "mixed"}
+{"query": "LangChain 的 agent 是如何调用工具的", "type": "mixed"}
+{"query": "如何评估搜索引擎的检索质量", "type": "howto"}
+{"query": "TC3-HMAC-SHA256 签名算法的步骤", "type": "howto"}
