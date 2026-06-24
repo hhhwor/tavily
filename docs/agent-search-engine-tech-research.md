@@ -40,7 +40,7 @@ POST /search {query, top_k}
       │  两源均直接返回正文摘要 → L2 抓取层省略
       ▼
  跨源处理
-   ├─ 重排开启(默认):dedup(URL 归一化去重) → BGE-Reranker-v2-m3 cross-encoder 打分
+   ├─ 重排开启(默认):dedup(URL 归一化去重) → 文档分块(chunk) → 逐块 BGE 打分 → max-pooling → sigmoid 归一化 → 阈值过滤
    └─ 重排关闭:RRF 融合(Σ 1/(k+rank),与来源分数无关,避免跨源失真)
       │
       ▼
@@ -59,11 +59,13 @@ src/
     tencent.py           # 腾讯 SearchPro(TC3-HMAC-SHA256 签名,纯标准库)✅
     baidu.py             # 百度千帆 AI 搜索(Bearer + 72 字符查询裁剪)✅
   pipeline/
-    dedup.py             # URL 归一化跨源去重
-    fusion.py            # RRF 多源融合(provider_rank)
-    rerank.py            # BGEReranker(默认)/ FlashRankReranker / NoOp 兜底
+    chunk.py               # L3 文档分块:段落→句子→字符三级拆分,合并短段落+重叠
+    dedup.py               # URL 归一化跨源去重
+    fusion.py              # RRF 多源融合(provider_rank)
+    rerank.py              # 段落级重排:BGE/FlashRank(逐chunk打分→max-pooling→sigmoid→阈值过滤) + NoOp 兜底
   engine.py              # 编排:多源并发→去重/融合→重排→TopK
-  api.py                 # FastAPI:POST /search, GET /health
+  api.py                 # FastAPI:GET /(网页) · POST /search · GET /health
+  static/index.html      # 网页搜索界面(单文件,无构建依赖)
 eval/                    # IR 评测体系(见 0.4)
 requirements.txt         # fastapi/uvicorn/pydantic/requests/flashrank/sentence-transformers/anthropic
 .venv/                   # 装在 /data(根分区仅 2.8G,torch 等勿装根)
@@ -73,12 +75,12 @@ requirements.txt         # fastapi/uvicorn/pydantic/requests/flashrank/sentence-
 
 | 层 | 实际选型 | 说明 |
 |----|---------|------|
-| API | **FastAPI REST**(`/search`, `/health`) | MCP 暂未做 |
+| API | **FastAPI REST**(`/search`, `/health`)+ **网页端**(`/`) | MCP 暂未做 |
 | 查询理解 L0 | **规则版**(规范化 + 时效识别 + 输入校验)✅ | 时效接入两源原生过滤;LLM 改写/子查询拆分待后续 |
 | 搜索源 L1 | **腾讯 SearchPro + 百度千帆 AI 搜索** | 均已验证;中文覆盖好、自带正文 |
 | 抓取 L2 | **省略** | 两源直接返回正文摘要 |
-| 去重 L3 | URL 归一化去重 / RRF 融合 | |
-| 重排 L4 | **BGE-Reranker-v2-m3**(默认,GPU 自动) | 评测最优;CPU 慢但生产用 GPU |
+| 去重 L3 | URL 归一化去重 / RRF 融合 / **文档分块(chunk)** ✅ | chunk 供段落级重排使用 |
+| 重排 L4 | **SiliconFlow API (BGE-v2-m3)**(默认,免费) / 本地 BGE / FlashRank | 段落级重排:逐 chunk 打分→max-pooling→sigmoid→阈值过滤 |
 | 合成 L5 | 未做 | 留 hook |
 | 缓存/安全/可观测 | 未做 | 后续 |
 
@@ -86,21 +88,48 @@ requirements.txt         # fastapi/uvicorn/pydantic/requests/flashrank/sentence-
 ```bash
 cd /data/tavily
 .venv/bin/python -m src.engine "你的问题"                       # CLI
-.venv/bin/uvicorn src.api:app --host 0.0.0.0 --port 8000        # 服务
+.venv/bin/uvicorn src.api:app --host 0.0.0.0 --port 8000        # 服务(REST + 网页)
 curl -X POST localhost:8000/search -d '{"query":"...","top_k":5}' -H 'Content-Type: application/json'
 ```
 
-### 0.4 评测结果(IR,12 中文查询,Claude LLM-as-judge,k=10)
+**网页端**:服务启动后,`GET /` 返回一个单文件搜索界面([src/static/index.html](../src/static/index.html))——搜索框 + 结果卡片(标题/重排分/正文/来源标签)、改写与时效标识、耗时元信息。
 
-| 配置 | NDCG@10 | Recall@10 | P@10 | MRR | 重排延迟(CPU) |
-|------|---------|-----------|------|-----|--------------|
-| 腾讯单源 | 0.885 | 0.499 | 0.925 | 1.000 | 0 |
-| 百度单源 | 0.816 | 0.522 | 0.950 | 0.903 | 0 |
-| 双源 + RRF | 0.845 | 0.504 | 0.925 | 1.000 | 0 |
-| **双源 + BGE(生产默认)** | **0.948** | **0.546** | **0.992** | **1.000** | ~35s |
-| 双源 + FlashRank(已弃用) | 0.854 | 0.528 | 0.967 | 0.958 | ~10s |
+**从本地访问网页(SSH 隧道)**:EC2 通常无公网 IP,用 SSH 端口转发即可,无需动安全组、不暴露公网。
 
-**结论**:① BGE-Reranker-v2-m3 显著优于 FlashRank MultiBERT(后者对中文分数饱和,已弃用);② 多源价值需配强重排才释放(纯 RRF 会被弱源稀释);③ BGE 在 CPU 上 35s/查询,**生产用 GPU 后非问题**(项目已确认 GPU 部署)。评测体系见 [eval/](../eval/),可一条命令复现对照。
+```bash
+# 1) 服务端启动(保持运行;或 nohup 后台)
+cd /data/tavily && .venv/bin/uvicorn src.api:app --host 0.0.0.0 --port 8000
+
+# 2) 本地电脑开隧道:本地 8000 → EC2 的 8000
+ssh -i <密钥.pem> -N -L 8000:localhost:8000 ec2-user@<EC2地址>
+#   -L 本地端口:目标:目标端口   -N 只转发不开 shell
+
+# 3) 本地浏览器打开(页面同源调用 /search,一并走通)
+#    http://localhost:8000/
+```
+关掉隧道(Ctrl+C)即断开。同 VPC 内的其它机器可直接访问内网 `http://<内网IP>:8000/`(需安全组放行 8000)。
+> ⚠️ 当前 `/search` 无鉴权,**不要**直接绑 Elastic IP 裸露公网;需对外请先加 token 鉴权。
+
+### 0.4 评测结果(IR,30 中文/英文查询,Claude LLM-as-judge,k=10)
+
+> 评测集已扩到 30 条(8 类:事实/时效/多跳/长尾/混合/how-to/口语化/英文/领域)。下表为三源 + SiliconFlow API 重排的最新对照。
+
+| 配置 | NDCG@10 | Recall@10 | P@10 | MRR | 重排延迟 |
+|------|---------|-----------|------|-----|---------|
+| 腾讯单源 | 0.844 | 0.381 | 0.880 | 0.983 | 0 |
+| 百度单源 | 0.753 | 0.399 | 0.900 | 0.936 | 0 |
+| SerpAPI 单源 | 0.482 | 0.241 | 0.633 | 0.704 | 0 |
+| 三源 + RRF | 0.774 | 0.394 | 0.880 | 0.983 | 0 |
+| **三源 + SF 重排(生产默认)** | **0.906** | **0.442** | **0.963** | **0.983** | ~2.7s |
+| 三源 + SF + 信号融合 | 0.896 | 0.442 | 0.963 | 0.983 | ~2.7s |
+
+**结论**:① SiliconFlow API(BGE-v2-m3)重排相比纯 RRF **+0.13 NDCG**,是核心质量杠杆,且 API 化后 ~2.7s/查询、零 GPU;② **信号融合对通用查询是负优化**(0.896 < 0.906)—— 新鲜度信号误伤了事实类查询的权威老页面(百科等),已默认关闭,仅时效场景手动开;③ SerpAPI 单源弱(0.482)但三源聚合后 Recall 仍升,补充了英文/全球覆盖。评测体系见 [eval/](../eval/),可一条命令���现对照。
+
+> 历史(12 条评测集):双源 + BGE 本地 NDCG 0.948。注:30 条评测集更难更多样,数值不可与 12 条直接比。
+
+### 0.4.1 关键评测教训
+
+**信号融合的负优化是扩评测集才发现的** —— 12 条时人工抽检看着"时效查询新闻排前面了"很合理,但 30 条全量 A/B 才暴露它整体拉低 NDCG。印证文档反复强调的:**每项改动都要在评测集上量化,不凭感觉**。
 
 ### 0.5 与调研的差异(及理由)
 
@@ -108,7 +137,7 @@ curl -X POST localhost:8000/search -d '{"query":"...","top_k":5}' -H 'Content-Ty
 |---------|---------|------|
 | Brave 作主搜索源 | 腾讯 + 百度 | Brave 免费层已取消(需绑卡)且中文/境内访问弱;腾讯+百度免新成本、中文强、已验证 |
 | Trafilatura/Crawl4AI 抓正文(L2) | 省略 | 腾讯/百度接口直接返回正文摘要,L2 多余 |
-| 重排起步可选 | BGE 设为默认且必开 | 评测证明 +0.06 NDCG / P@10 0.992,GPU 下零延迟代价 |
+| 重排起步可选 | SiliconFlow API(BGE-v2-m3)为默认,免费零 GPU 依赖;可切回本地 BGE | 评测证明质量持平( NDCG 0.946 vs 0.944),延迟降 19 倍 |
 | Redis/firewall/MCP | 未做 | MVP 聚焦检索闭环,列为后续 |
 
 ### 0.6 L3 / L4 优化 TODO
@@ -117,17 +146,17 @@ curl -X POST localhost:8000/search -d '{"query":"...","top_k":5}' -H 'Content-Ty
 
 **L3(清洗 / 分块 / 去重)**
 
-当前仅做「跨源 URL 归一化去重」([src/pipeline/dedup.py](../src/pipeline/dedup.py));去噪/标准化因来源已返回干净正文而无需做。缺口:
+当前:跨源 URL 归一化去重 + 文档分块([src/pipeline/chunk.py](../src/pipeline/chunk.py))。
 
-- [ ] 🔴 **文档分块(chunk)** —— 把正文切成段落/chunk。这是解锁 L4 段落级重排的前提(见下)。
+- [x] 🔴 **文档分块(chunk)** ✅ —— 段落→句子→字符三级拆分,合并短段落+重叠。chunk_max_chars=400,overlap=50 可配。
 - [ ] 🟡 **近重复去重** —— 当前只去精确 URL;转载/聚合页(不同 URL、内容几乎相同)仍占多个结果位。用内容指纹(SimHash/MinHash)或 MMR 去近重复,提升多样性。
 
 **L4(重排)**
 
-当前:BGE-Reranker-v2-m3 对每个去重候选打分→排序→取 top_k([src/pipeline/rerank.py](../src/pipeline/rerank.py))。
+当前:段落级重排([src/pipeline/rerank.py](../src/pipeline/rerank.py))——逐 chunk 打分→max-pooling→sigmoid 归一化→阈值过滤。
 
-- [ ] 🔴 **段落级重排,替代「前 2000 字符硬截断」** —— ⚠️ 当前 `text_for_rerank()[:2000]` 有隐藏问题:BGE `max_length=512 token`,2000 中文字符远超 512 token,**模型实际只看了文档开头**,中后部相关段落被忽略。正解:切 chunk 后逐块打分、取文档最高分(max-pooling)。依赖 L3 分块。
-- [ ] 🔴 **相关性阈值过滤** —— 现在无脑返回 top_k,哪怕只有少数真相关也凑满 k。加 `rerank_score` 阈值(sigmoid 归一化到 0–1),低分丢弃,保持 agent 上下文纯净(precision 优先)。
+- [x] 🔴 **段落级重排,替代「前 2000 字符硬截断」** ✅ —— 文档切 chunk 后逐块与 query 组 pair 交给 cross-encoder 打分,每文档取 chunk 最高分(max-pooling)。彻底解决 BGE 512 token 上限 vs 2000 字符截断的问题。
+- [x] 🔴 **相关性阈值过滤** ✅ —— sigmoid 归一化到 0–1,低于 RERANK_THRESHOLD(默认 0.3)的结果被丢弃,保持 agent 上下文纯净。
 - [ ] 🟡 **辅助信号融合** —— 排序不只看 BGE 文本分,线性融合新鲜度(用 L0 的 `recency`/`time_sensitive`)、来源原始排名、站点权威度。时效查询给新文档加权。
 - [ ] 🟡 **MMR 多样性** —— rerank 后去近重复、提升结果多样性(与 L3 近重复去重呼应)。
 - [ ] 🟡 **混合召回再重排** —— 候选量大时先 BM25/dense + RRF 粗筛 top-N 再交 cross-encoder(当前候选 ~20,暂不急)。
@@ -137,7 +166,7 @@ curl -X POST localhost:8000/search -d '{"query":"...","top_k":5}' -H 'Content-Ty
 - [ ] 🟢 **rerank 分数缓存** —— `(query, url) → score` 短 TTL 缓存,重复查询省算力。
 - [ ] 🟢 **超时降级** —— rerank 超时回退 RRF 顺序,保证可用性。
 
-> 推荐落地顺序:先 **L3 分块 → L4 段落级重排(#1)+ 阈值过滤(#2)**,这是一条连贯且收益最高的质量提升链。
+> ✅ **L3 分块 → L4 段落级重排 + 阈值过滤** 已落地。下一步建议:扩评测集 + 人工抽检 judge 一致性,验证质量提升。
 
 ---
 

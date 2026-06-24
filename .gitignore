@@ -8,6 +8,7 @@ __pycache__/
 *.pyc
 .venv/
 venv/
+.venv311/
 
 # Node
 node_modules/

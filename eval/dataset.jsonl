@@ -1,12 +1,54 @@
 {"query": "三星堆遗址在哪个省", "type": "factual"}
 {"query": "光合作用的基本过程是什么", "type": "factual"}
+{"query": "珠穆朗玛峰的海拔高度是多少", "type": "factual"}
+{"query": "中国四大发明分别是什么", "type": "factual"}
 {"query": "2026年人工智能领域有哪些最新进展", "type": "timely"}
 {"query": "最近一届诺贝尔物理学奖授予了哪些研究", "type": "timely"}
+{"query": "今天A股大盘行情怎么样", "type": "timely"}
+{"query": "本周国际上发生了哪些重大新闻", "type": "timely"}
+{"query": "最新的国产大模型有哪些值得关注", "type": "timely"}
 {"query": "Transformer 和 RNN 在长序列建模上的区别", "type": "multihop"}
 {"query": "RAG 检索增强生成和模型微调各自的优缺点", "type": "multihop"}
+{"query": "量子计算相比经典计算在哪些问题上有优势", "type": "multihop"}
 {"query": "向量数据库 HNSW 索引的原理", "type": "longtail"}
 {"query": "FlashRank 重排序是怎么工作的", "type": "longtail"}
+{"query": "BGE-Reranker-v2-m3 模型的特点", "type": "longtail"}
 {"query": "什么是 Mixture of Experts 架构", "type": "mixed"}
 {"query": "LangChain 的 agent 是如何调用工具的", "type": "mixed"}
 {"query": "如何评估搜索引擎的检索质量", "type": "howto"}
 {"query": "TC3-HMAC-SHA256 签名算法的步骤", "type": "howto"}
+{"query": "怎么用 Python 读取一个 JSON 文件", "type": "howto"}
+{"query": "我想知道最近AI圈有什么大新闻", "type": "colloquial"}
+{"query": "请问一下光合作用到底是怎么回事啊", "type": "colloquial"}
+{"query": "帮我查一下北京有什么好吃的地方", "type": "colloquial"}
+{"query": "谁能告诉我三星堆到底在哪个地方", "type": "colloquial"}
+{"query": "what are the latest breakthroughs in large language models", "type": "english"}
+{"query": "how does the attention mechanism work in transformers", "type": "english"}
+{"query": "best practices for retrieval augmented generation", "type": "english"}
+{"query": "区块链技术在供应链管理中的应用", "type": "domain"}
+{"query": "新能源汽车的续航里程如何提升", "type": "domain"}
+{"query": "中医针灸治疗失眠的原理和效果", "type": "domain"}
+{"query": "钠离子电池正极材料专利", "type": "patent"}
+{"query": "固态电解质锂电池专利", "type": "patent"}
+{"query": "折叠屏铰链结构专利", "type": "patent"}
+{"query": "氢燃料电池双极板专利", "type": "patent"}
+{"query": "无人机自主避障 专利", "type": "patent"}
+{"query": "直播电商虚拟主播 专利", "type": "patent"}
+{"query": "perovskite solar cell encapsulation patent", "type": "patent"}
+{"query": "mRNA vaccine lipid nanoparticle patent", "type": "patent"}
+{"query": "CRISPR gene editing patent", "type": "patent"}
+{"query": "solid-state battery sulfide electrolyte patent", "type": "patent"}
+{"query": "fast charging protocol patent", "type": "patent"}
+{"query": "autonomous driving lidar patent", "type": "patent"}
+{"query": "生成对抗网络 GAN 综述", "type": "academic"}
+{"query": "图神经网络 推荐系统 论文", "type": "academic"}
+{"query": "Transformer 注意力机制 论文", "type": "academic"}
+{"query": "深度强化学习 综述", "type": "academic"}
+{"query": "扩散模型 图像生成 论文", "type": "academic"}
+{"query": "CRISPR 基因编辑 文献", "type": "academic"}
+{"query": "graph neural networks molecular property prediction paper", "type": "academic"}
+{"query": "contrastive learning representation survey", "type": "academic"}
+{"query": "self-supervised learning survey paper", "type": "academic"}
+{"query": "convolutional neural network image classification paper", "type": "academic"}
+{"query": "BERT pre-training language understanding paper", "type": "academic"}
+{"query": "variational autoencoder generative model paper", "type": "academic"}

@@ -1,0 +1,407 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Agent Search Engine</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    :root {
+      --bg: #0f1115; --panel: #181b22; --border: #272b34;
+      --text: #e6e8eb; --muted: #8b919c; --accent: #4f8cff; --accent-dim: #2a3a5c;
+      --good: #3fb950; --tag: #21262d;
+    }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC",
+                   "Microsoft YaHei", Roboto, Helvetica, Arial, sans-serif;
+      background: var(--bg); color: var(--text); line-height: 1.6;
+      min-height: 100vh; padding: 32px 16px;
+    }
+    .wrap { max-width: 820px; margin: 0 auto; }
+    header { text-align: center; margin-bottom: 28px; }
+    header h1 { font-size: 26px; font-weight: 600; letter-spacing: .5px; }
+    header p { color: var(--muted); font-size: 13px; margin-top: 6px; }
+    .searchbar {
+      display: flex; gap: 10px; margin-bottom: 18px;
+    }
+    .searchbar input {
+      flex: 1; background: var(--panel); border: 1px solid var(--border);
+      border-radius: 10px; padding: 13px 16px; color: var(--text); font-size: 15px;
+      outline: none; transition: border-color .15s;
+    }
+    .searchbar input:focus { border-color: var(--accent); }
+    .searchbar button {
+      background: var(--accent); color: #fff; border: none; border-radius: 10px;
+      padding: 0 22px; font-size: 15px; font-weight: 500; cursor: pointer;
+      transition: opacity .15s; white-space: nowrap;
+    }
+    .searchbar button:hover { opacity: .9; }
+    .searchbar button:disabled { opacity: .5; cursor: not-allowed; }
+    .opts { display: flex; align-items: center; gap: 8px; margin-bottom: 10px;
+            color: var(--muted); font-size: 13px; }
+    .opts input { width: 60px; background: var(--panel); border: 1px solid var(--border);
+                  border-radius: 6px; padding: 5px 8px; color: var(--text); }
+    /* 高级选项面板 */
+    .adv { margin-bottom: 24px; border: 1px solid var(--border); border-radius: 10px;
+           background: var(--panel); overflow: hidden; }
+    .adv > summary { cursor: pointer; padding: 10px 14px; font-size: 13px; color: var(--muted);
+                     list-style: none; user-select: none; }
+    .adv > summary::-webkit-details-marker { display: none; }
+    .adv > summary::before { content: '⚙ 高级选项 ▾'; }
+    .adv[open] > summary::before { content: '⚙ 高级选项 ▴'; }
+    .adv-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+                gap: 12px 16px; padding: 4px 14px 16px; }
+    .adv-grid label { display: flex; flex-direction: column; gap: 4px; font-size: 12px;
+                      color: var(--muted); }
+    .adv-grid select, .adv-grid input {
+      background: var(--bg); border: 1px solid var(--border); border-radius: 6px;
+      padding: 6px 8px; color: var(--text); font-size: 13px; outline: none; width: 100%;
+    }
+    .adv-grid select:focus, .adv-grid input:focus { border-color: var(--accent); }
+    .section-title { font-size: 13px; color: var(--muted); margin: 22px 0 12px;
+                     padding-bottom: 6px; border-bottom: 1px solid var(--border);
+                     display: flex; align-items: center; gap: 8px; }
+    .section-title b { color: var(--text); font-size: 14px; }
+    .paper .top { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; }
+    .paper .authors { color: var(--muted); font-size: 12px; margin: 4px 0; }
+    .paper .meta-line { color: var(--muted); font-size: 12px; margin: 2px 0 8px;
+                        display: flex; flex-wrap: wrap; gap: 4px 12px; }
+    .paper .meta-line .oa { color: var(--good); }
+    .meta { color: var(--muted); font-size: 13px; margin-bottom: 16px;
+            display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: center; }
+    .meta .pill { background: var(--tag); border: 1px solid var(--border);
+                  border-radius: 20px; padding: 3px 11px; font-size: 12px; }
+    .meta .pill b { color: var(--text); font-weight: 600; }
+    .result {
+      background: var(--panel); border: 1px solid var(--border); border-radius: 12px;
+      padding: 16px 18px; margin-bottom: 14px; transition: border-color .15s;
+    }
+    .result:hover { border-color: var(--accent-dim); }
+    .result .top { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; }
+    .result a.title { color: var(--accent); font-size: 16px; font-weight: 600;
+                      text-decoration: none; }
+    .result a.title:hover { text-decoration: underline; }
+    .result .score { color: var(--good); font-size: 12px; font-weight: 600;
+                     white-space: nowrap; font-variant-numeric: tabular-nums; }
+    .result .url { color: var(--muted); font-size: 12px; margin: 4px 0 8px;
+                   word-break: break-all; }
+    .result .content { font-size: 14px; color: #c4c9d1; max-height: 7.5em;
+                       overflow: hidden; position: relative; }
+    .result .content.expanded { max-height: none; }
+    .result .tags { margin-top: 10px; display: flex; gap: 8px; flex-wrap: wrap;
+                    font-size: 11px; color: var(--muted); }
+    .result .tags span { background: var(--tag); border-radius: 5px; padding: 2px 8px; }
+    .toggle { color: var(--accent); font-size: 12px; cursor: pointer; margin-top: 6px;
+              display: inline-block; }
+    .status { text-align: center; color: var(--muted); padding: 40px 0; font-size: 14px; }
+    .err { color: #f85149; }
+    .spinner { display: inline-block; width: 16px; height: 16px; border: 2px solid var(--border);
+               border-top-color: var(--accent); border-radius: 50%; animation: spin .7s linear infinite;
+               vertical-align: middle; margin-right: 8px; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <header>
+      <h1>🔍 Agent Search Engine</h1>
+      <p>面向 LLM 的 Web 检索 · 多源聚合 + 重排</p>
+    </header>
+
+    <div class="searchbar">
+      <input id="q" type="text" placeholder="输入你的问题，例如：BGE-Reranker-v2-m3 模型的特点" autofocus>
+      <button id="btn" onclick="doSearch()">搜索</button>
+    </div>
+    <div class="opts">
+      <label>返回条数 <input id="topk" type="number" value="10" min="1" max="50"></label>
+    </div>
+    <details class="adv">
+      <summary></summary>
+      <div class="adv-grid">
+        <label>重排
+          <select id="rerank_enabled">
+            <option value="">默认</option>
+            <option value="true">开（cross-encoder）</option>
+            <option value="false">关（RRF 融合）</option>
+          </select>
+        </label>
+        <label>重排后端
+          <select id="rerank_backend">
+            <option value="">默认</option>
+            <option value="siliconflow">siliconflow（云端 API）</option>
+            <option value="bge">bge（本地）</option>
+            <option value="flashrank">flashrank（本地轻量）</option>
+            <option value="none">none（不重排）</option>
+          </select>
+        </label>
+        <label>重排模型
+          <input id="rerank_model" type="text" list="model_list" placeholder="默认 BAAI/bge-reranker-v2-m3">
+          <datalist id="model_list">
+            <option value="BAAI/bge-reranker-v2-m3"></option>
+            <option value="BAAI/bge-reranker-base"></option>
+            <option value="Pro/BAAI/bge-reranker-v2-m3"></option>
+            <option value="netease-youdao/bce-reranker-base_v1"></option>
+          </datalist>
+        </label>
+        <label>相关性阈值
+          <input id="rerank_threshold" type="number" step="0.05" min="0" max="1" placeholder="默认 0.3">
+        </label>
+        <label>学术检索
+          <select id="include_academic">
+            <option value="">自动识别</option>
+            <option value="true">强制开（OpenAlex）</option>
+            <option value="false">强制关</option>
+          </select>
+        </label>
+        <label>专利检索
+          <select id="include_patent">
+            <option value="">自动识别</option>
+            <option value="true">强制开（ES）</option>
+            <option value="false">强制关</option>
+          </select>
+        </label>
+        <label>查询改写
+          <select id="rewrite_enabled">
+            <option value="">默认</option>
+            <option value="true">开（LLM）</option>
+            <option value="false">关</option>
+          </select>
+        </label>
+        <label>信号融合
+          <select id="fusion_enabled">
+            <option value="">默认</option>
+            <option value="true">开（新鲜度/权威度）</option>
+            <option value="false">关</option>
+          </select>
+        </label>
+        <label>API Token（服务端开启鉴权时必填）
+          <input id="api_token" type="password" placeholder="Bearer token，本地保存于浏览器">
+        </label>
+      </div>
+    </details>
+
+    <div id="meta" class="meta" style="display:none"></div>
+    <div id="results"></div>
+    <div id="academic"></div>
+    <div id="patent"></div>
+    <div id="status" class="status"></div>
+  </div>
+
+  <script>
+    const $ = (id) => document.getElementById(id);
+
+    $('q').addEventListener('keydown', (e) => { if (e.key === 'Enter') doSearch(); });
+
+    // 鉴权 token:页面加载时从 localStorage 恢复,搜索时持久化
+    $('api_token').value = localStorage.getItem('api_token') || '';
+
+    function esc(s) {
+      return (s || '').replace(/[&<>"']/g, (c) => (
+        { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]
+      ));
+    }
+
+    // 三态下拉:'' → undefined(用服务端默认), 'true'/'false' → 布尔
+    function triBool(id) {
+      const v = $(id).value;
+      return v === '' ? undefined : v === 'true';
+    }
+    // 文本/数值:空 → undefined
+    function optStr(id) {
+      const v = $(id).value.trim();
+      return v === '' ? undefined : v;
+    }
+    function optNum(id) {
+      const v = $(id).value.trim();
+      return v === '' ? undefined : parseFloat(v);
+    }
+
+    function buildBody() {
+      const body = { query: $('q').value.trim(), top_k: parseInt($('topk').value) || 10 };
+      const opt = {
+        include_academic: triBool('include_academic'),
+        include_patent: triBool('include_patent'),
+        rerank_enabled: triBool('rerank_enabled'),
+        rerank_backend: optStr('rerank_backend'),
+        rerank_model: optStr('rerank_model'),
+        rerank_threshold: optNum('rerank_threshold'),
+        fusion_enabled: triBool('fusion_enabled'),
+        rewrite_enabled: triBool('rewrite_enabled'),
+      };
+      // 只带上用户实际设置的参数(其余用服务端默认)
+      for (const [k, v] of Object.entries(opt)) if (v !== undefined) body[k] = v;
+      return body;
+    }
+
+    async function doSearch() {
+      const query = $('q').value.trim();
+      if (!query) return;
+
+      $('btn').disabled = true;
+      $('meta').style.display = 'none';
+      $('results').innerHTML = '';
+      $('academic').innerHTML = '';
+      $('patent').innerHTML = '';
+      $('status').innerHTML = '<span class="spinner"></span>检索中…';
+
+      const t0 = performance.now();
+      try {
+        const token = $('api_token').value.trim();
+        if (token) localStorage.setItem('api_token', token); else localStorage.removeItem('api_token');
+        const headers = { 'Content-Type': 'application/json' };
+        if (token) headers['Authorization'] = 'Bearer ' + token;
+        const resp = await fetch('/search', {
+          method: 'POST',
+          headers,
+          body: JSON.stringify(buildBody()),
+        });
+        if (resp.status === 401)
+          throw new Error('鉴权失败（401）：请在「高级选项 → API Token」填入有效 token。');
+        if (!resp.ok) throw new Error('HTTP ' + resp.status + ': ' + (await resp.text()));
+        const data = await resp.json();
+        renderMeta(data, Math.round(performance.now() - t0));
+        renderResults(data.results || []);
+        renderAcademic(data.academic_results || []);
+        renderPatent(data.patent_results || []);
+        if (!(data.results || []).length && !(data.academic_results || []).length
+            && !(data.patent_results || []).length)
+          $('status').innerHTML = '没有找到结果。';
+        else
+          $('status').innerHTML = '';
+      } catch (err) {
+        $('status').innerHTML = '<span class="err">出错了：' + esc(err.message) + '</span>';
+      } finally {
+        $('btn').disabled = false;
+      }
+    }
+
+    function renderMeta(d, clientMs) {
+      const pills = [];
+      pills.push(`<span class="pill">命中 <b>${d.count}</b> 条</span>`);
+      if ((d.academic_results || []).length)
+        pills.push(`<span class="pill">论文 <b>${d.academic_results.length}</b> 篇</span>`);
+      if ((d.patent_results || []).length)
+        pills.push(`<span class="pill">专利 <b>${d.patent_results.length}</b> 件</span>`);
+      pills.push(`<span class="pill">来源 <b>${esc((d.providers_used || []).join(' · '))}</b></span>`);
+      pills.push(`<span class="pill">重排 <b>${esc(d.reranker)}</b></span>`);
+      pills.push(`<span class="pill">耗时 <b>${d.elapsed_ms ?? clientMs}ms</b></span>`);
+      if (d.rewritten_query && d.rewritten_query !== d.normalized_query)
+        pills.push(`<span class="pill">改写 <b>${esc(d.rewritten_query)}</b></span>`);
+      if (d.time_sensitive)
+        pills.push(`<span class="pill">时效 <b>${esc(d.recency || 'yes')}</b></span>`);
+      $('meta').innerHTML = pills.join('');
+      $('meta').style.display = 'flex';
+    }
+
+    function renderResults(results) {
+      $('results').innerHTML = results.map((r, i) => {
+        const body = esc(r.content || r.snippet || '');
+        const score = (r.rerank_score != null)
+          ? r.rerank_score.toFixed(3)
+          : (r.score != null ? r.score.toFixed(3) : '');
+        const tags = [];
+        if (r.source) tags.push(`<span>${esc(r.source)}</span>`);
+        if (r.site) tags.push(`<span>${esc(r.site)}</span>`);
+        if (r.date) tags.push(`<span>${esc(r.date)}</span>`);
+        return `
+          <div class="result">
+            <div class="top">
+              <a class="title" href="${esc(r.url)}" target="_blank" rel="noopener">
+                ${i + 1}. ${esc(r.title || r.url)}
+              </a>
+              ${score ? `<span class="score">${score}</span>` : ''}
+            </div>
+            <div class="url">${esc(r.url)}</div>
+            <div class="content" id="c${i}">${body}</div>
+            ${body.length > 280 ? `<span class="toggle" onclick="toggle('c${i}')">展开 ▾</span>` : ''}
+            ${tags.length ? `<div class="tags">${tags.join('')}</div>` : ''}
+          </div>`;
+      }).join('');
+    }
+
+    function renderAcademic(papers) {
+      if (!papers.length) { $('academic').innerHTML = ''; return; }
+      const cards = papers.map((p, i) => {
+        const body = esc(p.content || p.snippet || '');
+        const score = (p.rerank_score != null)
+          ? p.rerank_score.toFixed(3)
+          : (p.score != null ? p.score.toFixed(3) : '');
+        const authors = (p.authors || []).slice(0, 4).join(', ')
+          + ((p.authors || []).length > 4 ? ' 等' : '');
+        const line = [];
+        if (p.year) line.push(`${p.year}`);
+        if (p.venue) line.push(esc(p.venue));
+        if (p.citations != null) line.push(`被引 ${p.citations}`);
+        if (p.topic) line.push(esc(p.topic));
+        if (p.is_oa) line.push('<span class="oa">● 开放获取</span>');
+        const aid = `a${i}`;
+        return `
+          <div class="result paper">
+            <div class="top">
+              <a class="title" href="${esc(p.oa_url || p.url)}" target="_blank" rel="noopener">
+                ${i + 1}. ${esc(p.title || p.url)}
+              </a>
+              ${score ? `<span class="score">${score}</span>` : ''}
+            </div>
+            ${authors ? `<div class="authors">${esc(authors)}</div>` : ''}
+            <div class="meta-line">${line.join('<span>·</span>')}</div>
+            <div class="content" id="${aid}">${body}</div>
+            ${body.length > 280 ? `<span class="toggle" onclick="toggle('${aid}')">展开 ▾</span>` : ''}
+            ${p.doi ? `<div class="tags"><span>DOI: ${esc(p.doi.replace(/^https?:\/\/(dx\.)?doi\.org\//, ''))}</span></div>` : ''}
+          </div>`;
+      }).join('');
+      $('academic').innerHTML =
+        `<div class="section-title">📄 <b>学术论文</b> · ${papers.length} 篇（OpenAlex）</div>` + cards;
+    }
+
+    function renderPatent(patents) {
+      if (!patents.length) { $('patent').innerHTML = ''; return; }
+      const cards = patents.map((p, i) => {
+        const body = esc(p.content || p.snippet || '');
+        const score = (p.rerank_score != null)
+          ? p.rerank_score.toFixed(3)
+          : (p.score != null ? p.score.toFixed(3) : '');
+        const applicant = (p.applicant || []).slice(0, 3).join('、')
+          + ((p.applicant || []).length > 3 ? ' 等' : '');
+        const inventor = (p.inventor || []).slice(0, 3).join('、')
+          + ((p.inventor || []).length > 3 ? ' 等' : '');
+        const line = [];
+        if (p.country) line.push(esc(p.country));
+        if (p.patent_type) line.push(esc(p.patent_type));
+        if (p.publication_number) line.push(esc(p.publication_number));
+        const cls = p.ipc_main || p.cpc_main;
+        if (cls) line.push('分类 ' + esc(cls));
+        if (p.application_date) line.push('申请 ' + esc(p.application_date));
+        if (p.citation_count) line.push('被引 ' + p.citation_count);
+        const tags = [];
+        if (applicant) tags.push(`<span>申请人: ${esc(applicant)}</span>`);
+        if (inventor) tags.push(`<span>发明人: ${esc(inventor)}</span>`);
+        const pid = `p${i}`;
+        return `
+          <div class="result paper">
+            <div class="top">
+              <a class="title" href="${esc(p.url)}" target="_blank" rel="noopener">
+                ${i + 1}. ${esc(p.title || p.url)}
+              </a>
+              ${score ? `<span class="score">${score}</span>` : ''}
+            </div>
+            <div class="meta-line">${line.join('<span>·</span>')}</div>
+            <div class="content" id="${pid}">${body}</div>
+            ${body.length > 280 ? `<span class="toggle" onclick="toggle('${pid}')">展开 ▾</span>` : ''}
+            ${tags.length ? `<div class="tags">${tags.join('')}</div>` : ''}
+          </div>`;
+      }).join('');
+      $('patent').innerHTML =
+        `<div class="section-title">⚙ <b>专利</b> · ${patents.length} 件（houdutech ES）</div>` + cards;
+    }
+
+    function toggle(id) {
+      const el = $(id);
+      const t = el.nextElementSibling;
+      el.classList.toggle('expanded');
+      if (t && t.classList.contains('toggle'))
+        t.textContent = el.classList.contains('expanded') ? '收起 ▴' : '展开 ▾';
+    }
+  </script>
+</body>
+</html>
