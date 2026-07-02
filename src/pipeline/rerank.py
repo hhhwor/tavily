@@ -18,7 +18,7 @@ from abc import ABC, abstractmethod
 from datetime import datetime, timezone
 from typing import List, Optional, Tuple
 
-from src.models import SearchResult
+from src.models import AcademicResult, SearchResult
 from src.pipeline.chunk import chunk_text
 
 
@@ -173,8 +173,8 @@ class SiliconFlowReranker(Reranker):
     """SiliconFlow (硅基流动) 云端 rerank API。
 
     使用与本地 BGE 相同的模型权重,无需 GPU。
-    API 每次最多 25 个文档,超出自动分批调用。
-    API 返回的 relevance_score 已在 0-1 范围,无需 sigmoid。
+    API 每次最多 25 个文档(passage);超出按文档边界截断,只发一次请求
+    (分批多调会成倍放大重排延迟)。API 返回的 relevance_score 已在 0-1 范围,无需 sigmoid。
     """
 
     name = "siliconflow"
@@ -211,36 +211,47 @@ class SiliconFlowReranker(Reranker):
         if not pairs:
             return results[:top_k]
 
-        # 2) 分批调用 API (每次最多 25 个文档)
+        # 2) 单次调用 API:passage 超过单次上限(25)时按文档边界截断,只发一次请求。
+        #    分批多调会把重排延迟翻倍/三倍(串行 RTT);截断保留靠前文档(provider 原始
+        #    排名更高者)的完整 chunk,被截掉的文档保持默认 0 分、排在末位。
+        if len(pairs) > self._MAX_DOCS_PER_CALL:
+            cut = self._MAX_DOCS_PER_CALL
+            # 回退到文档边界:不在某文档中途切断,避免该文档只有部分 chunk 被打分
+            while cut > 1 and pairs[cut - 1][0] == pairs[cut][0]:
+                cut -= 1
+            dropped_docs = len({di for di, _ in pairs[cut:]})
+            print(
+                f"[rerank] siliconflow: {len(pairs)} passages 超过单次上限 "
+                f"{self._MAX_DOCS_PER_CALL},截断至 {cut} 个(丢弃 {dropped_docs} 篇文档的打分)"
+            )
+            pairs = pairs[:cut]
+
         doc_scores: dict[int, float] = {}
         documents = [t for _, t in pairs]
 
-        for batch_start in range(0, len(documents), self._MAX_DOCS_PER_CALL):
-            batch = documents[batch_start : batch_start + self._MAX_DOCS_PER_CALL]
-            resp = _requests.post(
-                self._url,
-                headers={
-                    "Authorization": f"Bearer {self._api_key}",
-                    "Content-Type": "application/json",
-                },
-                json={
-                    "model": self._model,
-                    "query": query,
-                    "documents": batch,
-                    "top_n": len(batch),
-                    "return_documents": False,
-                },
-                timeout=30,
-            )
-            resp.raise_for_status()
-            data = resp.json()
+        resp = _requests.post(
+            self._url,
+            headers={
+                "Authorization": f"Bearer {self._api_key}",
+                "Content-Type": "application/json",
+            },
+            json={
+                "model": self._model,
+                "query": query,
+                "documents": documents,
+                "top_n": len(documents),
+                "return_documents": False,
+            },
+            timeout=30,
+        )
+        resp.raise_for_status()
+        data = resp.json()
 
-            for item in data.get("results", []):
-                global_idx = batch_start + item["index"]
-                doc_idx = pairs[global_idx][0]
-                s = float(item["relevance_score"])
-                if doc_idx not in doc_scores or s > doc_scores[doc_idx]:
-                    doc_scores[doc_idx] = s
+        for item in data.get("results", []):
+            doc_idx = pairs[item["index"]][0]
+            s = float(item["relevance_score"])
+            if doc_idx not in doc_scores or s > doc_scores[doc_idx]:
+                doc_scores[doc_idx] = s
 
         # 3) 赋值 + 排序 (API 分数已在 0-1 范围,无需 sigmoid)
         for i, r in enumerate(results):
@@ -298,6 +309,13 @@ _DEFAULT_AUTHORITY = {
     "baidu": 0.85,     # 百度自有索引
 }
 
+_RECENT_QUERY_RE = _re.compile(
+    r"\b(latest|recent|newest|state of the art|sota|202\d)\b|最新|最近|近年|近期|202\d"
+)
+_FOUNDATIONAL_QUERY_RE = _re.compile(
+    r"\b(survey|review|benchmark|foundation|foundational|seminal)\b|综述|综述性|基准|经典"
+)
+
 
 class FusionReranker(Reranker):
     """辅助信号融合:在文本相关性基础上融合新鲜度、来源权威度、源内排名。
@@ -353,6 +371,144 @@ class FusionReranker(Reranker):
             )
 
         return sorted(ranked, key=lambda r: r.rerank_score or 0.0, reverse=True)[:top_k]
+
+
+class AcademicReranker(Reranker):
+    """学术专用重排:先做文本相关性,再融合论文元数据。
+
+    目标不是覆盖文本打分,而是利用论文的结构化信号做稳健精排:
+    - citations: 更偏向经典/综述/基础论文
+    - freshness: 在 "latest/recent/最新" 查询下提高新论文
+    - venue: 轻量区分正式 venue 与预印本
+    - OA: 小权重奖励可直接获取全文的结果
+    """
+
+    def __init__(self, inner: Reranker):
+        self._inner = inner
+        self.name = f"academic:{inner.name}"
+
+    @staticmethod
+    def _normalize_list(values: List[Optional[float]], default: float = 0.0) -> List[float]:
+        nums = [float(v) for v in values if v is not None]
+        if not nums:
+            return [default for _ in values]
+        lo, hi = min(nums), max(nums)
+        if math.isclose(lo, hi):
+            flat = 0.5 if hi > 0 else default
+            return [flat if v is not None else default for v in values]
+        return [
+            ((float(v) - lo) / (hi - lo)) if v is not None else default
+            for v in values
+        ]
+
+    @staticmethod
+    def _rank_fallback(n: int) -> List[float]:
+        if n <= 0:
+            return []
+        vals = [1.0 / (1.0 + i) for i in range(n)]
+        lo, hi = vals[-1], vals[0]
+        if math.isclose(lo, hi):
+            return [1.0 for _ in vals]
+        return [(v - lo) / (hi - lo) for v in vals]
+
+    def _base_scores(self, results: List[AcademicResult]) -> List[float]:
+        rerank_scores = [r.rerank_score for r in results]
+        if all(s is not None for s in rerank_scores):
+            return [max(0.0, min(1.0, float(s))) for s in rerank_scores]  # type: ignore[arg-type]
+
+        score_norm = self._normalize_list([r.score for r in results], default=0.0)
+        rank_norm = self._rank_fallback(len(results))
+        if any(r.score is not None for r in results):
+            return [0.8 * s + 0.2 * rk for s, rk in zip(score_norm, rank_norm)]
+        return rank_norm
+
+    @staticmethod
+    def _citation_scores(results: List[AcademicResult]) -> List[float]:
+        return AcademicReranker._normalize_list(
+            [math.log1p(max(0, r.citations)) for r in results], default=0.0
+        )
+
+    @staticmethod
+    def _venue_score(venue: str) -> float:
+        if not venue:
+            return 0.0
+        lower = venue.lower()
+        if "arxiv" in lower or "biorxiv" in lower or "medrxiv" in lower or "ssrn" in lower:
+            return 0.35
+        return 1.0
+
+    def _freshness_score(self, result: AcademicResult, wants_recent: bool) -> float:
+        days_ago = _parse_date_days_ago(result.date)
+        if days_ago is None and result.year:
+            try:
+                dt = datetime(int(result.year), 1, 1, tzinfo=timezone.utc)
+                days_ago = max(0, (datetime.now(timezone.utc) - dt).days)
+            except (TypeError, ValueError):
+                days_ago = None
+        if days_ago is None:
+            return 0.4 if wants_recent else 0.5
+        if wants_recent:
+            # 学术里 "最新" 的时间尺度通常按年看,衰减比 web 更缓。
+            return 1.0 / (1.0 + days_ago / 365.0)
+        return max(0.0, 1.0 - days_ago / (365.0 * 8.0))
+
+    @staticmethod
+    def _oa_score(result: AcademicResult) -> float:
+        if result.oa_pdf_url:
+            return 1.0
+        if result.oa_landing_url or result.is_oa:
+            return 0.7
+        return 0.0
+
+    @staticmethod
+    def _weights(query: str) -> Tuple[float, float, float, float, float]:
+        q = (query or "").lower()
+        wants_recent = bool(_RECENT_QUERY_RE.search(q))
+        wants_foundational = bool(_FOUNDATIONAL_QUERY_RE.search(q))
+        if wants_recent and wants_foundational:
+            return 0.70, 0.13, 0.10, 0.04, 0.03
+        if wants_recent:
+            return 0.72, 0.08, 0.14, 0.04, 0.02
+        if wants_foundational:
+            return 0.70, 0.20, 0.04, 0.04, 0.02
+        return 0.76, 0.12, 0.06, 0.04, 0.02
+
+    def rerank(self, query: str, results: List[SearchResult], top_k: int) -> List[SearchResult]:
+        if not results:
+            return []
+        if not all(isinstance(r, AcademicResult) for r in results):
+            return self._inner.rerank(query, results, top_k)
+
+        ranked = self._inner.rerank(query, results, max(top_k, len(results)))
+        papers = [r for r in ranked if isinstance(r, AcademicResult)]
+        if not papers:
+            return ranked[:top_k]
+
+        wants_recent = bool(_RECENT_QUERY_RE.search((query or "").lower()))
+        w_text, w_citations, w_freshness, w_venue, w_oa = self._weights(query)
+        base_scores = self._base_scores(papers)
+        citation_scores = self._citation_scores(papers)
+        freshness_scores = [self._freshness_score(p, wants_recent) for p in papers]
+        venue_scores = [self._venue_score(p.venue or p.site) for p in papers]
+        oa_scores = [self._oa_score(p) for p in papers]
+
+        for p, text, cites, fresh, venue, oa in zip(
+            papers,
+            base_scores,
+            citation_scores,
+            freshness_scores,
+            venue_scores,
+            oa_scores,
+        ):
+            p.rerank_score = (
+                w_text * text
+                + w_citations * cites
+                + w_freshness * fresh
+                + w_venue * venue
+                + w_oa * oa
+            )
+
+        return sorted(papers, key=lambda r: r.rerank_score or 0.0, reverse=True)[:top_k]
 
 
 def build_reranker(

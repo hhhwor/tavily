@@ -67,6 +67,20 @@
     .paper .meta-line { color: var(--muted); font-size: 12px; margin: 2px 0 8px;
                         display: flex; flex-wrap: wrap; gap: 4px 12px; }
     .paper .meta-line .oa { color: var(--good); }
+    /* OA 开放获取徽章:按 oa_status 着色 */
+    .oa-badge { display: inline-flex; align-items: center; gap: 4px; border-radius: 20px;
+                padding: 1px 9px; font-size: 11px; font-weight: 600; line-height: 1.5;
+                border: 1px solid currentColor; }
+    .oa-badge::before { content: '●'; font-size: 9px; }
+    .oa-badge.gold    { color: #e3b341; }
+    .oa-badge.hybrid  { color: #d29922; }
+    .oa-badge.bronze  { color: #c98b56; }
+    .oa-badge.green   { color: #3fb950; }
+    .oa-badge.diamond { color: #58c4dd; }
+    .oa-badge.closed  { color: var(--muted); border-style: dashed; }
+    .oa-badge.closed::before { content: '○'; }
+    .paper .oa-link { color: var(--good); font-size: 12px; text-decoration: none; }
+    .paper .oa-link:hover { text-decoration: underline; }
     .meta { color: var(--muted); font-size: 13px; margin-bottom: 16px;
             display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: center; }
     .meta .pill { background: var(--tag); border: 1px solid var(--border);
@@ -319,6 +333,20 @@
       }).join('');
     }
 
+    // OA 状态 → 中文标签(用于徽章文字)
+    const OA_LABELS = {
+      gold: 'Gold OA', green: 'Green OA', hybrid: 'Hybrid OA',
+      bronze: 'Bronze OA', diamond: 'Diamond OA', closed: '闭源获取',
+    };
+    function oaBadge(p) {
+      const status = (p.oa_status || '').toLowerCase();
+      // 有明确状态优先用之;否则退化到 is_oa 布尔
+      if (status && OA_LABELS[status])
+        return `<span class="oa-badge ${status}">${OA_LABELS[status]}</span>`;
+      if (p.is_oa) return `<span class="oa-badge gold">开放获取</span>`;
+      return '';
+    }
+
     function renderAcademic(papers) {
       if (!papers.length) { $('academic').innerHTML = ''; return; }
       const cards = papers.map((p, i) => {
@@ -326,6 +354,9 @@
         const score = (p.rerank_score != null)
           ? p.rerank_score.toFixed(3)
           : (p.score != null ? p.score.toFixed(3) : '');
+        const canonicalUrl = p.url || p.oa_landing_url || p.oa_pdf_url || p.oa_url || '';
+        const oaLanding = p.oa_landing_url || p.oa_url || '';
+        const oaPdf = p.oa_pdf_url || '';
         const authors = (p.authors || []).slice(0, 4).join(', ')
           + ((p.authors || []).length > 4 ? ' 等' : '');
         const line = [];
@@ -333,13 +364,18 @@
         if (p.venue) line.push(esc(p.venue));
         if (p.citations != null) line.push(`被引 ${p.citations}`);
         if (p.topic) line.push(esc(p.topic));
-        if (p.is_oa) line.push('<span class="oa">● 开放获取</span>');
+        const badge = oaBadge(p);
+        if (badge) line.push(badge);
+        if (p.is_oa && oaLanding)
+          line.push(`<a class="oa-link" href="${esc(oaLanding)}" target="_blank" rel="noopener">↗ OA 页面</a>`);
+        if (p.is_oa && oaPdf)
+          line.push(`<a class="oa-link" href="${esc(oaPdf)}" target="_blank" rel="noopener">↗ PDF</a>`);
         const aid = `a${i}`;
         return `
           <div class="result paper">
             <div class="top">
-              <a class="title" href="${esc(p.oa_url || p.url)}" target="_blank" rel="noopener">
-                ${i + 1}. ${esc(p.title || p.url)}
+              <a class="title" href="${esc(canonicalUrl)}" target="_blank" rel="noopener">
+                ${i + 1}. ${esc(p.title || canonicalUrl)}
               </a>
               ${score ? `<span class="score">${score}</span>` : ''}
             </div>

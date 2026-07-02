@@ -39,8 +39,11 @@ class AcademicResult(SearchResult):
     venue: str = ""                                    # 期刊/会议名
     citations: int = 0                                 # 被引次数
     doi: str = ""                                       # DOI
-    oa_url: str = ""                                    # 开放获取全文链接
+    oa_url: str = ""                                    # 兼容字段:泛化 OA 链接(优先 landing,退化 pdf)
+    oa_landing_url: str = ""                            # 开放获取落地页(HTML/DOI)
+    oa_pdf_url: str = ""                                # 开放获取 PDF 直链
     is_oa: bool = False                                 # 是否开放获取
+    oa_status: str = ""                                 # 开放获取状态(gold/green/hybrid/bronze/diamond/closed)
     topic: str = ""                                     # 主要主题/学科
 
 

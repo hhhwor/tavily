@@ -54,7 +54,7 @@ POST /search {query, top_k, include_academic?, include_patent?}
       ▼
  归一化 JSON {query, normalized_query, rewritten_query, recency, time_sensitive,
               results:[{url,title,snippet,content,date,site,source,score,rerank_score,...}],
-              academic_results:[{...,authors,year,venue,citations,doi,oa_url,is_oa,topic}],
+              academic_results:[{...,authors,year,venue,citations,doi,oa_url,oa_landing_url,oa_pdf_url,is_oa,topic}],
               patent_results:[{...,publication_number,country,applicant,inventor,ipc_main,cpc_main,application_date,patent_type,status,family_id,...}],
               count, providers_used, reranker, elapsed_ms}
 ```
@@ -127,7 +127,7 @@ POST /search {query, top_k, include_academic?, include_patent?}
 - **召回**:`POST {OPENALEX_API_URL}/openalex/search/keyword`,body `{query, size, year_min/year_max?}`;服务端在 `title^3/abstract^2/authors/concepts` 上 `best_fields` 检索。时效(recency)近似映射为 `year_min=year_max=当年`。可选 `X-API-Key`(服务未配 `SE4AI_API_KEYS` 时全部放行)。
 - **摘要**:Chukonu 服务已把 `abstract_inverted_index` 重建为正文(`abstract` 字段直接可用),provider 无需再还原。
 - **语义排序复用现有重排**:`AcademicResult` 设计为 `SearchResult` 子类,天然带 `text_for_rerank()`(返回「标题+摘要」),**现有 cross-encoder reranker 零改动**即可对 query↔论文打分;web 与学术两路独立重排、并发执行。重排关闭(NoOp)时按服务 `_score` 排序兜底。
-- **学术元数据**:`academic_results` 每条带 `authors/year/venue/citations/doi/oa_url/is_oa/topic`(`url` 由 DOI 或 OpenAlex 作品页构造;`authors` 是服务端空格拼接的整串,整体存一项),web `results` 行为完全不变。
+- **学术元数据**:`academic_results` 每条带 `authors/year/venue/citations/doi/oa_url/oa_landing_url/oa_pdf_url/is_oa/topic`。其中 `url` 固定为 DOI / OpenAlex 作品页(论文主页面),`oa_landing_url` 是 OA 落地页,`oa_pdf_url` 是 OA PDF 直链;`oa_url` 保留作兼容字段(优先 landing,退化 pdf)。`authors` 是服务端空格拼接的整串,整体存一项,web `results` 行为完全不变。
 - **启用**:配了 `OPENALEX_API_URL`(默认 `http://localhost:9001`)即启用;服务不可达时静默返回空,web 搜索零影响。
 - ⚠️ **覆盖收窄**:Chukonu 当前 ES 仅 **5 万条 OpenAlex 子集**(非公网全量 ~2.4 亿 works),冷门主题召回会明显变弱;换公网全量需把 `OPENALEX_API_URL` 指回自建/官方全量服务(provider 协议一致)。
 - ⚠️ **中文学术查询召回偏弱**:OpenAlex 以英文文献为主,中文 query 易被字面误解;引擎已默认对学术 query 做中→英改写(`OPENALEX_QUERY_REWRITE`)缓解。**英文学术查询效果显著更好**。
@@ -263,7 +263,7 @@ curl -s localhost:8000/health        # {"academic": true, ...}
 curl -X POST localhost:8000/search \
   -H 'Content-Type: application/json' \
   -d '{"query":"graph neural networks survey","include_academic":true,"top_k":5}'
-# 返回体含 academic_results:[{title,authors,year,venue,citations,doi,oa_url,is_oa,topic,...}]
+# 返回体含 academic_results:[{title,authors,year,venue,citations,doi,oa_url,oa_landing_url,oa_pdf_url,is_oa,topic,...}]
 ```
 
 - 学术意图由 L0 正则自动识别(论文/综述/arxiv/survey/citation 等);非学术查询不触发,`academic_results` 为空。

@@ -15,7 +15,7 @@ from src.l0 import plan_query, rewrite_academic_query
 from src.models import AcademicResult, PatentResult, SearchResponse, SearchResult
 from src.pipeline.dedup import dedup
 from src.pipeline.fusion import rrf_fuse
-from src.pipeline.rerank import NoOpReranker, FusionReranker, build_reranker
+from src.pipeline.rerank import AcademicReranker, NoOpReranker, FusionReranker, build_reranker
 from src.providers.base import SearchProvider
 
 
@@ -174,6 +174,11 @@ class SearchEngine:
         reranker = self._select_reranker(
             rerank_enabled, rerank_backend, rerank_model, rerank_threshold, fusion_enabled
         )
+        # 学术不复用 web 的辅助信号融合(来源权威度/源内排名是 web 假设);仅复用文本重排器。
+        academic_text_reranker = self._select_reranker(
+            rerank_enabled, rerank_backend, rerank_model, rerank_threshold, False
+        )
+        academic_reranker = AcademicReranker(academic_text_reranker)
         # 查询改写开关:请求未指定则用全局默认
         rewrite = settings.rewrite_enabled if rewrite_enabled is None else rewrite_enabled
 
@@ -266,7 +271,7 @@ class SearchEngine:
             if not papers:
                 return []
             # 用改写后的学术检索词重排(英文↔英文论文打分更准,避免中文原query被阈值误杀)
-            ranked = reranker.rerank(academic_query, papers, top_k)
+            ranked = academic_reranker.rerank(academic_query, papers, top_k)
             return [r for r in ranked if isinstance(r, AcademicResult)]
 
         def _rank_patent() -> List[PatentResult]:
@@ -354,4 +359,3 @@ if __name__ == "__main__":
             print(f"    申请人: {applicant}  申请日: {p.application_date}")
             print(f"    {p.url}")
             print(f"    {(p.snippet or p.content)[:110]}\n")
-

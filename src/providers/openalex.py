@@ -16,6 +16,7 @@ from __future__ import annotations
 import os
 from datetime import date
 from typing import Any, Dict, List, Optional
+from urllib.parse import urlparse
 
 import requests
 
@@ -24,6 +25,84 @@ from src.providers.base import SearchProvider
 
 _DEFAULT_BASE = "http://localhost:9001"
 _SEARCH_PATH = "/openalex/search/keyword"
+
+
+def _first_str(*values: Any) -> str:
+    """返回第一个非空字符串。"""
+    for value in values:
+        if isinstance(value, str):
+            value = value.strip()
+            if value:
+                return value
+    return ""
+
+
+def _looks_like_pdf_url(url: str) -> bool:
+    """基于轻量规则判断是否更像 PDF 直链而非落地页。"""
+    if not url:
+        return False
+    lower = url.lower()
+    path = urlparse(url).path.lower()
+    return (
+        path.endswith(".pdf")
+        or "/pdf" in path
+        or "downloadpdf" in lower
+        or "full.pdf" in lower
+    )
+
+
+def _canonical_work_url(doi: str, work_id: str) -> str:
+    """论文主页面: DOI 优先,退化到 OpenAlex 作品页。"""
+    if doi:
+        return f"https://doi.org/{doi}"
+    if work_id:
+        return f"https://openalex.org/{work_id}"
+    return ""
+
+
+def _extract_oa_links(h: Dict[str, Any], canonical_url: str, is_oa: bool) -> tuple[str, str, str]:
+    """提取 OA 落地页 / PDF 直链。
+
+    兼容三类来源:
+    1. Chukonu/OpenAlex 未来显式透出的扁平字段 `oa_landing_url` / `oa_pdf_url`
+    2. OpenAlex 原生嵌套字段 `best_oa_location` / `primary_location` / `content_urls`
+    3. 仅有 `open_access.oa_url` 时,按 URL 形态区分 landing vs pdf
+
+    当前 Chukonu `OpenAlexHit` 尚未把 dedicated OA URL 字段透出;这种情况下若 `is_oa=true`,
+    `oa_landing_url` 回退到 canonical DOI/OpenAlex 页面,而 `oa_pdf_url` 维持空字符串。
+    """
+    best = h.get("best_oa_location") if isinstance(h.get("best_oa_location"), dict) else {}
+    primary = h.get("primary_location") if isinstance(h.get("primary_location"), dict) else {}
+    open_access = h.get("open_access") if isinstance(h.get("open_access"), dict) else {}
+    content_urls = h.get("content_urls") if isinstance(h.get("content_urls"), dict) else {}
+
+    oa_landing_url = _first_str(
+        h.get("oa_landing_url"),
+        best.get("landing_page_url"),
+        primary.get("landing_page_url"),
+    )
+    oa_pdf_url = _first_str(
+        h.get("oa_pdf_url"),
+        content_urls.get("pdf"),
+        best.get("pdf_url"),
+        primary.get("pdf_url"),
+    )
+
+    generic_oa_url = _first_str(
+        open_access.get("oa_url"),
+        h.get("oa_url"),
+    )
+    if generic_oa_url:
+        if not oa_pdf_url and _looks_like_pdf_url(generic_oa_url):
+            oa_pdf_url = generic_oa_url
+        if not oa_landing_url and not _looks_like_pdf_url(generic_oa_url):
+            oa_landing_url = generic_oa_url
+
+    if is_oa and not oa_landing_url:
+        oa_landing_url = canonical_url
+
+    oa_url = _first_str(oa_landing_url, oa_pdf_url)
+    return oa_url, oa_landing_url, oa_pdf_url
 
 
 class OpenAlexProvider(SearchProvider):
@@ -94,14 +173,9 @@ class OpenAlexProvider(SearchProvider):
         work_id = h.get("work_id", "") or ""
         is_oa = bool(h.get("is_oa"))
 
-        # 无原生落地页:DOI 优先,退化到 OpenAlex 作品页
-        if doi:
-            url = f"https://doi.org/{doi}"
-        elif work_id:
-            url = f"https://openalex.org/{work_id}"
-        else:
-            url = ""
-        oa_url = url if (is_oa and (doi or work_id)) else ""
+        # 论文主页面固定为 DOI/OpenAlex 页面; OA 页面/PDF 直链走单独字段。
+        url = _canonical_work_url(doi, work_id)
+        oa_url, oa_landing_url, oa_pdf_url = _extract_oa_links(h, url, is_oa)
 
         venue = h.get("venue", "") or ""
         # authors 是空格拼接的整串(无单作者分隔符),整体存为一项;无则用 first_author
@@ -123,7 +197,10 @@ class OpenAlexProvider(SearchProvider):
             citations=h.get("cited_by_count", 0) or 0,
             doi=doi,
             oa_url=oa_url,
+            oa_landing_url=oa_landing_url,
+            oa_pdf_url=oa_pdf_url,
             is_oa=is_oa,
+            oa_status=(h.get("oa_status", "") or ""),
             topic=h.get("primary_topic", "") or "",
             raw=h,
         )

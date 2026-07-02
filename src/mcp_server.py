@@ -65,8 +65,9 @@ def build_mcp(engine: SearchEngine) -> FastMCP:
             "搜索网络并返回 LLM-ready 的结构化结果。当回答需要外部或最新信息"
             "(新闻、事实核查、技术细节、时效性问题)时调用,而不要凭记忆作答。"
             "学术与专利意图会自动识别;也可用 include_academic / include_patent 强制开关。"
-            "返回 web 结果,命中时附带学术论文(authors/year/venue/citations/doi)与专利"
-            "(公开号/申请人/发明人/分类)各成一块。"
+            "返回 web 结果,命中时附带学术论文(authors/year/venue/citations/doi/"
+            "oa_landing_url/oa_pdf_url/is_oa/oa_status)与专利(公开号/申请人/发明人/分类)"
+            "各成一块。"
         ),
     )
     async def search(
@@ -96,9 +97,13 @@ def build_mcp(engine: SearchEngine) -> FastMCP:
 
         def _paper(p):
             return {
-                "title": p.title, "url": p.oa_url or p.url,
+                "title": p.title, "url": p.url,
+                "oa_url": p.oa_url,
+                "oa_landing_url": p.oa_landing_url,
+                "oa_pdf_url": p.oa_pdf_url,
                 "authors": p.authors[:6], "year": p.year, "venue": p.venue,
                 "citations": p.citations, "doi": p.doi, "is_oa": p.is_oa,
+                "oa_status": p.oa_status,
                 "content": _trim(p.content or p.snippet),
             }
 

@@ -33,7 +33,9 @@
     {"title", "url", "content", "score", "source", "date"}
   ],
   "academic": [                   // 学术论文(命中学术意图时;否则空)
-    {"title", "url", "authors", "year", "venue", "citations", "doi", "is_oa", "content"}
+    {"title", "url", "oa_url", "oa_landing_url", "oa_pdf_url",
+     "authors", "year", "venue", "citations", "doi",
+     "is_oa", "oa_status", "content"}
   ],
   "patents": [                    // 专利(命中专利意图时;否则空)
     {"title", "url", "publication_number", "applicant", "inventor",
@@ -45,6 +47,8 @@
 ```
 
 > 正文 `content` 每条截断到约 600 字以省 token。专利无原生网页,`url` 用 Google Patents 落地页。
+>
+> 学术结果里 `url` 是论文主页面(DOI/OpenAlex),`oa_landing_url` 是 OA 落地页,`oa_pdf_url` 是 OA PDF 直链。`oa_url` 保留为兼容字段,语义是“泛化 OA 链接”(优先 landing,退化到 pdf)。
 
 ---
 
