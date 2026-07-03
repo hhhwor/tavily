@@ -112,7 +112,7 @@ POST /search {query, top_k, include_academic?, include_patent?}
 
 - **段落级打分**:每个文档切 chunk,逐 `(query, chunk)` pair 交 cross-encoder 打分,**每文档取 chunk 最高分(max-pooling)**。彻底解决「BGE 512 token 上限 vs 长正文硬截断」的矛盾。
 - **三种 backend**:
-  - `siliconflow`(默认)—— 云端 BGE-v2-m3,无需 GPU,每批最多 25 文档自动分批,返回分数已在 0–1。
+  - `siliconflow`(默认)—— 云端 BGE-v2-m3,无需 GPU;当前实现不再假设 25 文档硬上限,返回分数已在 0–1。
   - `bge` —— 本地 `sentence-transformers` CrossEncoder,需 torch。
   - `flashrank` —— 轻量本地 cross-encoder。
 - **归一化 + 阈值**:本地 backend 用 sigmoid 归一化到 0–1;`ThresholdReranker` 丢弃低于 `RERANK_THRESHOLD=0.3` 的结果,保持喂给 agent 的上下文纯净。

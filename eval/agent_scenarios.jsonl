@@ -1,0 +1,8 @@
+{"id":"sodium_battery_cathode","task":"你是产业研究 agent。请调研钠离子电池正极材料的技术机会:总结近三年代表性论文/研究进展,识别相关专利布局、主要申请人或公开号,再结合产业化信息给出值得跟进的材料路线和风险。","domain":"battery","needs":["academic","patent","web"]}
+{"id":"solid_state_sulfide_electrolyte","task":"你是新能源研发情报 agent。请评估硫化物固态电解质用于固态锂电池的可行性:需要引用关键论文/综述,梳理专利布局和申请人,并判断量产瓶颈、机会与风险。","domain":"battery","needs":["academic","patent","web"]}
+{"id":"perovskite_encapsulation","task":"你是技术尽调 agent。请分析钙钛矿太阳能电池封装技术:找出近年学术研究方向,相关专利和主要申请人,再说明商业化可靠性挑战和可投资的技术环节。","domain":"solar","needs":["academic","patent","web"]}
+{"id":"mrna_lnp_delivery","task":"你是生物医药 BD agent。请调研 mRNA 疫苗脂质纳米颗粒递送技术:需要论文证据、专利/申请人信息、产业合作或监管动态,最后给出进入该方向的机会和专利风险。","domain":"biotech","needs":["academic","patent","web"]}
+{"id":"crispr_base_editing","task":"你是生命科学情报 agent。请比较 CRISPR base editing 的研究进展和专利布局:列出关键论文或综述、核心专利/申请人、临床或产业动态,并指出技术壁垒。","domain":"biotech","needs":["academic","patent","web"]}
+{"id":"foldable_hinge","task":"你是消费电子研发 agent。请调研折叠屏手机铰链结构:总结相关工程论文或技术研究,梳理专利方案和主要申请人,结合产品/供应链信息判断差异化机会。","domain":"electronics","needs":["academic","patent","web"]}
+{"id":"autonomous_lidar_fusion","task":"你是自动驾驶技术 agent。请分析激光雷达与多传感器融合的自动驾驶感知方案:需要近年论文进展、专利布局/申请人、公司产品或落地动态,最后给出技术路线建议。","domain":"autonomous_driving","needs":["academic","patent","web"]}
+{"id":"virtual_anchor_ecommerce","task":"你是 AI 产品策略 agent。请评估直播电商虚拟主播技术:查找相关学术论文或模型方法,梳理虚拟主播/数字人相关专利与申请人,结合市场案例判断产品机会和合规风险。","domain":"ai_product","needs":["academic","patent","web"]}

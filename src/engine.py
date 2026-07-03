@@ -13,9 +13,13 @@ from src.config import settings
 from src.cache import build_cache
 from src.l0 import plan_query, rewrite_academic_query
 from src.models import AcademicResult, PatentResult, SearchResponse, SearchResult
-from src.pipeline.dedup import dedup
-from src.pipeline.fusion import rrf_fuse
-from src.pipeline.rerank import AcademicReranker, NoOpReranker, FusionReranker, build_reranker
+from src.pipeline.rerank import (
+    AcademicReranker,
+    PatentReranker,
+    WebReranker,
+    build_rerank_context,
+    build_text_scorer,
+)
 from src.providers.base import SearchProvider
 
 
@@ -82,12 +86,12 @@ class SearchEngine:
         self.providers = _build_providers()
         self.academic_provider = _build_academic_provider()
         self.patent_provider = _build_patent_provider()
-        self._reranker_cache: dict = {}  # 按请求参数缓存重排器(避免本地模型重复加载)
+        self._text_scorer_cache: dict = {}  # 按请求参数缓存 scorer(避免本地模型重复加载)
         self.cache = build_cache(settings.cache_backend, settings.cache_max_size) \
             if settings.cache_enabled else None  # provider 召回结果缓存
-        self.reranker = self._make_reranker(
+        self.text_scorer = self._make_text_scorer(
             settings.rerank_enabled, settings.rerank_backend,
-            settings.rerank_model, settings.rerank_threshold, settings.fusion_enabled,
+            settings.rerank_model,
         )
         if not self.providers and not self.academic_provider and not self.patent_provider:
             print("[engine] 警告:无可用搜索源,请检查 .env 凭证")
@@ -111,49 +115,37 @@ class SearchEngine:
         self.cache.set(ck, [r.model_copy(deep=True) for r in items], settings.cache_ttl)
         return items
 
-    def _make_reranker(self, enabled: bool, backend: str, model: str,
-                       threshold: float, fusion: bool):
-        """按给定参数构建重排器(其余参数取全局 settings)。"""
-        return build_reranker(
+    def _make_text_scorer(self, enabled: bool, backend: str, model: str):
+        """按给定参数构建文本 scorer(其余参数取全局 settings)。"""
+        return build_text_scorer(
             enabled, backend, model, settings.rerank_cache_dir, settings.rerank_device,
             chunk_max_chars=settings.chunk_max_chars,
             chunk_overlap=settings.chunk_overlap,
-            threshold=threshold,
             siliconflow_api_key=settings.siliconflow_api_key,
             siliconflow_base_url=settings.siliconflow_base_url,
-            fusion_enabled=fusion,
-            fusion_alpha=settings.fusion_alpha,
-            fusion_beta=settings.fusion_beta,
-            fusion_gamma=settings.fusion_gamma,
-            fusion_delta=settings.fusion_delta,
         )
 
-    def _select_reranker(
+    def _select_text_scorer(
         self,
         enabled: Optional[bool] = None,
         backend: Optional[str] = None,
         model: Optional[str] = None,
-        threshold: Optional[float] = None,
-        fusion: Optional[bool] = None,
     ):
-        """选择重排器:全部覆盖为 None 时复用默认单例(零开销);否则按覆盖参数
+        """选择文本 scorer:全部覆盖为 None 时复用默认单例(零开销);否则按覆盖参数
         构建并缓存。缓存上限 16,超出清空,防本地模型缓存无限增长。"""
-        if enabled is None and backend is None and model is None \
-                and threshold is None and fusion is None:
-            return self.reranker
+        if enabled is None and backend is None and model is None:
+            return self.text_scorer
         eff = (
             settings.rerank_enabled if enabled is None else enabled,
             backend or settings.rerank_backend,
             model or settings.rerank_model,
-            settings.rerank_threshold if threshold is None else threshold,
-            settings.fusion_enabled if fusion is None else fusion,
         )
-        r = self._reranker_cache.get(eff)
+        r = self._text_scorer_cache.get(eff)
         if r is None:
-            if len(self._reranker_cache) >= 16:
-                self._reranker_cache.clear()
-            r = self._make_reranker(*eff)
-            self._reranker_cache[eff] = r
+            if len(self._text_scorer_cache) >= 16:
+                self._text_scorer_cache.clear()
+            r = self._make_text_scorer(*eff)
+            self._text_scorer_cache[eff] = r
         return r
 
     def search(
@@ -170,15 +162,13 @@ class SearchEngine:
         top_k = top_k or settings.default_top_k
         t0 = time.time()
 
-        # 按请求参数选择重排器(全 None 时复用默认单例)
-        reranker = self._select_reranker(
-            rerank_enabled, rerank_backend, rerank_model, rerank_threshold, fusion_enabled
+        text_scorer = self._select_text_scorer(
+            rerank_enabled, rerank_backend, rerank_model
         )
-        # 学术不复用 web 的辅助信号融合(来源权威度/源内排名是 web 假设);仅复用文本重排器。
-        academic_text_reranker = self._select_reranker(
-            rerank_enabled, rerank_backend, rerank_model, rerank_threshold, False
-        )
-        academic_reranker = AcademicReranker(academic_text_reranker)
+        threshold = settings.rerank_threshold if rerank_threshold is None else rerank_threshold
+        web_reranker = WebReranker(text_scorer, threshold=threshold)
+        academic_reranker = AcademicReranker(text_scorer, threshold=threshold)
+        patent_reranker = PatentReranker(text_scorer, threshold=threshold)
         # 查询改写开关:请求未指定则用全局默认
         rewrite = settings.rewrite_enabled if rewrite_enabled is None else rewrite_enabled
 
@@ -208,11 +198,7 @@ class SearchEngine:
                 settings.siliconflow_base_url, settings.rewrite_model,
                 settings.rewrite_cache_size,
             )
-        # 更新融合重排器的时效标记
-        if isinstance(reranker, FusionReranker):
-            reranker._time_sensitive = plan.time_sensitive
-        elif hasattr(reranker, '_inner') and isinstance(reranker._inner, FusionReranker):
-            reranker._inner._time_sensitive = plan.time_sensitive
+        ctx = build_rerank_context(search_query, time_sensitive=plan.time_sensitive)
 
         # 1) 并发召回:web 源 + (可选)学术源,同一个线程池
         #    缓存:provider 召回级;时效查询(time_sensitive)跳过缓存以保证新鲜度
@@ -259,26 +245,22 @@ class SearchEngine:
                     except Exception as e:
                         print(f"[engine] provider {name} 失败: {e}")
 
-        # 2) 多路独立重排(并发),复用选定的 reranker
-        #    web: NoOp 走 RRF 融合;否则 dedup 后 cross-encoder 重排
-        #    学术/专利: 单源,直接 reranker 打分(NoOp 时按来源原始分排序)
+        # 2) 多路独立重排(并发),复用线程安全的 text_scorer;请求上下文显式传入。
         def _rank_web() -> List[SearchResult]:
-            if isinstance(reranker, NoOpReranker):
-                return rrf_fuse(raw, top_k=top_k)
-            return reranker.rerank(search_query, dedup(raw), top_k)
+            return web_reranker.rerank_with_context(search_query, raw, top_k, ctx)
 
         def _rank_academic() -> List[AcademicResult]:
             if not papers:
                 return []
             # 用改写后的学术检索词重排(英文↔英文论文打分更准,避免中文原query被阈值误杀)
-            ranked = academic_reranker.rerank(academic_query, papers, top_k)
+            ranked = academic_reranker.rerank_with_context(academic_query, papers, top_k, ctx)
             return [r for r in ranked if isinstance(r, AcademicResult)]
 
         def _rank_patent() -> List[PatentResult]:
             if not patents:
                 return []
-            # 专利用中文原 query 重排(中文库;NoOp 时 reranker 内部按 score=ES _score 排序兜底)
-            ranked = reranker.rerank(search_query, patents, top_k)
+            # 专利用中文原 query 重排;专利结构化信号由 PatentReranker 融合。
+            ranked = patent_reranker.rerank_with_context(search_query, patents, top_k, ctx)
             return [r for r in ranked if isinstance(r, PatentResult)]
 
         # 多于一路有结果时并发重排;否则顺序执行(零线程开销)
@@ -313,7 +295,7 @@ class SearchEngine:
             patent_query=search_query if do_patent else None,
             count=len(ranked),
             providers_used=used,
-            reranker=reranker.name,
+            reranker=text_scorer.name,
             elapsed_ms=int((time.time() - t0) * 1000),
         )
 

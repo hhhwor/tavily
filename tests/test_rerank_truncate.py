@@ -1,4 +1,4 @@
-"""验证 SiliconFlowReranker 截断逻辑:passage 超过 25 时按文档边界截断,只调 1 次 API。"""
+"""验证 SiliconFlowReranker 默认不做 25 条本地截断。"""
 import sys, os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from unittest.mock import patch
@@ -11,7 +11,6 @@ def _make_fake_post(calls):
         n = len(json["documents"])
         calls["n"] += 1
         calls["sizes"].append(n)
-        assert n <= 25, f"单次请求文档数 {n} 超过 25"
 
         class R:
             def raise_for_status(self_inner):
@@ -23,30 +22,29 @@ def _make_fake_post(calls):
     return fake_post
 
 
-def test_short_docs_truncate_to_25_one_call():
+def test_short_docs_send_all_documents_in_one_call():
     docs = [SearchResult(url=f"u{i}", title=f"doc {i}", content="x" * 50) for i in range(30)]
     rr = SiliconFlowReranker(api_key="k", chunk_max_chars=400, chunk_overlap=50)
     calls = {"n": 0, "sizes": []}
     with patch("src.pipeline.rerank._requests.post", side_effect=_make_fake_post(calls)):
         out = rr.rerank("q", docs, top_k=10)
     assert calls["n"] == 1, calls
-    assert calls["sizes"] == [25], calls
+    assert calls["sizes"] == [30], calls
     assert len(out) == 10
-    truncated = [d for d in docs if d.title in {f"doc {i}" for i in range(25, 30)}]
-    assert all((d.rerank_score or 0) == 0 for d in truncated)
+    assert all((d.rerank_score or 0) > 0 for d in docs)
 
 
-def test_multichunk_docs_single_call_within_limit():
-    longdocs = [SearchResult(url=f"L{i}", title=f"L{i}", content="句子。" * 200) for i in range(5)]
-    rr = SiliconFlowReranker(api_key="k", chunk_max_chars=400, chunk_overlap=50)
+def test_multichunk_docs_single_call_without_local_cap():
+    longdocs = [SearchResult(url=f"L{i}", title=f"L{i}", content="句子。" * 500) for i in range(12)]
+    rr = SiliconFlowReranker(api_key="k", chunk_max_chars=120, chunk_overlap=20)
     calls = {"n": 0, "sizes": []}
     with patch("src.pipeline.rerank._requests.post", side_effect=_make_fake_post(calls)):
         rr.rerank("q", longdocs, top_k=5)
     assert calls["n"] == 1, calls
-    assert all(s <= 25 for s in calls["sizes"]), calls
+    assert calls["sizes"][0] > 25, calls
 
 
 if __name__ == "__main__":
-    test_short_docs_truncate_to_25_one_call()
-    test_multichunk_docs_single_call_within_limit()
-    print("OK: 截断逻辑通过(单次调用、<=25、文档边界、被截文档0分)")
+    test_short_docs_send_all_documents_in_one_call()
+    test_multichunk_docs_single_call_without_local_cap()
+    print("OK: SiliconFlowReranker 默认不做 25 条本地截断")

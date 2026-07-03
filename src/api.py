@@ -115,7 +115,7 @@ def health() -> dict:
         "providers": settings.enabled_providers,
         "academic": engine.academic_provider is not None,
         "patent": engine.patent_provider is not None,
-        "reranker": engine.reranker.name,
+        "reranker": engine.text_scorer.name,
         "auth": settings.auth_enabled,
         "mcp": _mcp_app is not None,
         "cache": engine.cache.stats() if engine.cache else {"enabled": False},
@@ -152,4 +152,3 @@ def search(req: SearchRequest) -> SearchResponse:
 # 该 Mount 仅兜住 /mcp,从而给出无重定向的规范 /mcp 端点。未启用 MCP 时跳过。
 if _mcp_app is not None:
     app.mount("/", _mcp_app)
-

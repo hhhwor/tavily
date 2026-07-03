@@ -1,0 +1,146 @@
+{
+  "5468202069d15a397c1351f13ffa08db6a8c885e": {
+    "winner": "full_agent",
+    "full_score": 4,
+    "baidu_score": 3,
+    "research": 2,
+    "patent": 2,
+    "synthesis": 1,
+    "reason": "full_agent提供学术论文(中科院DICP研究、ACS Energy Letters发表)和6项具体专利(申请人、公开号、技术方案),baidu_only仅有产业分析无学术/专利具体数据,合成度"
+  },
+  "d01a6e72a4e549a91547be90d4759192aa863968": {
+    "winner": "full_agent",
+    "full_score": 4,
+    "baidu_score": 3,
+    "research": 2,
+    "patent": 2,
+    "synthesis": 1,
+    "reason": "full_agent提供学术论文(ACS Nano、Matter等)和5篇专利(宁德、天赐、远景等具体申请人),支撑完整尽调。baidu_only缺学术文献和专利详情,仅有产业信号。"
+  },
+  "5b9e52501f8eddd7bcebf3a1ee5df1c68ae7be4d": {
+    "winner": "full_agent",
+    "full_score": 4,
+    "baidu_score": 2,
+    "research": 2,
+    "patent": 2,
+    "synthesis": 1,
+    "reason": "full_agent提供学术论文(2D/3D异质结、动态钝化)、5项封装专利及申请人(协鑫、晶灵、中科大),完整梳理3条封装路线。baidu_only仅有产业资讯无学术和专利数据,难以支撑完整尽调"
+  },
+  "f377961120d8640ef7de18858c0ac9fa8fffc4f3": {
+    "winner": "full_agent",
+    "full_score": 5,
+    "baidu_score": 2,
+    "research": 2,
+    "patent": 2,
+    "synthesis": 2,
+    "reason": "full_agent提供学术论文(6篇含中国mRNA平台技术)、专利申请(6件含申请人)、产业信号;baidu_only仅web结果,缺学术深度和专利情报,无法支撑完整尽调"
+  },
+  "f12ce377150586c02e9ff30cfded9c9f2f4c403d": {
+    "winner": "full_agent",
+    "full_score": 4,
+    "baidu_score": 2,
+    "research": 2,
+    "patent": 2,
+    "synthesis": 1,
+    "reason": "full_agent提供学术论文(5篇peer-reviewed含引用数),baidu_only缺乏；专利结果两者都不理想(full_agent返回无关专利),baidu仅提及专利数量统计无具体申请人"
+  },
+  "cd48011577eb19be77fdee99965827f2c9182dad": {
+    "winner": "full_agent",
+    "full_score": 4,
+    "baidu_score": 2,
+    "research": 2,
+    "patent": 2,
+    "synthesis": 1,
+    "reason": "full_agent包含学术论文(HCI交互设计、结构力学分析)和专利检索,覆盖技术研究全景。baidu_only仅市场报告无学术/专利,难以支撑完整尽调。"
+  },
+  "781c2541c9619183cbb7191ea9855f3cd11601e3": {
+    "winner": "full_agent",
+    "full_score": 4,
+    "baidu_score": 2,
+    "research": 2,
+    "patent": 2,
+    "synthesis": 1,
+    "reason": "full_agent提供学术论文(安全攻击、多传感器融合威胁)和6项专利(华锐、科大、广汽等)，覆盖融合方法和极端天气场景。baidu_only仅web内容，无学术/专利数据，缺乏完整尽调支撑"
+  },
+  "90bbfa01e09c6c4b86e198c563d2089fa90f93f7": {
+    "winner": "full_agent",
+    "full_score": 4,
+    "baidu_score": 3,
+    "research": 1,
+    "patent": 2,
+    "synthesis": 1,
+    "reason": "full_agent提供5项专利(申请人包括格力、虎牙、达佳互联等)和市场案例;baidu_only缺专利数据,仅有市场报告和学术论文摘要,无法完整支撑专利布局分析"
+  },
+  "facc898fd56c38befba8daa7e54b9e9402c725c5": {
+    "winner": "full_agent",
+    "full_score": 4,
+    "baidu_score": 3,
+    "research": 2,
+    "patent": 2,
+    "synthesis": 1,
+    "reason": "full_agent提供学术论文+专利+产业信息三维证据,涵盖中科院研究进展、多申请人专利布局(武汉工程大学、哈尔滨工业大学等)及具体公开号;baidu_only仅web产业分析,缺学术深度和专利申请"
+  },
+  "8ed93167263e3cfed067cf8be6a5d3e39e22b6bf": {
+    "winner": "full_agent",
+    "full_score": 4,
+    "baidu_score": 3,
+    "research": 2,
+    "patent": 2,
+    "synthesis": 1,
+    "reason": "full_agent提供学术论文(ACS Nano、Matter等)和5份专利(CATL、天赐、远景等申请人),覆盖材料改性、界面稳定性、制备工艺。baidu_only缺少学术证据和专利细节,难以支撑"
+  },
+  "4934bd66250e44c36c77164d36976f36d39bd15a": {
+    "winner": "full_agent",
+    "full_score": 5,
+    "baidu_score": 2,
+    "research": 2,
+    "patent": 2,
+    "synthesis": 2,
+    "reason": "full_agent提供6篇学术文献(涵盖稳定性、2D/3D异质结构、可持续性等)、6项专利(具体申请人如协鑫、晶灵、中科大)和完整产业链数据;baidu_only仅有web结果,缺学术论文和专利细节"
+  },
+  "63ff7d05c1aea3898a901e94f1eae58b96dc9fe7": {
+    "winner": "full_agent",
+    "full_score": 5,
+    "baidu_score": 2,
+    "research": 2,
+    "patent": 2,
+    "synthesis": 2,
+    "reason": "full_agent提供6篇学术论文(涵盖RNA修饰、纳米递送、吸入式递送、VLP、中国平台等)、6份专利(具体申请人和技术方案),baidu_only仅有网页内容,缺乏学术深度和专利风险分析,无法支"
+  },
+  "c2c2e4620a0fdb7eda2c2212044a4cc40e7b1b4c": {
+    "winner": "full_agent",
+    "full_score": 4,
+    "baidu_score": 2,
+    "research": 2,
+    "patent": 2,
+    "synthesis": 1,
+    "reason": "full_agent提供学术论文(5篇含引用数据)和web综述,覆盖base editing原理、CBE/ABE/PE分类、临床应用。baidu_only仅web结果,缺关键论文和专利数据,无法支撑完"
+  },
+  "21cbca8ccc2b4674ad6854c339f2ff3c8762f71b": {
+    "winner": "full_agent",
+    "full_score": 4,
+    "baidu_score": 2,
+    "research": 2,
+    "patent": 2,
+    "synthesis": 1,
+    "reason": "full_agent包含学术论文(铰链设计、交互创新)和专利数据,虽专利结果无关,但学术覆盖补足baidu_only的空白。baidu_only仅有产业报告,缺工程论文和专利申请人信息,难以完成完整尽"
+  },
+  "3804c117de7c39854a8c9378376e0507f974e6e4": {
+    "winner": "full_agent",
+    "full_score": 4,
+    "baidu_score": 2,
+    "research": 2,
+    "patent": 2,
+    "synthesis": 1,
+    "reason": "full_agent提供学术论文(安全攻击SoK、跨模态欺骗)和6项专利(最新2026年)，覆盖融合算法、极端天气、端到端方案；baidu_only仅Web文章，缺学术深度和专利布局信息，难支撑完整技"
+  },
+  "4cfad05eff7440bc80a6bd14f535d085a7067155": {
+    "winner": "full_agent",
+    "full_score": 4,
+    "baidu_score": 3,
+    "research": 1,
+    "patent": 2,
+    "synthesis": 1,
+    "reason": "full_agent提供5项专利+具体申请人(格力、虎牙、达佳互联等),baidu_only缺专利数据。两者web结果基本重合,但full_agent多维度覆盖更完整,更适合技术尽调"
+  }
+}
