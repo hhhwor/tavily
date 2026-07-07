@@ -86,6 +86,10 @@
     .meta .pill { background: var(--tag); border: 1px solid var(--border);
                   border-radius: 20px; padding: 3px 11px; font-size: 12px; }
     .meta .pill b { color: var(--text); font-weight: 600; }
+    .diagnostics { margin-bottom: 14px; color: var(--muted); font-size: 12px; }
+    .diagnostics .warn { border: 1px solid #5c442a; background: #211a12;
+                         border-radius: 8px; padding: 9px 11px; margin-bottom: 8px; }
+    .diagnostics b { color: #e3b341; }
     .result {
       background: var(--panel); border: 1px solid var(--border); border-radius: 12px;
       padding: 16px 18px; margin-bottom: 14px; transition: border-color .15s;
@@ -181,6 +185,25 @@
             <option value="false">关</option>
           </select>
         </label>
+        <label>PDF 正文
+          <select id="include_pdf_text">
+            <option value="false">关闭</option>
+            <option value="true">开启（前几篇）</option>
+          </select>
+        </label>
+        <label>PDF 模式
+          <select id="pdf_text_mode">
+            <option value="">默认</option>
+            <option value="cached">只读缓存</option>
+            <option value="sync">同步解析</option>
+          </select>
+        </label>
+        <label>PDF 篇数
+          <input id="pdf_max_results" type="number" min="0" max="5" placeholder="默认 2">
+        </label>
+        <label>PDF 字符数/篇
+          <input id="pdf_max_chars_per_result" type="number" min="1" max="30000" placeholder="默认 8000">
+        </label>
         <label>信号融合
           <select id="fusion_enabled">
             <option value="">默认</option>
@@ -195,9 +218,8 @@
     </details>
 
     <div id="meta" class="meta" style="display:none"></div>
-    <div id="results"></div>
-    <div id="academic"></div>
-    <div id="patent"></div>
+    <div id="diagnostics" class="diagnostics"></div>
+    <div id="evidence"></div>
     <div id="status" class="status"></div>
   </div>
 
@@ -241,6 +263,10 @@
         rerank_threshold: optNum('rerank_threshold'),
         fusion_enabled: triBool('fusion_enabled'),
         rewrite_enabled: triBool('rewrite_enabled'),
+        include_pdf_text: triBool('include_pdf_text'),
+        pdf_text_mode: optStr('pdf_text_mode'),
+        pdf_max_results: optNum('pdf_max_results'),
+        pdf_max_chars_per_result: optNum('pdf_max_chars_per_result'),
       };
       // 只带上用户实际设置的参数(其余用服务端默认)
       for (const [k, v] of Object.entries(opt)) if (v !== undefined) body[k] = v;
@@ -253,9 +279,8 @@
 
       $('btn').disabled = true;
       $('meta').style.display = 'none';
-      $('results').innerHTML = '';
-      $('academic').innerHTML = '';
-      $('patent').innerHTML = '';
+      $('diagnostics').innerHTML = '';
+      $('evidence').innerHTML = '';
       $('status').innerHTML = '<span class="spinner"></span>检索中…';
 
       const t0 = performance.now();
@@ -274,11 +299,9 @@
         if (!resp.ok) throw new Error('HTTP ' + resp.status + ': ' + (await resp.text()));
         const data = await resp.json();
         renderMeta(data, Math.round(performance.now() - t0));
-        renderResults(data.results || []);
-        renderAcademic(data.academic_results || []);
-        renderPatent(data.patent_results || []);
-        if (!(data.results || []).length && !(data.academic_results || []).length
-            && !(data.patent_results || []).length)
+        renderDiagnostics(data);
+        renderEvidence(data.evidence || []);
+        if (!(data.evidence || []).length)
           $('status').innerHTML = '没有找到结果。';
         else
           $('status').innerHTML = '';
@@ -291,11 +314,15 @@
 
     function renderMeta(d, clientMs) {
       const pills = [];
-      pills.push(`<span class="pill">命中 <b>${d.count}</b> 条</span>`);
-      if ((d.academic_results || []).length)
-        pills.push(`<span class="pill">论文 <b>${d.academic_results.length}</b> 篇</span>`);
-      if ((d.patent_results || []).length)
-        pills.push(`<span class="pill">专利 <b>${d.patent_results.length}</b> 件</span>`);
+      const evidence = d.evidence || [];
+      const counts = evidence.reduce((acc, e) => {
+        acc[e.type] = (acc[e.type] || 0) + 1;
+        return acc;
+      }, {});
+      pills.push(`<span class="pill">证据 <b>${d.count ?? evidence.length}</b> 条</span>`);
+      if (counts.web) pills.push(`<span class="pill">网页 <b>${counts.web}</b> 条</span>`);
+      if (counts.academic) pills.push(`<span class="pill">论文 <b>${counts.academic}</b> 条</span>`);
+      if (counts.patent) pills.push(`<span class="pill">专利 <b>${counts.patent}</b> 条</span>`);
       pills.push(`<span class="pill">来源 <b>${esc((d.providers_used || []).join(' · '))}</b></span>`);
       pills.push(`<span class="pill">重排 <b>${esc(d.reranker)}</b></span>`);
       pills.push(`<span class="pill">耗时 <b>${d.elapsed_ms ?? clientMs}ms</b></span>`);
@@ -303,132 +330,89 @@
         pills.push(`<span class="pill">改写 <b>${esc(d.rewritten_query)}</b></span>`);
       if (d.time_sensitive)
         pills.push(`<span class="pill">时效 <b>${esc(d.recency || 'yes')}</b></span>`);
+      if (d.answerability)
+        pills.push(`<span class="pill">可答性 <b>${esc(d.answerability.status || '')}/${esc(d.answerability.confidence || '')}</b></span>`);
+      if (d.partial_failure)
+        pills.push(`<span class="pill">部分失败 <b>${(d.failures || []).length}</b></span>`);
       $('meta').innerHTML = pills.join('');
       $('meta').style.display = 'flex';
     }
 
-    function renderResults(results) {
-      $('results').innerHTML = results.map((r, i) => {
-        const body = esc(r.content || r.snippet || '');
-        const score = (r.rerank_score != null)
-          ? r.rerank_score.toFixed(3)
-          : (r.score != null ? r.score.toFixed(3) : '');
-        const tags = [];
-        if (r.source) tags.push(`<span>${esc(r.source)}</span>`);
-        if (r.site) tags.push(`<span>${esc(r.site)}</span>`);
-        if (r.date) tags.push(`<span>${esc(r.date)}</span>`);
-        return `
-          <div class="result">
-            <div class="top">
-              <a class="title" href="${esc(r.url)}" target="_blank" rel="noopener">
-                ${i + 1}. ${esc(r.title || r.url)}
-              </a>
-              ${score ? `<span class="score">${score}</span>` : ''}
-            </div>
-            <div class="url">${esc(r.url)}</div>
-            <div class="content" id="c${i}">${body}</div>
-            ${body.length > 280 ? `<span class="toggle" onclick="toggle('c${i}')">展开 ▾</span>` : ''}
-            ${tags.length ? `<div class="tags">${tags.join('')}</div>` : ''}
-          </div>`;
-      }).join('');
+    function renderDiagnostics(d) {
+      const gaps = (d.answerability && d.answerability.gaps) || [];
+      const failures = d.failures || [];
+      if (!gaps.length && !failures.length) {
+        $('diagnostics').innerHTML = '';
+        return;
+      }
+      const gapItems = gaps.map(g =>
+        `<div><b>${esc(g.code)}</b> [${esc(g.severity || '')}] ${esc(g.message || '')}</div>`
+      ).join('');
+      const failureItems = failures.map(f =>
+        `<div><b>${esc(f.code)}</b> ${esc(f.stage || '')}/${esc(f.source || '')}: ${esc(f.message || '')}</div>`
+      ).join('');
+      $('diagnostics').innerHTML =
+        `<div class="warn">${gapItems}${failureItems ? '<hr style="border-color:#3a2b1c;border-width:0 0 1px;margin:8px 0">' + failureItems : ''}</div>`;
     }
 
-    // OA 状态 → 中文标签(用于徽章文字)
-    const OA_LABELS = {
-      gold: 'Gold OA', green: 'Green OA', hybrid: 'Hybrid OA',
-      bronze: 'Bronze OA', diamond: 'Diamond OA', closed: '闭源获取',
+    const TYPE_LABELS = { web: '网页', academic: '论文', patent: '专利' };
+    const SNIPPET_LABELS = {
+      web_content: '网页正文',
+      web_snippet: '网页摘要',
+      abstract: '论文摘要',
+      pdf_text: 'PDF 正文',
+      patent_abstract: '专利摘要',
     };
-    function oaBadge(p) {
-      const status = (p.oa_status || '').toLowerCase();
-      // 有明确状态优先用之;否则退化到 is_oa 布尔
-      if (status && OA_LABELS[status])
-        return `<span class="oa-badge ${status}">${OA_LABELS[status]}</span>`;
-      if (p.is_oa) return `<span class="oa-badge gold">开放获取</span>`;
-      return '';
-    }
 
-    function renderAcademic(papers) {
-      if (!papers.length) { $('academic').innerHTML = ''; return; }
-      const cards = papers.map((p, i) => {
-        const body = esc(p.content || p.snippet || '');
-        const score = (p.rerank_score != null)
-          ? p.rerank_score.toFixed(3)
-          : (p.score != null ? p.score.toFixed(3) : '');
-        const canonicalUrl = p.url || p.oa_landing_url || p.oa_pdf_url || p.oa_url || '';
-        const oaLanding = p.oa_landing_url || p.oa_url || '';
-        const oaPdf = p.oa_pdf_url || '';
-        const authors = (p.authors || []).slice(0, 4).join(', ')
-          + ((p.authors || []).length > 4 ? ' 等' : '');
+    function renderEvidence(evidence) {
+      const typeCounts = {};
+      $('evidence').innerHTML = evidence.map((e, i) => {
+        const type = e.type || 'evidence';
+        typeCounts[type] = (typeCounts[type] || 0) + 1;
+        const ref = `${type}${typeCounts[type]}`;
+        const passage = e.passage || {};
+        const citation = e.citation || {};
+        const scores = e.scores || {};
+        const access = e.access || {};
+        const diagnostics = e.diagnostics || {};
+        const body = esc(passage.text || '');
+        const score = scores.relevance != null ? Number(scores.relevance).toFixed(3) : '';
+        const title = e.title || citation.label || e.url || e.id || ref;
         const line = [];
-        if (p.year) line.push(`${p.year}`);
-        if (p.venue) line.push(esc(p.venue));
-        if (p.citations != null) line.push(`被引 ${p.citations}`);
-        if (p.topic) line.push(esc(p.topic));
-        const badge = oaBadge(p);
-        if (badge) line.push(badge);
-        if (p.is_oa && oaLanding)
-          line.push(`<a class="oa-link" href="${esc(oaLanding)}" target="_blank" rel="noopener">↗ OA 页面</a>`);
-        if (p.is_oa && oaPdf)
-          line.push(`<a class="oa-link" href="${esc(oaPdf)}" target="_blank" rel="noopener">↗ PDF</a>`);
-        const aid = `a${i}`;
-        return `
-          <div class="result paper">
-            <div class="top">
-              <a class="title" href="${esc(canonicalUrl)}" target="_blank" rel="noopener">
-                ${i + 1}. ${esc(p.title || canonicalUrl)}
-              </a>
-              ${score ? `<span class="score">${score}</span>` : ''}
-            </div>
-            ${authors ? `<div class="authors">${esc(authors)}</div>` : ''}
-            <div class="meta-line">${line.join('<span>·</span>')}</div>
-            <div class="content" id="${aid}">${body}</div>
-            ${body.length > 280 ? `<span class="toggle" onclick="toggle('${aid}')">展开 ▾</span>` : ''}
-            ${p.doi ? `<div class="tags"><span>DOI: ${esc(p.doi.replace(/^https?:\/\/(dx\.)?doi\.org\//, ''))}</span></div>` : ''}
-          </div>`;
-      }).join('');
-      $('academic').innerHTML =
-        `<div class="section-title">📄 <b>学术论文</b> · ${papers.length} 篇（OpenAlex）</div>` + cards;
-    }
-
-    function renderPatent(patents) {
-      if (!patents.length) { $('patent').innerHTML = ''; return; }
-      const cards = patents.map((p, i) => {
-        const body = esc(p.content || p.snippet || '');
-        const score = (p.rerank_score != null)
-          ? p.rerank_score.toFixed(3)
-          : (p.score != null ? p.score.toFixed(3) : '');
-        const applicant = (p.applicant || []).slice(0, 3).join('、')
-          + ((p.applicant || []).length > 3 ? ' 等' : '');
-        const inventor = (p.inventor || []).slice(0, 3).join('、')
-          + ((p.inventor || []).length > 3 ? ' 等' : '');
-        const line = [];
-        if (p.country) line.push(esc(p.country));
-        if (p.patent_type) line.push(esc(p.patent_type));
-        if (p.publication_number) line.push(esc(p.publication_number));
-        const cls = p.ipc_main || p.cpc_main;
-        if (cls) line.push('分类 ' + esc(cls));
-        if (p.application_date) line.push('申请 ' + esc(p.application_date));
-        if (p.citation_count) line.push('被引 ' + p.citation_count);
+        line.push(`<b>${esc(TYPE_LABELS[type] || type)} · [${esc(ref)}]</b>`);
+        if (passage.snippet_type)
+          line.push(esc(SNIPPET_LABELS[passage.snippet_type] || passage.snippet_type));
+        if (e.source) line.push(esc(e.source));
+        if (e.published_date) line.push(esc(e.published_date));
+        if (citation.label) line.push(esc(citation.label));
+        if (citation.venue) line.push(esc(citation.venue));
+        if (citation.publication_number) line.push(esc(citation.publication_number));
+        if (citation.doi) line.push(`DOI: ${esc(citation.doi.replace(/^https?:\/\/(dx\.)?doi\.org\//, ''))}`);
+        if (access.license) line.push(`License: ${esc(access.license)}`);
+        if (access.pdf_status && access.pdf_status !== 'not_requested')
+          line.push(`PDF: ${esc(access.pdf_status)}`);
         const tags = [];
-        if (applicant) tags.push(`<span>申请人: ${esc(applicant)}</span>`);
-        if (inventor) tags.push(`<span>发明人: ${esc(inventor)}</span>`);
-        const pid = `p${i}`;
+        if (access.oa_pdf_url)
+          tags.push(`<a class="oa-link" href="${esc(access.oa_pdf_url)}" target="_blank" rel="noopener">PDF</a>`);
+        if (access.next_cursor) tags.push('<span>可继续读取</span>');
+        if (diagnostics.partial) tags.push('<span>partial</span>');
+        for (const warning of diagnostics.warnings || []) tags.push(`<span>${esc(warning)}</span>`);
+        const cid = `ev${i}`;
         return `
           <div class="result paper">
             <div class="top">
-              <a class="title" href="${esc(p.url)}" target="_blank" rel="noopener">
-                ${i + 1}. ${esc(p.title || p.url)}
+              <a class="title" href="${esc(e.url || '#')}" target="_blank" rel="noopener">
+                ${i + 1}. ${esc(title)}
               </a>
               ${score ? `<span class="score">${score}</span>` : ''}
             </div>
+            ${e.url ? `<div class="url">${esc(e.url)}</div>` : ''}
             <div class="meta-line">${line.join('<span>·</span>')}</div>
-            <div class="content" id="${pid}">${body}</div>
-            ${body.length > 280 ? `<span class="toggle" onclick="toggle('${pid}')">展开 ▾</span>` : ''}
+            <div class="content" id="${cid}">${body}</div>
+            ${body.length > 280 ? `<span class="toggle" onclick="toggle('${cid}')">展开 ▾</span>` : ''}
             ${tags.length ? `<div class="tags">${tags.join('')}</div>` : ''}
           </div>`;
       }).join('');
-      $('patent').innerHTML =
-        `<div class="section-title">⚙ <b>专利</b> · ${patents.length} 件（houdutech ES）</div>` + cards;
     }
 
     function toggle(id) {

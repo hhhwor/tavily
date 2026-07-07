@@ -16,7 +16,7 @@ from urllib.parse import urlparse
 
 import requests as _requests
 
-from src.models import SearchPlan
+from src.models import SearchFailure, SearchPlan
 
 MAX_QUERY_LEN = 512  # 边界校验:超长截断,防滥用
 
@@ -159,6 +159,7 @@ def rewrite_query(
     base_url: str = "https://api.siliconflow.cn/v1",
     model: str = "Qwen/Qwen2.5-7B-Instruct",
     cache_size: int = 512,
+    failures: Optional[List[SearchFailure]] = None,
 ) -> str:
     """用 LLM 将查询改写为检索友好的关键词。
 
@@ -196,6 +197,13 @@ def rewrite_query(
             cache.put(query, rewritten)
             return rewritten
     except Exception as e:
+        if failures is not None:
+            failures.append(SearchFailure(
+                stage="query_rewrite",
+                source="siliconflow",
+                code="QUERY_REWRITE_FAILED",
+                message=str(e)[:500],
+            ))
         print(f"[l0] 查询改写失败,使用原始查询: {e}")
 
     return query
@@ -216,6 +224,7 @@ def rewrite_academic_query(
     base_url: str = "https://api.siliconflow.cn/v1",
     model: str = "Qwen/Qwen2.5-7B-Instruct",
     cache_size: int = 512,
+    failures: Optional[List[SearchFailure]] = None,
 ) -> str:
     """把(可能中文/口语化的)查询改写为适合 OpenAlex 的学术检索词。
 
@@ -253,6 +262,14 @@ def rewrite_academic_query(
             cache.put(ck, rewritten)
             return rewritten
     except Exception as e:
+        if failures is not None:
+            failures.append(SearchFailure(
+                stage="academic_query_rewrite",
+                source="siliconflow",
+                type="academic",
+                code="ACADEMIC_QUERY_REWRITE_FAILED",
+                message=str(e)[:500],
+            ))
         print(f"[l0] 学术查询改写失败,用原查询: {e}")
 
     return query
@@ -293,9 +310,11 @@ def plan_query(
         patent = patent_detect and detect_patent(norm)
 
     rewritten = None
+    failures: List[SearchFailure] = []
     if rewrite and rewrite_api_key:
         rewritten = rewrite_query(
-            norm, rewrite_api_key, rewrite_base_url, rewrite_model, rewrite_cache_size
+            norm, rewrite_api_key, rewrite_base_url, rewrite_model, rewrite_cache_size,
+            failures=failures,
         )
 
     return SearchPlan(
@@ -308,6 +327,7 @@ def plan_query(
         patent=patent,
         providers=list(providers),
         top_k=top_k,
+        failures=failures,
     )
 
 

@@ -18,10 +18,14 @@
 | 参数 | 类型 | 默认 | 说明 |
 |------|------|------|------|
 | `query` | string | (必填) | 检索词 / 自然语言问题 |
-| `top_k` | int | `10` | 每块返回条数 |
+| `top_k` | int | `10` | 各检索分支重排保留上限;最终按相关性混排到 `evidence[]` |
 | `include_academic` | bool? | `null` | 学术检索(OpenAlex):`null`=按意图自动,`true`=强制开,`false`=强制关 |
 | `include_patent` | bool? | `null` | 专利检索(ES):同上 |
 | `rerank` | bool? | `null` | `null`=服务端默认,`true`=开 cross-encoder 重排(质量更高,慢数秒),`false`=走 RRF 快路径 |
+| `include_pdf_text` | bool | `false` | 是否对重排后的前几篇学术结果同步补 PDF 正文 |
+| `pdf_text_mode` | string? | `null` | `cached`=只读缓存,`sync`=允许本次下载解析 |
+| `pdf_max_results` | int? | `null` | 本次最多富化几篇 PDF |
+| `pdf_max_chars_per_result` | int? | `null` | 每篇 PDF 抽取正文返回字符上限 |
 
 ### 返回(结构化 JSON)
 
@@ -29,26 +33,46 @@
 {
   "query": "...",
   "recency": "month",            // 时效 bucket(自动识别),无则 null
-  "web": [                        // 网页结果
-    {"title", "url", "content", "score", "source", "date"}
+  "partial_failure": true,        // 任一子任务失败即为 true; evidence 仍可能可用
+  "failures": [
+    {"stage": "provider_search", "source": "openalex_local",
+     "type": "academic", "code": "PROVIDER_SEARCH_FAILED",
+     "message": "...", "recoverable": true}
   ],
-  "academic": [                   // 学术论文(命中学术意图时;否则空)
-    {"title", "url", "oa_url", "oa_landing_url", "oa_pdf_url",
-     "authors", "year", "venue", "citations", "doi",
-     "is_oa", "oa_status", "content"}
-  ],
-  "patents": [                    // 专利(命中专利意图时;否则空)
-    {"title", "url", "publication_number", "applicant", "inventor",
-     "country", "classification", "application_date", "patent_type", "content"}
+  "answerability": {
+    "status": "partial",          // answerable / partial / not_answerable
+    "confidence": "medium",       // high / medium / low / none
+    "gaps": [
+      {"code": "NO_ACADEMIC_EVIDENCE", "severity": "warning",
+       "message": "查询需要学术证据,但未返回论文证据。", "type": "academic"}
+    ]
+  },
+  "evidence": [                   // web / academic / patent 按相关性混排
+    {
+      "id": "academic:W123:pdf:0",
+      "result_id": "academic:W123",
+      "type": "academic",
+      "source": "openalex_local",
+      "title": "...",
+      "url": "...",
+      "published_date": "2026",
+      "passage": {"text": "...", "snippet_type": "pdf_text"},
+      "citation": {"label": "Smith et al., 2026", "doi": "...", "work_id": "W123"},
+      "scores": {"relevance": 0.91, "rerank_score": 0.91, "source_rank": 0},
+      "access": {"is_open": true, "license": "cc-by", "oa_pdf_url": "...", "pdf_status": "ready", "next_cursor": null},
+      "diagnostics": {"warnings": [], "partial": false, "failure_code": null}
+    }
   ],
   "meta": {"providers_used", "reranker", "elapsed_ms",
-           "counts": {"web", "academic", "patents"}}
+           "counts": {"web", "academic", "patent"}}
 }
 ```
 
-> 正文 `content` 每条截断到约 600 字以省 token。专利无原生网页,`url` 用 Google Patents 落地页。
+> 证据正文在 `passage.text` 中,每条裁剪到约 1800 字以省 token。专利无原生网页,`url` 用 Google Patents 落地页。
 >
-> 学术结果里 `url` 是论文主页面(DOI/OpenAlex),`oa_landing_url` 是 OA 落地页,`oa_pdf_url` 是 OA PDF 直链。`oa_url` 保留为兼容字段,语义是“泛化 OA 链接”(优先 landing,退化到 pdf)。
+> 学术证据的 `citation` 携带作者/年份/期刊/DOI/OpenAlex work_id;开放获取和 PDF 状态放在 `access` 中。`access.next_cursor` 非空表示 PDF 正文还有后续内容可继续读取。
+>
+> Agent 应先看 `partial_failure` 和 `answerability.gaps`。`partial_failure=true` 不代表完全失败,而是至少一路 provider / rerank / PDF 富化失败;可用证据仍在 `evidence[]`。`answerability.status=not_answerable` 时不应直接生成确定性回答。
 
 ---
 

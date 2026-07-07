@@ -72,6 +72,12 @@ class Settings:
         self.openalex_academic_detect = os.getenv("OPENALEX_ACADEMIC_DETECT", "true").lower() == "true"
         # 学术 query 改写:把自然语言问句提取为论文标题/英文检索词喂给 OpenAlex(解决召回空)
         self.openalex_query_rewrite = os.getenv("OPENALEX_QUERY_REWRITE", "true").lower() == "true"
+        # OpenAlex PDF 正文富化：默认关闭，只在请求 include_pdf_text=true 时对重排后前 N 条执行。
+        self.openalex_pdf_text_mode = os.getenv("OPENALEX_PDF_TEXT_MODE", "sync")  # cached | sync
+        self.openalex_pdf_max_results = int(os.getenv("OPENALEX_PDF_MAX_RESULTS", "2"))
+        self.openalex_pdf_max_chars = int(os.getenv("OPENALEX_PDF_MAX_CHARS", "8000"))
+        self.openalex_pdf_timeout_ms = int(os.getenv("OPENALEX_PDF_TIMEOUT_MS", "10000"))
+        self.openalex_pdf_total_budget_ms = int(os.getenv("OPENALEX_PDF_TOTAL_BUDGET_MS", "15000"))
         # 专利检索(houdutech 只读 ES;独立于 web 搜索,缺 URL 则静默关闭)
         self.patent_es_url = os.getenv("PATENT_ES_URL", "")  # https://search.houdutech.cn:9243
         self.patent_es_index = os.getenv("PATENT_ES_INDEX", "epo_docdb_read")

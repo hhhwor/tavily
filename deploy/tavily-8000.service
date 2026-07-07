@@ -1,0 +1,17 @@
+[Unit]
+Description=Tavily search MCP service on port 8000
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+User=ec2-user
+Group=ec2-user
+WorkingDirectory=/home/ec2-user/tavily
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/home/ec2-user/tavily/.venv311/bin/uvicorn src.api:app --host 0.0.0.0 --port 8000
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

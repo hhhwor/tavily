@@ -18,7 +18,7 @@ import re
 import time
 from typing import Any, Dict, List, Optional, Tuple
 
-from eval.e2e_judge import E2EBundleJudge, quality_value
+from eval.e2e_judge import E2EBundleJudge, evidence_type_counts, quality_value
 from src.engine import SearchEngine
 from src.models import SearchResponse
 
@@ -165,18 +165,19 @@ def _engine_kwargs(payload: dict) -> dict:
 
 def route_metrics(row: dict, resp: SearchResponse) -> dict:
     exp = _expected(row)
+    counts = evidence_type_counts(resp)
     checks = {
-        "academic_route": (resp.academic_query is not None) == exp["academic"],
-        "patent_route": (resp.patent_query is not None) == exp["patent"],
+        "academic_route": bool(counts["academic"]) == exp["academic"],
+        "patent_route": bool(counts["patent"]) == exp["patent"],
         "timely_route": bool(resp.time_sensitive) == exp["time_sensitive"],
     }
     required = []
     if exp["web"]:
-        required.append(bool(resp.results))
+        required.append(bool(counts["web"]))
     if exp["academic"]:
-        required.append(bool(resp.academic_results))
+        required.append(bool(counts["academic"]))
     if exp["patent"]:
-        required.append(bool(resp.patent_results))
+        required.append(bool(counts["patent"]))
     coverage = sum(required) / len(required) if required else 1.0
     return {
         **checks,
@@ -236,7 +237,7 @@ def build_report(
         f"- latency_budget_p95: {args.latency_budget_ms} ms",
         "",
         "## 总览",
-        "| Final | BundleQuality | Route | RequiredBlocks | P95 latency | LatencyScore |",
+        "| Final | BundleQuality | Route | RequiredEvidence | P95 latency | LatencyScore |",
         "|-------|---------------|-------|----------------|-------------|--------------|",
     ]
     final_text = "N/A" if final is None else f"{final:.1f}"
@@ -339,20 +340,21 @@ def main() -> None:
         resp, elapsed_ms, cache_hit = call_search(row, args, engine, response_cache)
         responses[row["query"]] = resp
         route = route_metrics(row, resp)
+        counts = evidence_type_counts(resp)
         rows.append({
             "query": row["query"],
             "type": row.get("type", ""),
             "elapsed_ms": elapsed_ms,
             "cache_hit": cache_hit,
-            "web_n": len(resp.results),
-            "academic_n": len(resp.academic_results),
-            "patent_n": len(resp.patent_results),
+            "web_n": counts["web"],
+            "academic_n": counts["academic"],
+            "patent_n": counts["patent"],
             "route": route,
         })
         print(
             f"[{idx}/{len(queries)}] {row['query'][:28]}... "
-            f"{elapsed_ms}ms web={len(resp.results)} "
-            f"acad={len(resp.academic_results)} pat={len(resp.patent_results)}"
+            f"{elapsed_ms}ms web={counts['web']} "
+            f"acad={counts['academic']} pat={counts['patent']}"
             + (" cache" if cache_hit else "")
         )
 

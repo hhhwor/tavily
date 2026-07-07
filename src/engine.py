@@ -1,18 +1,36 @@
-"""搜索引擎编排:多源并发检索 → 去重 → 重排 → Top-K。
+"""搜索引擎编排:多源并发检索 → 去重 → 重排 → Evidence。
 
-web 搜索(腾讯/百度/SerpAPI)与学术检索(OpenAlex)并发召回、独立重排,
-学术结果单独成块返回(academic_results),互不污染。
+web 搜索(腾讯/百度/SerpAPI)、学术检索(OpenAlex)与专利检索并发召回、
+独立重排,最终统一为按相关性混排的 evidence[] 返回给 Agent。
 """
 from __future__ import annotations
 
 import time
+import hashlib
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import List, Optional
+
+import requests
 
 from src.config import settings
 from src.cache import build_cache
 from src.l0 import plan_query, rewrite_academic_query
-from src.models import AcademicResult, PatentResult, SearchResponse, SearchResult
+from src.models import (
+    AcademicResult,
+    Answerability,
+    AnswerabilityGap,
+    Evidence,
+    EvidenceAccess,
+    EvidenceCitation,
+    EvidenceDiagnostics,
+    EvidencePassage,
+    EvidenceScores,
+    PatentResult,
+    SearchFailure,
+    SearchPlan,
+    SearchResponse,
+    SearchResult,
+)
 from src.pipeline.rerank import (
     AcademicReranker,
     PatentReranker,
@@ -21,6 +39,143 @@ from src.pipeline.rerank import (
     build_text_scorer,
 )
 from src.providers.base import SearchProvider
+
+_EVIDENCE_PASSAGE_MAX_CHARS = 1800
+
+
+def _short_hash(*values: object) -> str:
+    raw = "|".join(str(v or "") for v in values)
+    return hashlib.sha1(raw.encode("utf-8", errors="ignore")).hexdigest()[:12]
+
+
+def _clip_evidence_text(text: str) -> tuple[str, bool]:
+    text = (text or "").strip()
+    if len(text) <= _EVIDENCE_PASSAGE_MAX_CHARS:
+        return text, False
+    return text[:_EVIDENCE_PASSAGE_MAX_CHARS].rstrip() + "…", True
+
+
+def _evidence_relevance(result: SearchResult, rank: int) -> float:
+    if result.rerank_score is not None:
+        return float(result.rerank_score)
+    return 1.0 / max(1, rank + 1)
+
+
+def _citation_label(authors: List[str], year: Optional[int], title: str) -> str:
+    if authors:
+        first = authors[0].split(",")[0].strip() or authors[0].strip()
+        suffix = " et al." if len(authors) > 1 else ""
+        return f"{first}{suffix}, {year}" if year else f"{first}{suffix}"
+    return f"{title[:48]}, {year}" if year else title[:64]
+
+
+def _search_failure(
+    *,
+    stage: str,
+    source: str,
+    source_type: Optional[str],
+    code: str,
+    message: object,
+    recoverable: bool = True,
+) -> SearchFailure:
+    return SearchFailure(
+        stage=stage,
+        source=source,
+        type=source_type,
+        code=code,
+        message=str(message)[:500],
+        recoverable=recoverable,
+    )
+
+
+def _evidence_type_counts(evidence: List[Evidence]) -> dict[str, int]:
+    counts = {"web": 0, "academic": 0, "patent": 0}
+    for item in evidence:
+        if item.type in counts:
+            counts[item.type] += 1
+    return counts
+
+
+def _build_answerability(
+    evidence: List[Evidence],
+    failures: List[SearchFailure],
+    *,
+    expected_web: bool,
+    expected_academic: bool,
+    expected_patent: bool,
+    include_pdf_text: bool,
+) -> Answerability:
+    counts = _evidence_type_counts(evidence)
+    gaps: List[AnswerabilityGap] = []
+
+    if failures:
+        gaps.append(AnswerabilityGap(
+            code="PARTIAL_FAILURE",
+            severity="warning",
+            message=f"{len(failures)} 个检索子任务失败; 详见 failures[]。",
+        ))
+
+    expected = [
+        ("web", expected_web, "NO_WEB_EVIDENCE", "未返回网页证据。"),
+        ("academic", expected_academic, "NO_ACADEMIC_EVIDENCE", "查询需要学术证据,但未返回论文证据。"),
+        ("patent", expected_patent, "NO_PATENT_EVIDENCE", "查询需要专利证据,但未返回专利证据。"),
+    ]
+    for source_type, needed, code, message in expected:
+        if needed and counts[source_type] == 0:
+            gaps.append(AnswerabilityGap(
+                code=code,
+                severity="warning",
+                message=message,
+                type=source_type,
+            ))
+
+    if not evidence:
+        gaps.insert(0, AnswerabilityGap(
+            code="NO_EVIDENCE",
+            severity="blocking",
+            message="没有可用证据,不应直接回答。",
+        ))
+    elif len(evidence) < 3:
+        gaps.append(AnswerabilityGap(
+            code="LOW_EVIDENCE_COUNT",
+            severity="info",
+            message=f"仅返回 {len(evidence)} 条证据,回答时应降低确定性。",
+        ))
+
+    if include_pdf_text:
+        pdf_gap_count = sum(
+            1 for item in evidence
+            if item.type == "academic"
+            and item.access.oa_pdf_url
+            and item.passage.snippet_type != "pdf_text"
+        )
+        if pdf_gap_count:
+            gaps.append(AnswerabilityGap(
+                code="PDF_TEXT_UNAVAILABLE",
+                severity="warning",
+                message=f"{pdf_gap_count} 条论文证据只有摘要或元数据,未拿到 PDF 正文。",
+                type="academic",
+            ))
+
+    partial_count = sum(1 for item in evidence if item.diagnostics.partial)
+    if partial_count:
+        gaps.append(AnswerabilityGap(
+            code="PARTIAL_EVIDENCE",
+            severity="info",
+            message=f"{partial_count} 条证据被截断或仍有后续内容。",
+        ))
+
+    if not evidence:
+        return Answerability(status="not_answerable", confidence="none", gaps=gaps)
+    if any(gap.severity in {"blocking", "warning"} for gap in gaps):
+        missing_required = any(
+            gap.code in {"NO_WEB_EVIDENCE", "NO_ACADEMIC_EVIDENCE", "NO_PATENT_EVIDENCE"}
+            for gap in gaps
+        )
+        confidence = "low" if len(evidence) < 3 or missing_required else "medium"
+        return Answerability(status="partial", confidence=confidence, gaps=gaps)
+    confidence = "high" if len(evidence) >= 3 else "medium"
+    return Answerability(status="answerable", confidence=confidence, gaps=gaps)
 
 
 def _build_providers() -> List[SearchProvider]:
@@ -148,6 +303,258 @@ class SearchEngine:
             self._text_scorer_cache[eff] = r
         return r
 
+    @staticmethod
+    def _build_evidence(
+        ranked: List[SearchResult],
+        ranked_papers: List[AcademicResult],
+        ranked_patents: List[PatentResult],
+    ) -> List[Evidence]:
+        evidence: List[Evidence] = []
+
+        for rank, r in enumerate(ranked):
+            text, clipped = _clip_evidence_text(r.content or r.snippet or r.title)
+            if not text:
+                continue
+            result_key = _short_hash("web", r.source, r.url, r.title)
+            warnings = ["TRUNCATED_EVIDENCE"] if clipped else []
+            evidence.append(Evidence(
+                id=f"web:{result_key}:content",
+                result_id=f"web:{result_key}",
+                type="web",
+                source=r.source,
+                title=r.title,
+                url=r.url,
+                published_date=r.date,
+                passage=EvidencePassage(
+                    text=text,
+                    snippet_type="web_content" if r.content else "web_snippet",
+                    char_start=0,
+                    char_end=len(text),
+                ),
+                citation=EvidenceCitation(label=r.site or r.title[:64], venue=r.site),
+                scores=EvidenceScores(
+                    relevance=_evidence_relevance(r, rank),
+                    source_rank=rank,
+                    rerank_score=r.rerank_score,
+                    confidence=_evidence_relevance(r, rank),
+                ),
+                access=EvidenceAccess(is_open=bool(r.url)),
+                diagnostics=EvidenceDiagnostics(warnings=warnings, partial=clipped),
+            ))
+
+        for rank, p in enumerate(ranked_papers):
+            result_id = f"academic:{p.work_id}" if p.work_id else f"academic:{_short_hash(p.doi, p.url, p.title)}"
+            source_text = p.pdf_text or p.content or p.snippet or p.title
+            text, clipped = _clip_evidence_text(source_text)
+            if not text:
+                continue
+            snippet_type = "pdf_text" if p.pdf_text else "abstract"
+            evidence_id = f"{result_id}:pdf:0" if p.pdf_text else f"{result_id}:abstract"
+            warnings: List[str] = []
+            if clipped or p.pdf_next_cursor:
+                warnings.append("TRUNCATED_EVIDENCE")
+            if p.oa_pdf_url and not p.pdf_text and p.pdf_status in {"not_requested", "no_pdf_url"}:
+                warnings.append("PDF_TEXT_UNAVAILABLE")
+            if p.pdf_error_code:
+                warnings.append(p.pdf_error_code)
+            evidence.append(Evidence(
+                id=evidence_id,
+                result_id=result_id,
+                type="academic",
+                source=p.source,
+                title=p.title,
+                url=p.url or p.oa_landing_url or p.oa_pdf_url,
+                published_date=p.date or (str(p.year) if p.year else ""),
+                language=(p.raw or {}).get("language"),
+                passage=EvidencePassage(
+                    text=text,
+                    snippet_type=snippet_type,
+                    char_start=0,
+                    char_end=len(text),
+                    chunk_index=0 if p.pdf_text else None,
+                ),
+                citation=EvidenceCitation(
+                    label=_citation_label(p.authors, p.year, p.title),
+                    authors=p.authors,
+                    year=p.year,
+                    venue=p.venue,
+                    doi=p.doi or None,
+                    work_id=p.work_id or None,
+                ),
+                scores=EvidenceScores(
+                    relevance=_evidence_relevance(p, rank),
+                    source_rank=rank,
+                    rerank_score=p.rerank_score,
+                    authority=float(p.citations) if p.citations else None,
+                    confidence=_evidence_relevance(p, rank),
+                ),
+                access=EvidenceAccess(
+                    is_open=p.is_oa,
+                    license=p.license or None,
+                    oa_pdf_url=p.oa_pdf_url or None,
+                    pdf_status=p.pdf_status,
+                    next_cursor=p.pdf_next_cursor,
+                ),
+                diagnostics=EvidenceDiagnostics(
+                    warnings=warnings,
+                    partial=bool(clipped or p.pdf_next_cursor),
+                    failure_code=p.pdf_error_code,
+                ),
+            ))
+
+        for rank, p in enumerate(ranked_patents):
+            pub = p.publication_number or p.application_number or _short_hash(p.url, p.title)
+            result_id = f"patent:{pub}"
+            text, clipped = _clip_evidence_text(p.content or p.snippet or p.title)
+            if not text:
+                continue
+            warnings = ["TRUNCATED_EVIDENCE"] if clipped else []
+            evidence.append(Evidence(
+                id=f"{result_id}:abstract",
+                result_id=result_id,
+                type="patent",
+                source=p.source,
+                title=p.title,
+                url=p.url,
+                published_date=p.publication_date or p.application_date,
+                passage=EvidencePassage(
+                    text=text,
+                    snippet_type="patent_abstract",
+                    char_start=0,
+                    char_end=len(text),
+                ),
+                citation=EvidenceCitation(
+                    label=pub,
+                    publication_number=p.publication_number or None,
+                ),
+                scores=EvidenceScores(
+                    relevance=_evidence_relevance(p, rank),
+                    source_rank=rank,
+                    rerank_score=p.rerank_score,
+                    authority=float(p.citation_count) if p.citation_count else None,
+                    confidence=_evidence_relevance(p, rank),
+                ),
+                access=EvidenceAccess(is_open=bool(p.url)),
+                diagnostics=EvidenceDiagnostics(warnings=warnings, partial=clipped),
+            ))
+
+        return sorted(
+            evidence,
+            key=lambda item: (
+                item.scores.relevance if item.scores.relevance is not None else 0.0,
+                -(item.scores.source_rank or 0),
+            ),
+            reverse=True,
+        )
+
+    def _enrich_academic_pdf_text(
+        self,
+        papers: List[AcademicResult],
+        *,
+        include_pdf_text: bool,
+        pdf_text_mode: Optional[str],
+        pdf_max_results: Optional[int],
+        pdf_max_chars_per_result: Optional[int],
+        pdf_timeout_ms: Optional[int],
+    ) -> None:
+        """Optionally attach extracted PDF text to ranked academic results.
+
+        This is intentionally a post-rerank enrichment step: it never affects
+        recall/ranking, and per-paper failures are represented on the result.
+        """
+        if not include_pdf_text or not papers:
+            return
+
+        mode = (pdf_text_mode or settings.openalex_pdf_text_mode or "sync").strip().lower()
+        if mode not in {"cached", "sync"}:
+            mode = "sync"
+        max_results = settings.openalex_pdf_max_results if pdf_max_results is None else pdf_max_results
+        max_results = max(0, min(max_results, 5))
+        max_chars = (
+            settings.openalex_pdf_max_chars
+            if pdf_max_chars_per_result is None
+            else pdf_max_chars_per_result
+        )
+        max_chars = max(1, min(max_chars, 30000))
+        timeout_ms = settings.openalex_pdf_timeout_ms if pdf_timeout_ms is None else pdf_timeout_ms
+        timeout_ms = max(1000, min(timeout_ms, 60000))
+        if max_results <= 0:
+            return
+
+        candidates: List[AcademicResult] = []
+        for paper in papers:
+            if not paper.work_id:
+                paper.pdf_status = "failed"
+                paper.pdf_error_code = "WORK_ID_MISSING"
+                continue
+            if not paper.oa_pdf_url:
+                paper.pdf_status = "no_pdf_url"
+                paper.pdf_error_code = "PDF_URL_MISSING"
+                continue
+            candidates.append(paper)
+            if len(candidates) >= max_results:
+                break
+        if not candidates:
+            return
+
+        headers = {"Content-Type": "application/json"}
+        if settings.openalex_api_key:
+            headers["X-API-Key"] = settings.openalex_api_key
+        endpoint = f"{settings.openalex_api_url.rstrip('/')}/openalex/pdf/extract"
+        deadline = time.monotonic() + (settings.openalex_pdf_total_budget_ms / 1000)
+
+        def _enrich_one(paper: AcademicResult) -> None:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                paper.pdf_status = "timeout"
+                paper.pdf_error_code = "PDF_TOTAL_BUDGET_EXCEEDED"
+                return
+            budget_ms = min(timeout_ms, int(remaining * 1000))
+            try:
+                resp = requests.post(
+                    endpoint,
+                    json={
+                        "work_id": paper.work_id,
+                        "mode": mode,
+                        "max_chars": max_chars,
+                        "timeout_ms": budget_ms,
+                    },
+                    headers=headers,
+                    timeout=max(1, budget_ms / 1000 + 2),
+                )
+                resp.raise_for_status()
+                data = resp.json()
+            except requests.Timeout:
+                paper.pdf_status = "timeout"
+                paper.pdf_error_code = "DOWNLOAD_TIMEOUT"
+                return
+            except Exception as exc:
+                paper.pdf_status = "failed"
+                paper.pdf_error_code = "PDF_ENRICH_FAILED"
+                paper.pdf_error_message = str(exc)[:300]
+                return
+
+            status = data.get("status") or "failed"
+            paper.pdf_status = status
+            paper.pdf_text = data.get("text") or ""
+            paper.pdf_pages = data.get("pages")
+            paper.pdf_text_length = int(data.get("text_length") or 0)
+            paper.pdf_returned_chars = len(paper.pdf_text)
+            paper.pdf_next_cursor = data.get("next_cursor")
+            paper.pdf_error_code = data.get("error_code")
+            paper.pdf_error_message = data.get("error_message")
+
+        with ThreadPoolExecutor(max_workers=len(candidates)) as pool:
+            futures = {pool.submit(_enrich_one, paper): paper for paper in candidates}
+            for future in as_completed(futures):
+                paper = futures[future]
+                try:
+                    future.result()
+                except Exception as exc:
+                    paper.pdf_status = "failed"
+                    paper.pdf_error_code = "PDF_ENRICH_WORKER_FAILED"
+                    paper.pdf_error_message = str(exc)[:300]
+
     def search(
         self, query: str, top_k: int = 0, include_academic: Optional[bool] = None,
         include_patent: Optional[bool] = None,
@@ -158,6 +565,11 @@ class SearchEngine:
         rerank_threshold: Optional[float] = None,
         fusion_enabled: Optional[bool] = None,
         rewrite_enabled: Optional[bool] = None,
+        include_pdf_text: bool = False,
+        pdf_text_mode: Optional[str] = None,
+        pdf_max_results: Optional[int] = None,
+        pdf_max_chars_per_result: Optional[int] = None,
+        pdf_timeout_ms: Optional[int] = None,
     ) -> SearchResponse:
         top_k = top_k or settings.default_top_k
         t0 = time.time()
@@ -188,6 +600,23 @@ class SearchEngine:
         active = [p for p in self.providers if p.name in plan.providers]
         do_academic = self.academic_provider is not None and plan.academic
         do_patent = self.patent_provider is not None and plan.patent
+        failures: List[SearchFailure] = list(plan.failures)
+        if plan.academic and self.academic_provider is None:
+            failures.append(_search_failure(
+                stage="routing",
+                source="openalex_local",
+                source_type="academic",
+                code="PROVIDER_UNAVAILABLE",
+                message="学术检索被请求或自动触发,但 OpenAlex provider 未启用。",
+            ))
+        if plan.patent and self.patent_provider is None:
+            failures.append(_search_failure(
+                stage="routing",
+                source="patent_es",
+                source_type="patent",
+                code="PROVIDER_UNAVAILABLE",
+                message="专利检索被请求或自动触发,但 Patent ES provider 未启用。",
+            ))
         # 用改写后的查询检索(若有),否则用规范化查询
         search_query = plan.rewritten_query or plan.normalized_query
         # 学术检索单独改写 query:把自然语言问句提取为论文标题/英文检索词(web 仍用原 query)
@@ -197,6 +626,7 @@ class SearchEngine:
                 search_query, settings.siliconflow_api_key,
                 settings.siliconflow_base_url, settings.rewrite_model,
                 settings.rewrite_cache_size,
+                failures=failures,
             )
         ctx = build_rerank_context(search_query, time_sensitive=plan.time_sensitive)
 
@@ -243,6 +673,13 @@ class SearchEngine:
                             raw.extend(items)
                             used.append(name)
                     except Exception as e:
+                        failures.append(_search_failure(
+                            stage="provider_search",
+                            source=name,
+                            source_type=kind,
+                            code="PROVIDER_SEARCH_FAILED",
+                            message=e,
+                        ))
                         print(f"[engine] provider {name} 失败: {e}")
 
         # 2) 多路独立重排(并发),复用线程安全的 text_scorer;请求上下文显式传入。
@@ -263,24 +700,89 @@ class SearchEngine:
             ranked = patent_reranker.rerank_with_context(search_query, patents, top_k, ctx)
             return [r for r in ranked if isinstance(r, PatentResult)]
 
-        # 多于一路有结果时并发重排;否则顺序执行(零线程开销)
-        rank_jobs = [_rank_web]
+        ranked: List[SearchResult] = []
+        ranked_papers: List[AcademicResult] = []
+        ranked_patents: List[PatentResult] = []
+
+        rank_jobs = [("web", _rank_web)]
         if papers:
-            rank_jobs.append(_rank_academic)
+            rank_jobs.append(("academic", _rank_academic))
         if patents:
-            rank_jobs.append(_rank_patent)
+            rank_jobs.append(("patent", _rank_patent))
+
+        def _fallback_rank(kind: str):
+            if kind == "academic":
+                return papers[:top_k]
+            if kind == "patent":
+                return patents[:top_k]
+            return raw[:top_k]
+
+        def _assign_ranked(kind: str, items) -> None:
+            nonlocal ranked, ranked_papers, ranked_patents
+            if kind == "academic":
+                ranked_papers = [r for r in items if isinstance(r, AcademicResult)]
+            elif kind == "patent":
+                ranked_patents = [r for r in items if isinstance(r, PatentResult)]
+            else:
+                ranked = [r for r in items if isinstance(r, SearchResult)]
+
         if len(rank_jobs) > 1:
             with ThreadPoolExecutor(max_workers=len(rank_jobs)) as pool:
-                fut_web = pool.submit(_rank_web)
-                fut_acad = pool.submit(_rank_academic)
-                fut_pat = pool.submit(_rank_patent)
-                ranked = fut_web.result()
-                ranked_papers = fut_acad.result()
-                ranked_patents = fut_pat.result()
+                futures = {pool.submit(fn): kind for kind, fn in rank_jobs}
+                for future in as_completed(futures):
+                    kind = futures[future]
+                    try:
+                        _assign_ranked(kind, future.result())
+                    except Exception as e:
+                        failures.append(_search_failure(
+                            stage="rerank",
+                            source=f"{kind}_reranker",
+                            source_type=kind,
+                            code="RERANK_FAILED",
+                            message=e,
+                        ))
+                        _assign_ranked(kind, _fallback_rank(kind))
         else:
-            ranked = _rank_web()
-            ranked_papers = _rank_academic()
-            ranked_patents = _rank_patent()
+            for kind, fn in rank_jobs:
+                try:
+                    _assign_ranked(kind, fn())
+                except Exception as e:
+                    failures.append(_search_failure(
+                        stage="rerank",
+                        source=f"{kind}_reranker",
+                        source_type=kind,
+                        code="RERANK_FAILED",
+                        message=e,
+                    ))
+                    _assign_ranked(kind, _fallback_rank(kind))
+
+        self._enrich_academic_pdf_text(
+            ranked_papers,
+            include_pdf_text=include_pdf_text,
+            pdf_text_mode=pdf_text_mode,
+            pdf_max_results=pdf_max_results,
+            pdf_max_chars_per_result=pdf_max_chars_per_result,
+            pdf_timeout_ms=pdf_timeout_ms,
+        )
+        if include_pdf_text:
+            for paper in ranked_papers:
+                if paper.pdf_error_code:
+                    failures.append(_search_failure(
+                        stage="pdf_enrichment",
+                        source=paper.work_id or paper.doi or paper.title,
+                        source_type="academic",
+                        code=paper.pdf_error_code,
+                        message=paper.pdf_error_message or paper.pdf_status,
+                    ))
+        evidence = self._build_evidence(ranked, ranked_papers, ranked_patents)
+        answerability = _build_answerability(
+            evidence,
+            failures,
+            expected_web=bool(active),
+            expected_academic=plan.academic,
+            expected_patent=plan.patent,
+            include_pdf_text=include_pdf_text,
+        )
 
         return SearchResponse(
             query=query,
@@ -288,12 +790,11 @@ class SearchEngine:
             rewritten_query=plan.rewritten_query,
             recency=plan.recency,
             time_sensitive=plan.time_sensitive,
-            results=ranked,
-            academic_results=ranked_papers,
-            academic_query=academic_query if do_academic else None,
-            patent_results=ranked_patents,
-            patent_query=search_query if do_patent else None,
-            count=len(ranked),
+            evidence=evidence,
+            partial_failure=bool(failures),
+            failures=failures,
+            answerability=answerability,
+            count=len(evidence),
             providers_used=used,
             reranker=text_scorer.name,
             elapsed_ms=int((time.time() - t0) * 1000),
@@ -310,34 +811,18 @@ if __name__ == "__main__":
         + (f"  rewrite={resp.rewritten_query!r}" if resp.rewritten_query else "")
         + f"\n recency={resp.recency} time_sensitive={resp.time_sensitive}\n"
         f" sources={resp.providers_used}  reranker={resp.reranker}  "
-        f"{resp.count} 条 web"
-        + (f" + {len(resp.academic_results)} 条论文" if resp.academic_results else "")
-        + (f" + {len(resp.patent_results)} 条专利" if resp.patent_results else "")
+        f"{resp.count} 条 evidence"
         + f"  {resp.elapsed_ms}ms\n"
+        f" answerability={resp.answerability.status}/{resp.answerability.confidence} "
+        f"partial_failure={resp.partial_failure}\n"
     )
-    for i, r in enumerate(resp.results, 1):
-        rs = f" rerank={r.rerank_score:.3f}" if r.rerank_score is not None else ""
-        print(f"[{i}] {r.title}  ({r.source} | {r.site} {r.date}){rs}")
-        print(f"    {r.url}")
-        print(f"    {(r.snippet or r.content)[:110]}\n")
-
-    if resp.academic_results:
-        print(" ── 学术论文 ──")
-        for i, p in enumerate(resp.academic_results, 1):
-            rs = f" rerank={p.rerank_score:.3f}" if p.rerank_score is not None else ""
-            authors = ", ".join(p.authors[:3]) + ("等" if len(p.authors) > 3 else "")
-            print(f"[{i}] {p.title}  ({p.year} | {p.venue} | 被引{p.citations}){rs}")
-            print(f"    {authors}")
-            print(f"    {p.url}")
-            print(f"    {(p.snippet or p.content)[:110]}\n")
-
-    if resp.patent_results:
-        print(" ── 专利 ──")
-        for i, p in enumerate(resp.patent_results, 1):
-            rs = f" rerank={p.rerank_score:.3f}" if p.rerank_score is not None else ""
-            applicant = ", ".join(p.applicant[:2]) + ("等" if len(p.applicant) > 2 else "")
-            cls = p.ipc_main or p.cpc_main or "-"
-            print(f"[{i}] {p.title}  ({p.country} {p.patent_type} | {p.publication_number} | 分类 {cls}){rs}")
-            print(f"    申请人: {applicant}  申请日: {p.application_date}")
-            print(f"    {p.url}")
-            print(f"    {(p.snippet or p.content)[:110]}\n")
+    for gap in resp.answerability.gaps:
+        print(f" gap[{gap.severity}] {gap.code}: {gap.message}")
+    for failure in resp.failures:
+        print(f" failure {failure.stage}/{failure.source} {failure.code}: {failure.message}")
+    for i, e in enumerate(resp.evidence, 1):
+        score = e.scores.relevance
+        rs = f" score={score:.3f}" if score is not None else ""
+        print(f"[{i}] {e.type} {e.title}  ({e.source} | {e.published_date}){rs}")
+        print(f"    {e.url}")
+        print(f"    {e.passage.text[:110]}\n")

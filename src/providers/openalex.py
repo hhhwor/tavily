@@ -151,8 +151,7 @@ class OpenAlexProvider(SearchProvider):
             resp.raise_for_status()
             hits = resp.json().get("results", [])
         except Exception as e:
-            print(f"[openalex] 检索失败: {e}")
-            return []
+            raise RuntimeError(f"OpenAlex 检索失败: {e}") from e
 
         return self._normalize(hits)[:size]
 
@@ -192,6 +191,7 @@ class OpenAlexProvider(SearchProvider):
             score=h.get("_score"),
             source=self.name,
             authors=authors,
+            work_id=work_id,
             year=h.get("publication_year"),
             venue=venue,
             citations=h.get("cited_by_count", 0) or 0,
@@ -199,6 +199,8 @@ class OpenAlexProvider(SearchProvider):
             oa_url=oa_url,
             oa_landing_url=oa_landing_url,
             oa_pdf_url=oa_pdf_url,
+            license=(h.get("license", "") or ""),
+            license_id=(h.get("license_id", "") or ""),
             is_oa=is_oa,
             oa_status=(h.get("oa_status", "") or ""),
             topic=h.get("primary_topic", "") or "",

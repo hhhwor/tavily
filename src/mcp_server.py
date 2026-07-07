@@ -1,7 +1,7 @@
 """进程内 MCP server:把搜索引擎包成 MCP 工具,与 FastAPI 同进程挂载。
 
 传输:Streamable HTTP(stateless + JSON 响应),由 src/api.py 挂在主应用 `/mcp` 下。
-工具:search —— query → 结构化 {web, academic, patents} 结果,正文截断、LLM-ready。
+工具:search —— query → 结构化 evidence[] 结果,正文截断、LLM-ready。
 
 引擎 search() 是同步阻塞(内部 ThreadPoolExecutor + 网络 + 重排),故在异步工具里用
 anyio.to_thread 卸到线程池,避免阻塞事件循环影响并发请求。
@@ -16,8 +16,6 @@ from mcp.server.fastmcp import FastMCP
 from mcp.server.transport_security import TransportSecuritySettings
 
 from src.engine import SearchEngine
-
-_CONTENT_CAP = 600  # 每条正文截断字符数,省 token
 
 
 def _transport_security() -> Optional[TransportSecuritySettings]:
@@ -40,9 +38,12 @@ def _transport_security() -> Optional[TransportSecuritySettings]:
     return None
 
 
-def _trim(s: Optional[str], n: int = _CONTENT_CAP) -> str:
-    s = s or ""
-    return s if len(s) <= n else s[:n].rstrip() + "…"
+def _evidence_counts(evidence: list[Any]) -> dict[str, int]:
+    counts = {"web": 0, "academic": 0, "patent": 0}
+    for item in evidence:
+        if item.type in counts:
+            counts[item.type] += 1
+    return counts
 
 
 def build_mcp(engine: SearchEngine) -> FastMCP:
@@ -65,9 +66,9 @@ def build_mcp(engine: SearchEngine) -> FastMCP:
             "搜索网络并返回 LLM-ready 的结构化结果。当回答需要外部或最新信息"
             "(新闻、事实核查、技术细节、时效性问题)时调用,而不要凭记忆作答。"
             "学术与专利意图会自动识别;也可用 include_academic / include_patent 强制开关。"
-            "返回 web 结果,命中时附带学术论文(authors/year/venue/citations/doi/"
-            "oa_landing_url/oa_pdf_url/is_oa/oa_status)与专利(公开号/申请人/发明人/分类)"
-            "各成一块。"
+            "返回按相关性混排的 evidence[],每条证据包含类型、来源、引用元数据、正文片段、"
+            "授权/PDF 状态和诊断信息。先检查 answerability.gaps 与 failures; "
+            "partial_failure=true 表示至少一路子任务失败但已有证据仍可使用。"
         ),
     )
     async def search(
@@ -76,62 +77,39 @@ def build_mcp(engine: SearchEngine) -> FastMCP:
         include_academic: Optional[bool] = None,
         include_patent: Optional[bool] = None,
         rerank: Optional[bool] = None,
+        include_pdf_text: bool = False,
+        pdf_text_mode: Optional[str] = None,
+        pdf_max_results: Optional[int] = None,
+        pdf_max_chars_per_result: Optional[int] = None,
     ) -> dict[str, Any]:
         """query: 检索词。top_k: 返回条数(默认 10)。
         include_academic / include_patent: None=按查询意图自动判定,true=强制开,false=强制关。
-        rerank: None=服务端默认,true=开 cross-encoder 重排(质量更高,慢数秒),false=走 RRF 快路径。"""
+        rerank: None=服务端默认,true=开 cross-encoder 重排(质量更高,慢数秒),false=走 RRF 快路径。
+        include_pdf_text: true 时对重排后的前几篇学术结果同步补 PDF 正文。
+        pdf_text_mode: cached 只读缓存,sync 允许本次请求下载解析。"""
         resp = await anyio.to_thread.run_sync(
             lambda: engine.search(
                 query, top_k, include_academic, include_patent,
                 rerank_enabled=rerank,
+                include_pdf_text=include_pdf_text,
+                pdf_text_mode=pdf_text_mode,
+                pdf_max_results=pdf_max_results,
+                pdf_max_chars_per_result=pdf_max_chars_per_result,
             )
         )
-
-        def _web(r):
-            return {
-                "title": r.title, "url": r.url,
-                "content": _trim(r.content or r.snippet),
-                "score": r.rerank_score if r.rerank_score is not None else r.score,
-                "source": r.source, "date": r.date,
-            }
-
-        def _paper(p):
-            return {
-                "title": p.title, "url": p.url,
-                "oa_url": p.oa_url,
-                "oa_landing_url": p.oa_landing_url,
-                "oa_pdf_url": p.oa_pdf_url,
-                "authors": p.authors[:6], "year": p.year, "venue": p.venue,
-                "citations": p.citations, "doi": p.doi, "is_oa": p.is_oa,
-                "oa_status": p.oa_status,
-                "content": _trim(p.content or p.snippet),
-            }
-
-        def _pat(p):
-            return {
-                "title": p.title, "url": p.url,
-                "publication_number": p.publication_number,
-                "applicant": p.applicant, "inventor": p.inventor,
-                "country": p.country, "classification": p.ipc_main or p.cpc_main,
-                "application_date": p.application_date, "patent_type": p.patent_type,
-                "content": _trim(p.content or p.snippet),
-            }
 
         return {
             "query": resp.query,
             "recency": resp.recency,
-            "web": [_web(r) for r in resp.results],
-            "academic": [_paper(p) for p in resp.academic_results],
-            "patents": [_pat(p) for p in resp.patent_results],
+            "partial_failure": resp.partial_failure,
+            "failures": [f.model_dump() for f in resp.failures],
+            "answerability": resp.answerability.model_dump(),
+            "evidence": [e.model_dump() for e in resp.evidence],
             "meta": {
                 "providers_used": resp.providers_used,
                 "reranker": resp.reranker,
                 "elapsed_ms": resp.elapsed_ms,
-                "counts": {
-                    "web": len(resp.results),
-                    "academic": len(resp.academic_results),
-                    "patents": len(resp.patent_results),
-                },
+                "counts": _evidence_counts(resp.evidence),
             },
         }
 

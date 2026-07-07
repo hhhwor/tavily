@@ -121,8 +121,7 @@ class PatentEsProvider(SearchProvider):
             resp.raise_for_status()
             hits = resp.json().get("hits", {}).get("hits", [])
         except Exception as e:
-            print(f"[patent_es] 检索失败: {e}")
-            return []
+            raise RuntimeError(f"Patent ES 检索失败: {e}") from e
 
         return self._normalize(hits)[:size]
 

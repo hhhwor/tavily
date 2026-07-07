@@ -1,4 +1,4 @@
-"""LLM judge for end-to-end search response bundles."""
+"""LLM judge for end-to-end search evidence bundles."""
 from __future__ import annotations
 
 import hashlib
@@ -8,7 +8,7 @@ import re
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any, Dict, List, Optional, Tuple
 
-from src.models import AcademicResult, PatentResult, SearchResponse, SearchResult
+from src.models import Evidence, SearchResponse
 
 _CACHE_DIR = "eval/cache"
 
@@ -41,9 +41,9 @@ evidence:
 0 = 缺少可用证据
 """
 
-_PAIRWISE_RUBRIC = """你是使用搜索工具的大模型评测员。现在要比较两个搜索引擎给同一个 agent 任务返回的证据包:
-- full_agent: 可返回 web、academic_results、patent_results
-- baidu_only: 只返回百度 web 结果
+_PAIRWISE_RUBRIC = """你是使用搜索工具的大模型评测员。现在要比较两个搜索引擎给同一个 agent 任务返回的 evidence[] 证据包:
+- full_agent: evidence[] 中可混合 web / academic / patent 证据
+- baidu_only: evidence[] 中通常只有百度 web 证据
 
 任务通常是技术尽调/R&D 情报,要求大模型综合:
 1. 学术研究进展或关键论文
@@ -51,7 +51,7 @@ _PAIRWISE_RUBRIC = """你是使用搜索工具的大模型评测员。现在要�
 3. 产业/市场/公司信号
 4. 可执行的机会、风险或下一步建议
 
-只根据给出的证据包评估,不要使用外部知识补充。判断哪个结果包更适合交给大模型生成最终报告。
+只根据给出的证据包评估,不要使用外部知识补充。判断哪个 evidence[] 更适合交给大模型生成最终报告。
 
 请只输出 JSON,不要解释性前后缀:
 {"winner":"full_agent|baidu_only|tie","full_score":0-5,"baidu_score":0-5,"research":0-2,"patent":0-2,"synthesis":0-2,"reason":"不超过60字"}
@@ -71,38 +71,65 @@ research/patent/synthesis 分别评 full_agent 相对 baidu_only 的优势:
 """
 
 
-def _result_summary(result: SearchResult) -> dict:
-    text = result.content or result.snippet or ""
-    item = {
-        "title": result.title[:180],
-        "url": result.url,
-        "source": result.source,
-        "site": result.site,
-        "date": result.date,
-        "snippet": text[:700],
+def evidence_type_counts(resp: SearchResponse) -> Dict[str, int]:
+    counts = {"web": 0, "academic": 0, "patent": 0}
+    for item in resp.evidence:
+        if item.type in counts:
+            counts[item.type] += 1
+    return counts
+
+
+def _evidence_summary(item: Evidence, ref: str) -> dict:
+    citation = item.citation
+    access = item.access
+    diagnostics = item.diagnostics
+    scores = item.scores
+    return {
+        "ref": ref,
+        "type": item.type,
+        "title": item.title[:180],
+        "url": item.url,
+        "source": item.source,
+        "published_date": item.published_date,
+        "snippet_type": item.passage.snippet_type,
+        "text": item.passage.text[:900],
+        "citation": {
+            "label": citation.label,
+            "authors": citation.authors[:6],
+            "year": citation.year,
+            "venue": citation.venue,
+            "doi": citation.doi,
+            "work_id": citation.work_id,
+            "publication_number": citation.publication_number,
+        },
+        "scores": {
+            "relevance": scores.relevance,
+            "source_rank": scores.source_rank,
+            "rerank_score": scores.rerank_score,
+            "authority": scores.authority,
+            "confidence": scores.confidence,
+        },
+        "access": {
+            "is_open": access.is_open,
+            "license": access.license,
+            "oa_pdf_url": access.oa_pdf_url,
+            "pdf_status": access.pdf_status,
+            "next_cursor": access.next_cursor,
+        },
+        "diagnostics": {
+            "warnings": diagnostics.warnings,
+            "partial": diagnostics.partial,
+            "failure_code": diagnostics.failure_code,
+        },
     }
-    if isinstance(result, AcademicResult):
-        item.update({
-            "year": result.year,
-            "venue": result.venue,
-            "citations": result.citations,
-            "doi": result.doi,
-            "is_oa": result.is_oa,
-        })
-    if isinstance(result, PatentResult):
-        item.update({
-            "publication_number": result.publication_number,
-            "applicant": result.applicant[:4],
-            "application_date": result.application_date,
-            "publication_date": result.publication_date,
-            "country": result.country,
-            "ipc_main": result.ipc_main,
-            "cpc_main": result.cpc_main,
-        })
-    return item
 
 
 def compact_response(resp: SearchResponse, per_block_k: int = 5) -> dict:
+    refs: Dict[str, int] = {}
+    evidence = []
+    for item in resp.evidence[:per_block_k]:
+        refs[item.type] = refs.get(item.type, 0) + 1
+        evidence.append(_evidence_summary(item, f"{item.type}{refs[item.type]}"))
     return {
         "normalized_query": resp.normalized_query,
         "rewritten_query": resp.rewritten_query,
@@ -111,11 +138,11 @@ def compact_response(resp: SearchResponse, per_block_k: int = 5) -> dict:
         "providers_used": resp.providers_used,
         "reranker": resp.reranker,
         "elapsed_ms": resp.elapsed_ms,
-        "web_results": [_result_summary(r) for r in resp.results[:per_block_k]],
-        "academic_query": resp.academic_query,
-        "academic_results": [_result_summary(r) for r in resp.academic_results[:per_block_k]],
-        "patent_query": resp.patent_query,
-        "patent_results": [_result_summary(r) for r in resp.patent_results[:per_block_k]],
+        "partial_failure": resp.partial_failure,
+        "failures": [f.model_dump() for f in resp.failures],
+        "answerability": resp.answerability.model_dump(),
+        "counts": evidence_type_counts(resp),
+        "evidence": evidence,
     }
 
 

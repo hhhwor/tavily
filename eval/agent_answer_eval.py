@@ -8,7 +8,7 @@ import re
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any, Dict, List, Optional, Tuple
 
-from eval.e2e_judge import compact_response, response_fingerprint
+from eval.e2e_judge import compact_response, evidence_type_counts, response_fingerprint
 from src.models import SearchResponse
 
 _CACHE_DIR = "eval/cache"
@@ -19,9 +19,10 @@ _ANSWER_PROMPT = """你是技术情报 agent。给定用户任务和搜索结果
 - 用中文输出一份紧凑但完整的技术尽调/研发情报报告
 - 覆盖: 结论摘要、学术研究证据、专利布局、产业/市场信号、机会、风险、下一步建议
 - 每个关键判断尽量带引用标记,例如 [web1]、[academic2]、[patent3]
+- 必须先检查 answerability.gaps 和 failures;有缺口时在对应章节明确说明,不要把 partial evidence 当完整证据
 - 如果某类证据不足,必须明确说明证据缺口,不要编造
-- 如果 academic_results 为空,不得把 web 文章包装成论文证据;对应章节必须写明未检索到可核验学术论文
-- 如果 patent_results 为空,不得把 web 文章包装成专利证据;对应章节必须写明未检索到可核验专利
+- 如果 evidence[] 中没有 type=academic,不得把 web 文章包装成论文证据;对应章节必须写明未检索到可核验学术论文
+- 如果 evidence[] 中没有 type=patent,不得把 web 文章包装成专利证据;对应章节必须写明未检索到可核验专利
 - 不要输出搜索过程说明
 """
 
@@ -112,11 +113,7 @@ def _has_disclosure(answer: str, terms: List[str]) -> bool:
 
 
 def answer_support_audit(answer: str, resp: SearchResponse) -> dict:
-    counts = {
-        "web": len(resp.results),
-        "academic": len(resp.academic_results),
-        "patent": len(resp.patent_results),
-    }
+    counts = evidence_type_counts(resp)
     refs = {source: _source_refs(answer, source) for source in counts}
     unsupported = []
     for source, nums in refs.items():

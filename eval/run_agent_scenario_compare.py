@@ -16,9 +16,9 @@ import time
 from typing import Dict, List, Optional, Tuple
 
 from eval.agent_answer_eval import AnswerPairJudge, EvidenceAnswerAgent, answer_support_audit
-from eval.e2e_judge import ScenarioPairJudge, compact_response
+from eval.e2e_judge import ScenarioPairJudge, compact_response, evidence_type_counts
 from src.config import settings
-from src.engine import SearchEngine
+from src.engine import SearchEngine, _build_answerability
 from src.l0 import detect_recency
 from src.models import SearchResponse
 from src.providers.baidu import BaiduSearchProvider
@@ -50,13 +50,23 @@ def run_baidu_only(provider: BaiduSearchProvider, task: str, k: int) -> SearchRe
     t0 = time.time()
     recency = detect_recency(task)
     results = provider.search(task, k, recency)
+    evidence = SearchEngine._build_evidence(results, [], [])
+    answerability = _build_answerability(
+        evidence,
+        [],
+        expected_web=True,
+        expected_academic=False,
+        expected_patent=False,
+        include_pdf_text=False,
+    )
     return SearchResponse(
         query=task,
         normalized_query=task,
         recency=recency,
         time_sensitive=recency is not None,
-        results=results,
-        count=len(results),
+        evidence=evidence,
+        answerability=answerability,
+        count=len(evidence),
         providers_used=["baidu"] if results else [],
         reranker="baidu-only",
         elapsed_ms=int((time.time() - t0) * 1000),
@@ -114,9 +124,9 @@ def build_report(
         "|--------|------------|------------|",
         f"| avg_latency_ms | {_avg(full_lat):.0f} | {_avg(baidu_lat):.0f} |",
         f"| p95_latency_ms | {_p95(full_lat)} | {_p95(baidu_lat)} |",
-        f"| avg_web_results | {_avg([r['full_web'] for r in rows]):.1f} | {_avg([r['baidu_web'] for r in rows]):.1f} |",
-        f"| avg_academic_results | {_avg([r['full_academic'] for r in rows]):.1f} | 0.0 |",
-        f"| avg_patent_results | {_avg([r['full_patent'] for r in rows]):.1f} | 0.0 |",
+        f"| avg_web_evidence | {_avg([r['full_web'] for r in rows]):.1f} | {_avg([r['baidu_web'] for r in rows]):.1f} |",
+        f"| avg_academic_evidence | {_avg([r['full_academic'] for r in rows]):.1f} | 0.0 |",
+        f"| avg_patent_evidence | {_avg([r['full_patent'] for r in rows]):.1f} | 0.0 |",
     ]
     if judged:
         lines += [
@@ -254,20 +264,22 @@ def main() -> None:
         print(f"      baidu_only...")
         baidu_resp = run_baidu_only(baidu, task, args.k)
         pairs.append((sc["id"], full, baidu_resp))
+        full_counts = evidence_type_counts(full)
+        baidu_counts = evidence_type_counts(baidu_resp)
         rows.append({
             "id": sc["id"],
             "domain": sc.get("domain", ""),
             "full_ms": full.elapsed_ms,
             "baidu_ms": baidu_resp.elapsed_ms,
-            "full_web": len(full.results),
-            "full_academic": len(full.academic_results),
-            "full_patent": len(full.patent_results),
-            "baidu_web": len(baidu_resp.results),
+            "full_web": full_counts["web"],
+            "full_academic": full_counts["academic"],
+            "full_patent": full_counts["patent"],
+            "baidu_web": baidu_counts["web"],
         })
         print(
-            f"      full web={len(full.results)} acad={len(full.academic_results)} "
-            f"pat={len(full.patent_results)} {full.elapsed_ms}ms | "
-            f"baidu web={len(baidu_resp.results)} {baidu_resp.elapsed_ms}ms"
+            f"      full web={full_counts['web']} acad={full_counts['academic']} "
+            f"pat={full_counts['patent']} {full.elapsed_ms}ms | "
+            f"baidu web={baidu_counts['web']} {baidu_resp.elapsed_ms}ms"
         )
 
     answers: Dict[str, str] = {}

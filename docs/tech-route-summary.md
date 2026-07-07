@@ -53,9 +53,14 @@ POST /search {query, top_k, include_academic?, include_patent?}
       │
       ▼
  归一化 JSON {query, normalized_query, rewritten_query, recency, time_sensitive,
-              results:[{url,title,snippet,content,date,site,source,score,rerank_score,...}],
-              academic_results:[{...,authors,year,venue,citations,doi,oa_url,oa_landing_url,oa_pdf_url,is_oa,topic}],
-              patent_results:[{...,publication_number,country,applicant,inventor,ipc_main,cpc_main,application_date,patent_type,status,family_id,...}],
+              partial_failure, failures:[{stage,source,type,code,message,recoverable}],
+              answerability:{status,confidence,gaps:[{code,severity,message,type,source}]},
+              evidence:[{id,result_id,type,source,title,url,published_date,
+                         passage:{text,snippet_type,char_start,char_end,...},
+                         citation:{label,authors,year,venue,doi,work_id,publication_number},
+                         scores:{relevance,source_rank,rerank_score,authority,confidence},
+                         access:{is_open,license,oa_pdf_url,pdf_status,next_cursor},
+                         diagnostics:{warnings,partial,failure_code}}],
               count, providers_used, reranker, elapsed_ms}
 ```
 
@@ -121,25 +126,25 @@ POST /search {query, top_k, include_academic?, include_patent?}
 
 ### L1′ — 学术检索(OpenAlex 数据,经 Chukonu 服务)([providers/openalex.py](../src/providers/openalex.py))
 
-把 OpenAlex 论文作为**独立能力支线**接入,不与 web 结果混排——论文单独成块返回 `academic_results`。**数据源(2026-06-21 起)= 本地 Chukonu 检索系统**(`http://localhost:9001`)的 ES,而非直连公网 `api.openalex.org`。选型与可行性见 [academic-search-engine-feasibility.md](./academic-search-engine-feasibility.md)。
+把 OpenAlex 论文作为**独立能力支线**接入:内部与 web 分开召回/重排,对外统一转成 `type=academic` 的 evidence 并与 web/patent 按相关性混排。**数据源(2026-06-21 起)= 本地 Chukonu 检索系统**(`http://localhost:9001`)的 ES,而非直连公网 `api.openalex.org`。选型与可行性见 [academic-search-engine-feasibility.md](./academic-search-engine-feasibility.md)。
 
 - **触发**:`L0 学术意图识别` 命中(或 `include_academic=true` 强制)且学术源已启用时,OpenAlex 与 web 源**同一线程池并发召回**,不阻塞 web 主流程。
 - **召回**:`POST {OPENALEX_API_URL}/openalex/search/keyword`,body `{query, size, year_min/year_max?}`;服务端在 `title^3/abstract^2/authors/concepts` 上 `best_fields` 检索。时效(recency)近似映射为 `year_min=year_max=当年`。可选 `X-API-Key`(服务未配 `SE4AI_API_KEYS` 时全部放行)。
 - **摘要**:Chukonu 服务已把 `abstract_inverted_index` 重建为正文(`abstract` 字段直接可用),provider 无需再还原。
 - **语义排序复用现有重排**:`AcademicResult` 设计为 `SearchResult` 子类,天然带 `text_for_rerank()`(返回「标题+摘要」),**现有 cross-encoder reranker 零改动**即可对 query↔论文打分;web 与学术两路独立重排、并发执行。重排关闭(NoOp)时按服务 `_score` 排序兜底。
-- **学术元数据**:`academic_results` 每条带 `authors/year/venue/citations/doi/oa_url/oa_landing_url/oa_pdf_url/is_oa/topic`。其中 `url` 固定为 DOI / OpenAlex 作品页(论文主页面),`oa_landing_url` 是 OA 落地页,`oa_pdf_url` 是 OA PDF 直链;`oa_url` 保留作兼容字段(优先 landing,退化 pdf)。`authors` 是服务端空格拼接的整串,整体存一项,web `results` 行为完全不变。
+- **学术 evidence 元数据**:对外返回 `type=academic`。标题/URL/年份进入顶层字段;作者/年份/期刊/DOI/OpenAlex work_id 进入 `citation`;开放获取、license、`oa_pdf_url`、PDF 抽取状态和 `next_cursor` 进入 `access`;正文优先用 PDF 抽取文本(`snippet_type=pdf_text`),否则用摘要(`snippet_type=abstract`)。
 - **启用**:配了 `OPENALEX_API_URL`(默认 `http://localhost:9001`)即启用;服务不可达时静默返回空,web 搜索零影响。
 - ⚠️ **覆盖收窄**:Chukonu 当前 ES 仅 **5 万条 OpenAlex 子集**(非公网全量 ~2.4 亿 works),冷门主题召回会明显变弱;换公网全量需把 `OPENALEX_API_URL` 指回自建/官方全量服务(provider 协议一致)。
 - ⚠️ **中文学术查询召回偏弱**:OpenAlex 以英文文献为主,中文 query 易被字面误解;引擎已默认对学术 query 做中→英改写(`OPENALEX_QUERY_REWRITE`)缓解。**英文学术查询效果显著更好**。
 
 ### L1″ — 专利检索(houdutech 只读 ES)([providers/patent_es.py](../src/providers/patent_es.py))
 
-把 houdutech 演示集群的**只读专利 ES**(`https://search.houdutech.cn:9243`)作为**第二条独立能力支线**接入,与 web/学术互不混排——专利单独成块返回 `patent_results`。架构定位与 OpenAlex 学术支线完全平行(独立块 + 意图触发 + 复用现有重排)。默认索引用**读别名 `epo_docdb_read`**(当前指向 `epo_docdb_v2_20260620`,EPO DOCDB,~1.72亿,**全球多语种**)——用别名而非固定版本号,集群蓝绿切换索引时本侧零改动。
+把 houdutech 演示集群的**只读专利 ES**(`https://search.houdutech.cn:9243`)作为**第二条独立能力支线**接入:内部与 web/学术分开召回/重排,对外统一转成 `type=patent` 的 evidence 并混排。架构定位与 OpenAlex 学术支线完全平行(意图触发 + 复用现有重排)。默认索引用**读别名 `epo_docdb_read`**(当前指向 `epo_docdb_v2_20260620`,EPO DOCDB,~1.72亿,**全球多语种**)——用别名而非固定版本号,集群蓝绿切换索引时本侧零改动。
 
 - **触发**:`L0 专利意图识别` 命中(`detect_patent`:专利/发明专利/实用新型/外观设计/公开号/申请号/patent/IPC 等)或 `include_patent=true` 强制,且专利源已启用时,专利 ES 与 web/学术源**同一线程池并发召回**。
 - **检索**:`POST {base}/{index}/_search`,构造 ES Query DSL —— `multi_match` over `patent_name^3 / abstract^2 / title_zh^2 / abstract_zh / applicant.original^2 / applicant.docdb`(`best_fields`)。通用 `patent_name/abstract` 是 `icu_analyzer`(跨语种),分语种 `title_zh/abstract_zh` 是 `ik_smart`(补 CJK 召回),当事人字段补「公司/机构名」召回(如「华为 折叠屏」可按申请人命中),故**中英文查询都能命中**。时效映射 `range(application_date >= 计算起点)`,`_source` 裁剪字段,`highlight` 摘要片段当 snippet。**只触达只读 `_search` 端点**(落在前置 nginx 只读白名单内),绝不构造写/管理 DSL。
 - **语义排序复用现有重排**:`PatentResult` 设计为 `SearchResult` 子类,`text_for_rerank()` 返回「专利名+摘要」,**现有 cross-encoder reranker 零改动**即可对 query↔专利打分;NoOp(重排关)时按 ES `_score`(存入 `score`)降序兜底。
-- **专利元数据**:对齐 EPO DOCDB schema —— `patent_results` 每条带 `publication_number(含国别前缀)/application_number/applicant/inventor/ipc_main/cpc_main/country/status/family_id/application_date/publication_date/patent_type(种类码 A1/A/B)/citation_count`。**当事人字段(20260620+)是 object `{original, docdb, docdba}`**:`original` 原文名(中文等)、`docdb/docdba` 标准化罗马字名;`_extract_names` 原文优先、退化罗马字,并兼容旧版扁平字符串。`ipc_main` 本库较稀疏,展示时回退 `cpc_main`。专利无原生网页,`url` 用 Google Patents 落地页 `https://patents.google.com/patent/{公开号去横线}`(如 `US-2024030484-A1` → `.../US2024030484A1`)。
+- **专利 evidence 元数据**:对外返回 `type=patent`。公开号进入 `citation.publication_number`;申请日/公开日用于 `published_date`;摘要进入 `passage.text`(`snippet_type=patent_abstract`);引用数进入 `scores.authority`。专利无原生网页,`url` 用 Google Patents 落地页 `https://patents.google.com/patent/{公开号去横线}`(如 `US-2024030484-A1` → `.../US2024030484A1`)。
 - **鉴权与网络**:ES 自身**无鉴权、不区分读写**,只读保证完全靠前置 nginx(只读白名单)+ AWS 安全组**来源 IP 白名单**(详见 `~/adhoc-2026-06-15-read-only-es-nginx-in-se4ai-v2.md`)。本项目所在开发机出口 IP 已在白名单,直连可用;**换部署机器需先给新出口 IP 放行 9243**。TLS 证书覆盖该域名,默认 `verify=True`。凭证缺失(无 `PATENT_ES_URL`)则专利能力**静默关闭**,web/学术零影响。
 - ⚠️ **库与字段随版本变化**:`epo_docdb_v2` 相比旧 `patents` **无 `claims`/`grant_*`/`current_holder`**,新增 CPC/优先权/同族/国别/法律状态等。`20260620` 相比 `20260615` 修复了**中国授权(CN-B)当事人大面积缺失**(申请人 80.8%→90.1%、发明人 76.1%→85.8%,新增中文原文名),代价是当事人字段从扁平 string 改为 object(breaking,已适配;见 [patent-es-cn-b-missing-applicant-bug.md](./patent-es-cn-b-missing-applicant-bug.md))。换索引(如 `epo_docdb`/`google_patents`)字段结构不同,需各自 `_mapping` 适配(`PATENT_ES_INDEX` 可配)。
 
@@ -256,17 +261,17 @@ curl -s http://localhost:9001/health     # {"status":"healthy"}
 # 2) 验证已启用(health 的 academic 应为 true)
 curl -s localhost:8000/health        # {"academic": true, ...}
 
-# 3) CLI:学术查询自动触发,论文单独成块打印
+# 3) CLI:学术查询自动触发,打印混排 evidence
 .venv311/bin/python -m src.engine "latest survey on diffusion models"
 
 # 4) API:include_academic 显式控制(None=自动 / true=强制开 / false=强制关)
 curl -X POST localhost:8000/search \
   -H 'Content-Type: application/json' \
   -d '{"query":"graph neural networks survey","include_academic":true,"top_k":5}'
-# 返回体含 academic_results:[{title,authors,year,venue,citations,doi,oa_url,oa_landing_url,oa_pdf_url,is_oa,topic,...}]
+# 返回体含 evidence:[{type:"academic",title,url,passage,citation,access,scores,diagnostics,...}]
 ```
 
-- 学术意图由 L0 正则自动识别(论文/综述/arxiv/survey/citation 等);非学术查询不触发,`academic_results` 为空。
+- 学术意图由 L0 正则自动识别(论文/综述/arxiv/survey/citation 等);非学术查询通常不会产生 `type=academic` evidence。
 - ⚠️ OpenAlex 以英文文献为主,**英文学术查询效果显著优于中文**(见 §4 L1′)。
 
 ### 启用专利检索(houdutech 只读 ES)
@@ -280,17 +285,17 @@ echo 'PATENT_ES_URL=https://search.houdutech.cn:9243' >> .env
 # 2) 验证已启用(health 的 patent 应为 true)
 curl -s localhost:8000/health        # {"patent": true, ...}
 
-# 3) CLI:专利查询自动触发,专利单独成块打印
+# 3) CLI:专利查询自动触发,打印混排 evidence
 .venv/bin/python -m src.engine "钠离子电池正极材料专利"
 
 # 4) API:include_patent 显式控制(None=自动 / true=强制开 / false=强制关)
 curl -X POST localhost:8000/search \
   -H 'Content-Type: application/json' \
   -d '{"query":"sodium ion battery cathode patent","include_patent":true,"top_k":5}'
-# 返回体含 patent_results:[{title(=patent_name),publication_number,country,applicant,inventor,ipc_main,cpc_main,application_date,patent_type,...}]
+# 返回体含 evidence:[{type:"patent",title,url,passage,citation,scores,diagnostics,...}]
 ```
 
-- 专利意图由 L0 正则自动识别(专利/发明专利/实用新型/公开号/patent/IPC 等);非专利查询不触发,`patent_results` 为空。
+- 专利意图由 L0 正则自动识别(专利/发明专利/实用新型/公开号/patent/IPC 等);非专利查询通常不会产生 `type=patent` evidence。
 - 默认库 `epo_docdb_v2_20260615` 是**全球多语种专利库(英文为主)**,**中英文查询都能召回**(通用 icu 字段 + 中文 ik_smart 字段同时打分)。
 - ⚠️ **换部署机器**需先用有 EC2 权限的机器给新出口 IP 放行该 ES 的 9243 端口(安全组操作见 `~/adhoc-2026-06-15-read-only-es-nginx-in-se4ai-v2.md`)。
 
@@ -298,7 +303,8 @@ curl -X POST localhost:8000/search \
 
 把搜索引擎包成 **MCP server**,与 REST 服务**同一进程、同一端口**:Streamable HTTP 端点 `http://<host>:8000/mcp`,暴露单个工具 `search`。Agent / Claude Code / Desktop 可直接调用,复用同一 `SearchEngine` 单例(零额外进程、零额外端口)。
 
-- **工具 `search(query, top_k=10, include_academic=None, include_patent=None, rerank=None)`**:返回 LLM-ready 结构化 JSON —— `web` + 命中时的 `academic` / `patents` 各成一块,正文截断省 token;`meta` 带 `providers_used/reranker/elapsed_ms/counts`。代码:[mcp_server.py](../src/mcp_server.py)(`build_mcp`),挂载在 [api.py](../src/api.py)。
+- **工具 `search(query, top_k=10, include_academic=None, include_patent=None, rerank=None, include_pdf_text=False, ...)`**:返回 LLM-ready 结构化 JSON —— `evidence[]` 按相关性混排,每条带 `type/source/title/url/passage/citation/scores/access/diagnostics`;`meta` 带 `providers_used/reranker/elapsed_ms/counts`。代码:[mcp_server.py](../src/mcp_server.py)(`build_mcp`),挂载在 [api.py](../src/api.py)。
+- **可答性与部分失败**:`partial_failure=true` 表示至少一个 provider/rerank/PDF 富化子任务失败,但已有 evidence 仍可使用;失败明细在 `failures[]`。`answerability.gaps[]` 明确告诉 Agent 缺少哪类证据(如 `NO_ACADEMIC_EVIDENCE` / `NO_PATENT_EVIDENCE` / `PDF_TEXT_UNAVAILABLE` / `PARTIAL_FAILURE`),`status=not_answerable` 时不应直接输出确定性答案。
 - **实现要点**:`FastMCP(stateless_http=True, json_response=True, streamable_http_path="/mcp")`,子应用挂在根("/"),显式路由(`/`、`/health`、`/search`、`/docs`)先注册优先匹配,Mount 仅兜 `/mcp`(无重定向);session manager 在 FastAPI `lifespan` 内 `run()`。引擎 `search()` 是同步阻塞,工具内用 `anyio.to_thread` 卸到线程池,避免阻塞事件循环。
 - **接入消费端**:Claude Code `claude mcp add chukonu-web-search --transport http http://localhost:8000/mcp --header "Authorization: Bearer <token>"`(未开鉴权时去掉 `--header`);或 MCP Inspector 连 `http://localhost:8000/mcp`(在 Inspector 里填 Authorization 头)调试。MCP 服务名(serverInfo.name)为 `chukonu-web-search`。
 - 🔐 **鉴权**:`/mcp` 与 `/search` 共用 `API_AUTH_TOKEN`(见下「鉴权」小节);开启后 MCP 客户端需带 `Authorization: Bearer <token>`,否则握手 401。
@@ -348,7 +354,7 @@ curl -s -X POST localhost:8000/search -H "Authorization: Bearer $TOKEN" \
 
 ## 8. 现状与待办
 
-**已落地(相对调研文档的新增)**:L0 LLM 查询改写、SerpAPI 第三源、`FusionReranker` 信号融合 —— 三者代码均已实现并接入评测,其中信号融合经评测后默认关闭。**OpenAlex 学术检索**(L0 学术意图识别 + 独立 `academic_results` 块 + 复用现有重排做语义排序)已实现并通过端到端验证。**专利检索(houdutech 只读 ES)**(L0 专利意图识别 + 独立 `patent_results` 块 + multi_match 中文检索 + 复用现有重排)作为第二条垂直支线已实现并通过端到端验证。**provider 召回级缓存**(进程内 LRU+TTL,接口化预留 Redis;时效查询不缓存)已落地,避免重复调用搜索源 API。
+**已落地(相对调研文档的新增)**:L0 LLM 查询改写、SerpAPI 第三源、`FusionReranker` 信号融合 —— 三者代码均已实现并接入评测,其中信号融合经评测后默认关闭。**OpenAlex 学术检索**(L0 学术意图识别 + 内部独立重排 + 对外 `type=academic` evidence)已实现并通过端到端验证。**专利检索(houdutech 只读 ES)**(L0 专利意图识别 + 内部独立重排 + 对外 `type=patent` evidence + multi_match 中文检索)作为第二条垂直支线已实现并通过端到端验证。**provider 召回级缓存**(进程内 LRU+TTL,接口化预留 Redis;时效查询不缓存)已落地,避免重复调用搜索源 API。
 
 **与调研的关键差异**:
 

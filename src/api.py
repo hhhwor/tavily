@@ -95,6 +95,16 @@ class SearchRequest(BaseModel):
         None,
         description="专利检索(ES):None=按查询意图自动判定,true=强制开,false=强制关",
     )
+    include_pdf_text: bool = Field(
+        False,
+        description="是否对学术结果返回 PDF 抽取正文。默认关闭；只处理重排后的前几条。",
+    )
+    pdf_text_mode: Optional[str] = Field(None, description="PDF 正文模式: cached / sync")
+    pdf_max_results: Optional[int] = Field(None, ge=0, le=5, description="最多富化几条学术结果")
+    pdf_max_chars_per_result: Optional[int] = Field(
+        None, ge=1, le=30000, description="每条 PDF 正文最多返回字符数"
+    )
+    pdf_timeout_ms: Optional[int] = Field(None, ge=1000, le=60000, description="单篇 PDF 同步抽取预算")
     # 以下参数留空(None)则用服务端全局默认;网页端「高级选项」可按请求覆盖
     rerank_enabled: Optional[bool] = Field(None, description="是否启用 cross-encoder 重排")
     rerank_backend: Optional[str] = Field(
@@ -144,6 +154,11 @@ def search(req: SearchRequest) -> SearchResponse:
         rerank_threshold=req.rerank_threshold,
         fusion_enabled=req.fusion_enabled,
         rewrite_enabled=req.rewrite_enabled,
+        include_pdf_text=req.include_pdf_text,
+        pdf_text_mode=req.pdf_text_mode,
+        pdf_max_results=req.pdf_max_results,
+        pdf_max_chars_per_result=req.pdf_max_chars_per_result,
+        pdf_timeout_ms=req.pdf_timeout_ms,
     )
 
 
