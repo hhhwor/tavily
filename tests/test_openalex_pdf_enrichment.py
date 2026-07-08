@@ -24,6 +24,24 @@ class _Resp:
         }
 
 
+class _TextResp:
+    def raise_for_status(self):
+        return None
+
+    def json(self):
+        return {
+            "work_id": "W123",
+            "status": "ready",
+            "chunk_index": 2,
+            "page_from": 4,
+            "page_to": 5,
+            "text": "continued pdf text",
+            "next_cursor": "cursor2",
+            "error_code": None,
+            "error_message": None,
+        }
+
+
 def test_pdf_enrichment_attaches_pdf_fields(monkeypatch):
     calls = []
 
@@ -80,3 +98,26 @@ def test_pdf_enrichment_marks_missing_pdf_url():
 
     assert paper.pdf_status == "no_pdf_url"
     assert paper.pdf_error_code == "PDF_URL_MISSING"
+
+
+def test_get_pdf_text_reads_next_page(monkeypatch):
+    calls = []
+
+    def fake_get(url, params, headers, timeout):
+        calls.append((url, params, headers, timeout))
+        return _TextResp()
+
+    monkeypatch.setattr("src.engine.requests.get", fake_get)
+    engine = object.__new__(SearchEngine)
+
+    resp = engine.get_pdf_text("W123", cursor="cursor1", max_chars=500)
+
+    assert calls
+    assert calls[0][0].endswith("/openalex/pdf/text/W123")
+    assert calls[0][1] == {"max_chars": 500, "cursor": "cursor1"}
+    assert resp.work_id == "W123"
+    assert resp.status == "ready"
+    assert resp.text == "continued pdf text"
+    assert resp.returned_chars == len("continued pdf text")
+    assert resp.next_cursor == "cursor2"
+    assert resp.partial is True

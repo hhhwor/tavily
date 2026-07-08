@@ -102,6 +102,7 @@ def _evidence_summary(item: Evidence, ref: str) -> dict:
             "work_id": citation.work_id,
             "publication_number": citation.publication_number,
         },
+        "patent": item.patent.model_dump() if item.patent else None,
         "scores": {
             "relevance": scores.relevance,
             "source_rank": scores.source_rank,

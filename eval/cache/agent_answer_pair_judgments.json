@@ -250,5 +250,33 @@
     "full_synthesis": 2,
     "baidu_synthesis": 1,
     "reason": "full_agent检索8个专利+8个web资源,完整梳理申请人与技术方向;baidu仅8个web无专利,缺失核心知识产权布局。两者学术论文检索均为零,但full_agent诚实标注gap;baidu虚假承诺学术证据。full_agent市"
+  },
+  "4257c5f706ecfb66788be78799a08d644bf8548e": {
+    "winner": "baidu_only",
+    "full_score": 2,
+    "baidu_score": 7,
+    "full_grounding": 0,
+    "baidu_grounding": 2,
+    "full_research": 0,
+    "baidu_research": 1,
+    "full_patent": 0,
+    "baidu_patent": 0,
+    "full_synthesis": 0,
+    "baidu_synthesis": 2,
+    "reason": "full_agent仅返回搜索过程说明,未提交实质答案,无法评估。baidu_only完成所有核心任务:总结NVP/NFP等三大正极路线、产业化时间表、市场预测2035年2.47TWh,但缺乏学术论文深度(0篇)和专利号(诚实说明缺口)。"
+  },
+  "a91b3f8fd0628aaf76f0596db40356f502c1d1e4": {
+    "winner": "full_agent",
+    "full_score": 8,
+    "baidu_score": 4,
+    "full_grounding": 2,
+    "baidu_grounding": 1,
+    "full_research": 2,
+    "baidu_research": 0,
+    "full_patent": 2,
+    "baidu_patent": 0,
+    "full_synthesis": 2,
+    "baidu_synthesis": 1,
+    "reason": "Full_agent提供近三年代表性论文(6篇academic,支持web8磷酸钒锰钠等)、完整专利布局(10+专利号含CN119181799A等)、产业化数据;Baidu仅5条网页无学术/专利证据,自承学术论文和专利均为0,专利章节完全缺"
   }
 }

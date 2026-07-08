@@ -1,7 +1,9 @@
 """进程内 MCP server:把搜索引擎包成 MCP 工具,与 FastAPI 同进程挂载。
 
 传输:Streamable HTTP(stateless + JSON 响应),由 src/api.py 挂在主应用 `/mcp` 下。
-工具:search —— query → 结构化 evidence[] 结果,正文截断、LLM-ready。
+工具:
+- search —— query → 结构化 evidence[] 结果,正文截断、LLM-ready。
+- get_pdf_text —— 用 search 返回的 work_id + next_cursor 续读 PDF 正文。
 
 引擎 search() 是同步阻塞(内部 ThreadPoolExecutor + 网络 + 重排),故在异步工具里用
 anyio.to_thread 卸到线程池,避免阻塞事件循环影响并发请求。
@@ -112,5 +114,24 @@ def build_mcp(engine: SearchEngine) -> FastMCP:
                 "counts": _evidence_counts(resp.evidence),
             },
         }
+
+    @mcp.tool(
+        name="get_pdf_text",
+        description=(
+            "分页读取已抽取的 OpenAlex PDF 正文。先调用 search(include_pdf_text=true),"
+            "从 academic evidence 的 citation.work_id 和 access.next_cursor 取参数;"
+            "返回 text、page_from/page_to、next_cursor。此工具只读缓存,不触发下载解析。"
+        ),
+    )
+    async def get_pdf_text(
+        work_id: str,
+        cursor: Optional[str] = None,
+        max_chars: int = 8000,
+    ) -> dict[str, Any]:
+        """work_id: OpenAlex work id。cursor: search/access.next_cursor 或上次返回的 next_cursor。"""
+        resp = await anyio.to_thread.run_sync(
+            lambda: engine.get_pdf_text(work_id, cursor=cursor, max_chars=max_chars)
+        )
+        return resp.model_dump()
 
     return mcp

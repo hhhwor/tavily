@@ -44,7 +44,18 @@ def test_build_evidence_mixes_sources_by_relevance():
         content="patent evidence text",
         source="patent_es",
         publication_number="US-1-A1",
+        application_number="US-APP-1",
+        applicant=["Acme Corp"],
+        inventor=["Jane Inventor"],
+        ipc_main="H01M",
+        cpc_main="H01M10/00",
+        application_date="2023-01-01",
         publication_date="2024-01-01",
+        patent_type="A1",
+        country="US",
+        status="active",
+        family_id="F1",
+        citation_count=5,
         rerank_score=0.7,
     )
 
@@ -61,6 +72,23 @@ def test_build_evidence_mixes_sources_by_relevance():
     assert top.access.next_cursor == "cursor1"
     assert top.diagnostics.partial is True
     assert "TRUNCATED_EVIDENCE" in top.diagnostics.warnings
+
+    patent_evidence = evidence[1]
+    assert patent_evidence.citation.publication_number == "US-1-A1"
+    assert patent_evidence.patent is not None
+    assert patent_evidence.patent.publication_number == "US-1-A1"
+    assert patent_evidence.patent.application_number == "US-APP-1"
+    assert patent_evidence.patent.applicant == ["Acme Corp"]
+    assert patent_evidence.patent.inventor == ["Jane Inventor"]
+    assert patent_evidence.patent.ipc_main == "H01M"
+    assert patent_evidence.patent.cpc_main == "H01M10/00"
+    assert patent_evidence.patent.country == "US"
+    assert patent_evidence.patent.status == "active"
+    assert patent_evidence.patent.family_id == "F1"
+    assert patent_evidence.patent.application_date == "2023-01-01"
+    assert patent_evidence.patent.publication_date == "2024-01-01"
+    assert patent_evidence.patent.patent_type == "A1"
+    assert patent_evidence.patent.citation_count == 5
 
 
 def test_build_evidence_marks_pdf_gap_for_abstract_only_paper():

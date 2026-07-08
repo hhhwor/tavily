@@ -18,7 +18,7 @@ from pydantic import BaseModel, Field
 
 from src.config import settings
 from src.engine import SearchEngine
-from src.models import SearchResponse
+from src.models import PdfTextResponse, SearchResponse
 
 _STATIC_DIR = os.path.join(os.path.dirname(__file__), "static")
 
@@ -160,6 +160,16 @@ def search(req: SearchRequest) -> SearchResponse:
         pdf_max_chars_per_result=req.pdf_max_chars_per_result,
         pdf_timeout_ms=req.pdf_timeout_ms,
     )
+
+
+@app.get("/academic/pdf/text/{work_id}", response_model=PdfTextResponse)
+def get_pdf_text(
+    work_id: str,
+    cursor: Optional[str] = None,
+    max_chars: int = 8000,
+) -> PdfTextResponse:
+    """分页读取已抽取的 OpenAlex PDF 正文。"""
+    return engine.get_pdf_text(work_id, cursor=cursor, max_chars=max_chars)
 
 
 # 进程内 MCP server:Streamable HTTP 端点 /mcp(工具 search)。

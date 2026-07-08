@@ -104,6 +104,24 @@ class EvidenceCitation(BaseModel):
     publication_number: Optional[str] = None
 
 
+class EvidencePatent(BaseModel):
+    """专利 evidence 的专属结构化字段。"""
+
+    publication_number: str = ""
+    application_number: str = ""
+    applicant: List[str] = Field(default_factory=list)
+    inventor: List[str] = Field(default_factory=list)
+    ipc_main: str = ""
+    cpc_main: str = ""
+    country: str = ""
+    status: str = ""
+    family_id: str = ""
+    application_date: str = ""
+    publication_date: str = ""
+    patent_type: str = ""
+    citation_count: int = 0
+
+
 class EvidenceScores(BaseModel):
     """证据排序和置信度信号。"""
 
@@ -147,6 +165,7 @@ class Evidence(BaseModel):
     language: Optional[str] = None
     passage: EvidencePassage
     citation: EvidenceCitation = Field(default_factory=EvidenceCitation)
+    patent: Optional[EvidencePatent] = None
     scores: EvidenceScores = Field(default_factory=EvidenceScores)
     access: EvidenceAccess = Field(default_factory=EvidenceAccess)
     diagnostics: EvidenceDiagnostics = Field(default_factory=EvidenceDiagnostics)
@@ -197,6 +216,22 @@ class SearchResponse(BaseModel):
     providers_used: List[str]
     reranker: str
     elapsed_ms: int
+
+
+class PdfTextResponse(BaseModel):
+    """分页读取 PDF 正文的返回体。"""
+
+    work_id: str
+    status: str
+    chunk_index: Optional[int] = None
+    page_from: Optional[int] = None
+    page_to: Optional[int] = None
+    text: Optional[str] = None
+    returned_chars: int = 0
+    next_cursor: Optional[str] = None
+    partial: bool = False
+    error_code: Optional[str] = None
+    error_message: Optional[str] = None
 
 
 class SearchPlan(BaseModel):

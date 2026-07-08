@@ -9,6 +9,7 @@ import time
 import hashlib
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import List, Optional
+from urllib.parse import quote
 
 import requests
 
@@ -23,9 +24,11 @@ from src.models import (
     EvidenceAccess,
     EvidenceCitation,
     EvidenceDiagnostics,
+    EvidencePatent,
     EvidencePassage,
     EvidenceScores,
     PatentResult,
+    PdfTextResponse,
     SearchFailure,
     SearchPlan,
     SearchResponse,
@@ -427,6 +430,21 @@ class SearchEngine:
                     label=pub,
                     publication_number=p.publication_number or None,
                 ),
+                patent=EvidencePatent(
+                    publication_number=p.publication_number,
+                    application_number=p.application_number,
+                    applicant=p.applicant,
+                    inventor=p.inventor,
+                    ipc_main=p.ipc_main,
+                    cpc_main=p.cpc_main,
+                    country=p.country,
+                    status=p.status,
+                    family_id=p.family_id,
+                    application_date=p.application_date,
+                    publication_date=p.publication_date,
+                    patent_type=p.patent_type,
+                    citation_count=p.citation_count,
+                ),
                 scores=EvidenceScores(
                     relevance=_evidence_relevance(p, rank),
                     source_rank=rank,
@@ -554,6 +572,74 @@ class SearchEngine:
                     paper.pdf_status = "failed"
                     paper.pdf_error_code = "PDF_ENRICH_WORKER_FAILED"
                     paper.pdf_error_message = str(exc)[:300]
+
+    def get_pdf_text(
+        self,
+        work_id: str,
+        cursor: Optional[str] = None,
+        max_chars: Optional[int] = None,
+    ) -> PdfTextResponse:
+        """Read a cached OpenAlex PDF text page by cursor.
+
+        This endpoint intentionally does not trigger extraction. Agents should
+        call search with include_pdf_text=true first, then continue with the
+        returned citation.work_id and access.next_cursor.
+        """
+        work_id = (work_id or "").strip()
+        if not work_id:
+            return PdfTextResponse(
+                work_id="",
+                status="failed",
+                error_code="WORK_ID_MISSING",
+                error_message="work_id is required",
+            )
+        chars = settings.openalex_pdf_max_chars if max_chars is None else max_chars
+        chars = max(1, min(int(chars), 30000))
+        endpoint = f"{settings.openalex_api_url.rstrip('/')}/openalex/pdf/text/{quote(work_id, safe='')}"
+        params = {"max_chars": chars}
+        if cursor:
+            params["cursor"] = cursor
+        headers = {}
+        if settings.openalex_api_key:
+            headers["X-API-Key"] = settings.openalex_api_key
+        try:
+            resp = requests.get(
+                endpoint,
+                params=params,
+                headers=headers or None,
+                timeout=max(1, settings.provider_timeout),
+            )
+            resp.raise_for_status()
+            data = resp.json()
+        except requests.Timeout:
+            return PdfTextResponse(
+                work_id=work_id,
+                status="failed",
+                error_code="PDF_TEXT_TIMEOUT",
+                error_message="PDF text read timed out",
+            )
+        except Exception as exc:
+            return PdfTextResponse(
+                work_id=work_id,
+                status="failed",
+                error_code="PDF_TEXT_READ_FAILED",
+                error_message=str(exc)[:300],
+            )
+
+        text = data.get("text")
+        return PdfTextResponse(
+            work_id=data.get("work_id") or work_id,
+            status=data.get("status") or "failed",
+            chunk_index=data.get("chunk_index"),
+            page_from=data.get("page_from"),
+            page_to=data.get("page_to"),
+            text=text,
+            returned_chars=len(text or ""),
+            next_cursor=data.get("next_cursor"),
+            partial=bool(data.get("next_cursor")),
+            error_code=data.get("error_code"),
+            error_message=data.get("error_message"),
+        )
 
     def search(
         self, query: str, top_k: int = 0, include_academic: Optional[bool] = None,
