@@ -3,7 +3,7 @@
 > 对象:本项目(面向 AI Agent / LLM 的通用 Web 搜索引擎,Tavily 路线)**当前已落地的真实实现**。
 > 一句话:**元搜索聚合**——包装现成搜索源 + 跨源去重/融合 + cross-encoder 段落级重排,以结构化 JSON 返回 LLM-ready 内容,**不自建全网爬虫与倒排索引**。另接入 **OpenAlex 学术检索(经本地 Chukonu 检索系统)** 与 **专利检索(houdutech 只读 ES)** 作为两条独立能力支线(学术论文 / 专利结果各自单独成块)。
 > 代码:[src/](../src/) ｜ 调研与选型对比:[agent-search-engine-tech-research.md](./agent-search-engine-tech-research.md) ｜ 学术引擎可行性:[academic-search-engine-feasibility.md](./academic-search-engine-feasibility.md) ｜ 评测体系:[eval-methodology.md](./eval-methodology.md)
-> 编写日期:2026-06-10 ｜ 更新:2026-06-11(接入 OpenAlex 学术检索 + provider 召回缓存)｜ 2026-06-16(接入专利检索 ES 支线)｜ 2026-06-17(专利源切换到 epo_docdb_v2 多语种索引;引擎升级 Python 3.11 + FastAPI 进程内挂载 MCP server `/mcp`)｜ 2026-06-21(专利索引切到读别名 `epo_docdb_read`→`epo_docdb_v2_20260620`)｜ 2026-07-17(排序配置统一为 Ranking Profile + 明确阈值模式)
+> 编写日期:2026-06-10 ｜ 更新:2026-06-11(接入 OpenAlex 学术检索 + provider 召回缓存)｜ 2026-06-16(接入专利检索 ES 支线)｜ 2026-06-17(专利源切换到 epo_docdb_v2 多语种索引;引擎升级 Python 3.11 + FastAPI 进程内挂载 MCP server `/mcp`)｜ 2026-06-21(专利索引切到读别名 `epo_docdb_read`→`epo_docdb_v2_20260620`)｜ 2026-07-17(统一 Ranking Profile、建立 composition root、拆分应用服务)
 
 本篇只讲**现在到底怎么做的**:分层、选型、默认开关、评测结论、运行方式。选型「为什么这么选 / 和谁对比过」见调研文档;评测「指标怎么算」见评测文档。
 
@@ -74,15 +74,16 @@ POST /search {query, top_k, ranking_profile?, rerank_threshold_mode?, ...}
 |----|---------|------|------|
 | **API** | FastAPI 应用工厂:`POST /search` · `GET /health` · `GET /`;导入无配置/模型副作用 | [api.py](../src/api.py) · [static/index.html](../src/static/index.html) | ✅ |
 | **组合根/生命周期** | 冻结 `Settings.from_env()` + `Container`;lifespan 统一创建/关闭 Engine、HTTP Session、Executor、MCP | [bootstrap.py](../src/bootstrap.py) · [config.py](../src/config.py) | ✅ |
+| **应用用例** | `SearchCommand` + `SearchService`;规划、召回、排序、PDF、Evidence、Trust、Answerability 通过阶段 Outcome 协作 | [application/](../src/application/) · [engine.py](../src/engine.py) | ✅ |
 | **L0 查询理解** | 规则版(NFKC 规范化 + 时效识别 + 学术意图识别 + 专利意图识别 + 输入校验)+ 可选 LLM 改写(SiliconFlow Qwen2.5-7B,LRU+TTL 缓存) | [l0.py](../src/l0.py) | ✅ 规则;LLM 改写默认关 |
-| **L1 搜索源** | 腾讯 SearchPro + 百度千帆 + SerpAPI,凭证驱动自动启用,并发检索 | [providers/](../src/providers/) · [engine.py](../src/engine.py) | ✅ |
+| **L1 搜索源** | 腾讯 SearchPro + 百度千帆 + SerpAPI,凭证驱动自动启用,并发检索 | [providers/](../src/providers/) · [application/recall.py](../src/application/recall.py) | ✅ |
 | **L1′ 学术源** | OpenAlex `/works`(独立能力支线;摘要倒排索引重建;凭证驱动启用) | [providers/openalex.py](../src/providers/openalex.py) | ✅ 需 `OPENALEX_API_KEY` |
 | **L1″ 专利源** | houdutech 只读 ES `/{index}/_search`(独立能力支线;multi_match 中文检索;URL 驱动启用) | [providers/patent_es.py](../src/providers/patent_es.py) | ✅ 需 `PATENT_ES_URL` |
 | **L2 抓取** | 省略(源自带正文) | — | ⏸ 不需要 |
 | **L3 去重/分块** | URL 归一化跨源去重 + 文档分块(段落→句子→字符三级,合并短段+重叠) | [dedup.py](../src/pipeline/dedup.py) · [chunk.py](../src/pipeline/chunk.py) | ✅ |
 | **L4 重排** | `quality/semantic/fast` 三档;SiliconFlow API(BGE-v2-m3)/本地 BGE/FlashRank;`off/prefer/strict` 阈值策略;**web / 学术 / 专利三路独立重排** | [ranking_options.py](../src/pipeline/ranking_options.py) · [rerank.py](../src/pipeline/rerank.py) · [fusion.py](../src/pipeline/fusion.py) | ✅ |
 | **L5 合成** | 未做 | — | ⏳ TODO |
-| **缓存** | provider 召回级缓存(进程内 LRU+TTL,线程安全;接口化预留 Redis);时效查询不缓存 | [cache.py](../src/cache.py) · [engine.py](../src/engine.py) | ✅ |
+| **缓存** | provider 召回级缓存(进程内 LRU+TTL,线程安全;接口化预留 Redis);时效查询不缓存 | [cache.py](../src/cache.py) · [application/recall.py](../src/application/recall.py) | ✅ |
 | **横切**(安全/可观测/MCP) | 未做 | — | ⏳ TODO |
 
 ---
@@ -107,7 +108,7 @@ POST /search {query, top_k, ranking_profile?, rerank_threshold_mode?, ...}
 | **百度千帆** | Bearer(单 key) | ✅ `content` | `search_recency_filter`(week/month/year 枚举) | 查询限 **72 字符**(汉字算 2),`trim_query()` 先剥口语前缀再硬截断 |
 | **SerpAPI** | api_key 查询参数 | ❌ 仅 snippet(用 snippet 充当 content) | Google `tbs`(qdr:d/w/m/y) | 100 次/月免费;补英文/全球覆盖 |
 
-启用逻辑(`settings.enabled_providers`):**有哪家凭证就启用哪家**,无需改代码。引擎用 `ThreadPoolExecutor` 并发查询,每条结果记 `provider_rank`(源内 0-based 排名)。
+启用逻辑(`settings.enabled_providers`):**有哪家凭证就启用哪家**,无需改代码。`RecallCoordinator` 使用组合根注入的共享 Executor 并发查询,每条结果记 `provider_rank`(源内 0-based 排名)。
 
 ### L3 — 去重 + 分块
 
@@ -159,7 +160,7 @@ POST /search {query, top_k, ranking_profile?, rerank_threshold_mode?, ...}
 - **粒度**:provider 召回级。key = `provider|per_provider_k|recency|query`。**改 `top_k` / 重排参数仍命中**召回缓存(只省搜索源 API,重排仍每次走);provider 自身配置(如 OpenAlex `topic_filter`)进程内不变,故不入 key。
 - **后端**:`CacheBackend` 抽象接口 + 进程内 `InMemoryCache`(`OrderedDict` LRU + 按 key TTL,带 `threading.Lock` 线程安全,记录命中率)。**接口化预留 Redis**:将来新增 `RedisCache(CacheBackend)` 并在 `build_cache` 加分支即可,engine 无感。单进程 uvicorn 进程内已足够;重启即清空。
 - **时效查询不缓存**:`time_sensitive=true`(「最新/今天/2026」等)完全跳过缓存(不读不写),保证新鲜度。
-- **防对象污染(正确性关键)**:召回结果对象会被后续重排**原地修改**(`rerank_score`/`provider_rank`)。故存入与取出都做 `model_copy(deep=True)` 深拷贝,缓存内始终是干净副本。
+- **防对象污染(重构过渡)**:F-04 完成前，召回结果仍会被旧重排模型写入 `rerank_score/provider_rank`；`RecallCoordinator` 暂时在缓存存取时深拷贝，随后将由不可变阶段模型移除此补偿逻辑。
 - **TTL**:非时效结果默认 `CACHE_TTL=21600`(6h)。
 - **效果**:同一非时效查询第二次命中,实测省掉 ~2s 搜索源 API(4700ms → 2666ms;剩余为重排耗时,因召回缓存不省重排)。`/health` 暴露 `cache` 统计(size/hits/misses/hit_rate)。
 - **未覆盖**:重排 API(SiliconFlow)调用不省 —— 若要让完全相同的查询连重排也省(命中降到毫秒级),需再叠加一层"整体响应缓存",可与召回缓存共存。

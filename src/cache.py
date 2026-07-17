@@ -4,7 +4,7 @@
 - `CacheBackend` 抽象接口,当前提供进程内 `InMemoryCache`(LRU + 按 key TTL,线程安全)。
 - 未来换 Redis 只需新增一个 `CacheBackend` 实现并在 `build_cache` 加分支,调用方无感。
 
-注意:本模块只负责"存什么取什么",调用方(engine)负责
+注意:本模块只负责"存什么取什么",调用方(RecallCoordinator)负责
 - 决定哪些查询可缓存(如时效查询不缓存)、key 怎么构造、存取时深拷贝防对象污染。
 """
 from __future__ import annotations

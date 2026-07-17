@@ -7,8 +7,8 @@ import requests
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from src.engine import SearchEngine
 from src.config import Settings
+from src.infrastructure.openalex_pdf import OpenAlexPdfGateway
 from src.models import AcademicResult
 
 
@@ -59,12 +59,8 @@ class _InlineExecutor:
         return future
 
 
-def _engine() -> SearchEngine:
-    engine = object.__new__(SearchEngine)
-    engine.settings = Settings()
-    engine._http = requests
-    engine._executor = _InlineExecutor()
-    return engine
+def _gateway() -> OpenAlexPdfGateway:
+    return OpenAlexPdfGateway(Settings(), requests, _InlineExecutor())
 
 
 def test_pdf_enrichment_attaches_pdf_fields(monkeypatch):
@@ -74,8 +70,8 @@ def test_pdf_enrichment_attaches_pdf_fields(monkeypatch):
         calls.append((url, json, headers, timeout))
         return _Resp()
 
-    monkeypatch.setattr("src.engine.requests.post", fake_post)
-    engine = _engine()
+    monkeypatch.setattr("src.infrastructure.openalex_pdf.requests.post", fake_post)
+    gateway = _gateway()
     paper = AcademicResult(
         url="https://doi.org/10.1/example",
         title="Paper",
@@ -84,7 +80,7 @@ def test_pdf_enrichment_attaches_pdf_fields(monkeypatch):
         oa_pdf_url="https://example.org/paper.pdf",
     )
 
-    engine._enrich_academic_pdf_text(
+    outcome = gateway.enrich(
         [paper],
         include_pdf_text=True,
         pdf_text_mode="cached",
@@ -92,22 +88,24 @@ def test_pdf_enrichment_attaches_pdf_fields(monkeypatch):
         pdf_max_chars_per_result=500,
         pdf_timeout_ms=3000,
     )
+    enriched = outcome.academic[0]
 
     assert calls
     assert calls[0][1]["work_id"] == "W123"
     assert calls[0][1]["mode"] == "cached"
     assert paper.content == "abstract"
-    assert paper.pdf_status == "ready"
-    assert paper.pdf_text == "full text from pdf"
-    assert paper.pdf_pages == 3
-    assert paper.pdf_chunk_index == 0
-    assert paper.pdf_page_from == 1
-    assert paper.pdf_page_to == 2
-    assert paper.pdf_next_cursor == "cursor1"
+    assert paper.pdf_status == "not_requested"
+    assert enriched.pdf_status == "ready"
+    assert enriched.pdf_text == "full text from pdf"
+    assert enriched.pdf_pages == 3
+    assert enriched.pdf_chunk_index == 0
+    assert enriched.pdf_page_from == 1
+    assert enriched.pdf_page_to == 2
+    assert enriched.pdf_next_cursor == "cursor1"
 
 
 def test_pdf_enrichment_marks_missing_pdf_url():
-    engine = _engine()
+    gateway = _gateway()
     paper = AcademicResult(
         url="https://openalex.org/W123",
         title="Paper",
@@ -115,7 +113,7 @@ def test_pdf_enrichment_marks_missing_pdf_url():
         work_id="W123",
     )
 
-    engine._enrich_academic_pdf_text(
+    outcome = gateway.enrich(
         [paper],
         include_pdf_text=True,
         pdf_text_mode="sync",
@@ -124,8 +122,9 @@ def test_pdf_enrichment_marks_missing_pdf_url():
         pdf_timeout_ms=3000,
     )
 
-    assert paper.pdf_status == "no_pdf_url"
-    assert paper.pdf_error_code == "PDF_URL_MISSING"
+    assert paper.pdf_status == "not_requested"
+    assert outcome.academic[0].pdf_status == "no_pdf_url"
+    assert outcome.academic[0].pdf_error_code == "PDF_URL_MISSING"
 
 
 def test_get_pdf_text_reads_next_page(monkeypatch):
@@ -135,10 +134,10 @@ def test_get_pdf_text_reads_next_page(monkeypatch):
         calls.append((url, params, headers, timeout))
         return _TextResp()
 
-    monkeypatch.setattr("src.engine.requests.get", fake_get)
-    engine = _engine()
+    monkeypatch.setattr("src.infrastructure.openalex_pdf.requests.get", fake_get)
+    gateway = _gateway()
 
-    resp = engine.get_pdf_text("W123", cursor="cursor1", max_chars=500)
+    resp = gateway.read_page("W123", cursor="cursor1", max_chars=500)
 
     assert calls
     assert calls[0][0].endswith("/openalex/pdf/text/W123")

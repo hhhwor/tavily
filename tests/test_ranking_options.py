@@ -92,36 +92,32 @@ def test_settings_do_not_treat_unset_legacy_false_as_semantic():
     assert configured.fusion_enabled is True
 
 
-def test_engine_noop_disables_strict_threshold_without_partial_failure(monkeypatch):
-    from src.engine import SearchEngine
+def test_engine_noop_disables_strict_threshold_without_partial_failure():
+    from src.bootstrap import build_container
     from src.config import Settings
-    from src.pipeline.rerank import NoOpReranker
 
-    engine = object.__new__(SearchEngine)
-    engine.providers = []
-    engine.academic_provider = None
-    engine.patent_provider = None
-    engine.cache = None
-    engine.text_scorer = NoOpReranker()
-    engine._text_scorer_cache = {}
-    engine.settings = Settings()
-    engine._http = None
-    monkeypatch.setattr(
-        engine,
-        "_select_text_scorer",
-        lambda *args, **kwargs: NoOpReranker(),
+    container = build_container(
+        Settings(
+            openalex_enabled=False,
+            patent_es_enabled=False,
+            siliconflow_api_key="",
+            mcp_mode="false",
+        ),
+        include_mcp=False,
     )
-
-    response = engine.search(
-        "query",
-        include_academic=False,
-        include_patent=False,
-        ranking_profile="quality",
-        rerank_backend="siliconflow",
-        rerank_threshold_mode="strict",
-        rewrite_enabled=False,
-        trust_mode="off",
-    )
+    try:
+        response = container.engine.search(
+            "query",
+            include_academic=False,
+            include_patent=False,
+            ranking_profile="quality",
+            rerank_backend="siliconflow",
+            rerank_threshold_mode="strict",
+            rewrite_enabled=False,
+            trust_mode="off",
+        )
+    finally:
+        container.close()
 
     assert response.ranking_profile == "quality"
     assert response.rerank_threshold_mode == "off"

@@ -6,7 +6,7 @@
 - verify_claims —— 候选陈述 + search evidence → 支持/冲突/证据不足。
 - get_pdf_text —— 用 search 返回的 work_id + next_cursor 续读 PDF 正文。
 
-引擎 search() 是同步阻塞(内部 ThreadPoolExecutor + 网络 + 重排),故在异步工具里用
+搜索用例是同步阻塞(共享 Executor + 网络 + 重排),故在异步工具里用
 anyio.to_thread 卸到线程池,避免阻塞事件循环影响并发请求。
 """
 from __future__ import annotations

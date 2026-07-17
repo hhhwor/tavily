@@ -4,28 +4,32 @@ from datetime import datetime, timezone
 
 import pytest
 
-from src.engine import SearchEngine
+from src.application.evidence_assembler import EvidenceAssembler
+from src.bootstrap import build_container
 from src.config import Settings
 from src.models import AcademicResult, PatentResult, SearchResult
-from src.pipeline.rerank import NoOpReranker
 from src.trust import annotate_evidence, build_search_boundary
 
 
-def _empty_engine() -> SearchEngine:
-    engine = object.__new__(SearchEngine)
-    engine.providers = []
-    engine.academic_provider = None
-    engine.patent_provider = None
-    engine.cache = None
-    engine.text_scorer = NoOpReranker()
-    engine._text_scorer_cache = {}
-    engine.settings = Settings()
-    engine._http = None
-    return engine
+@pytest.fixture
+def empty_engine():
+    container = build_container(
+        Settings(
+            openalex_enabled=False,
+            patent_es_enabled=False,
+            ranking_profile="fast",
+            rerank_threshold_mode="off",
+            mcp_mode="false",
+        ),
+        include_mcp=False,
+    )
+    try:
+        yield container.engine
+    finally:
+        container.close()
 
 
 def test_phase0_annotates_web_academic_and_patent_without_reordering():
-    engine = object.__new__(SearchEngine)
     web = SearchResult(
         url="https://www.example.com/news/?utm_source=test",
         title="Web",
@@ -56,7 +60,7 @@ def test_phase0_annotates_web_academic_and_patent_without_reordering():
         country="US",
         rerank_score=0.7,
     )
-    evidence = engine._build_evidence([web], [paper], [patent])
+    evidence = EvidenceAssembler().assemble([web], [paper], [patent])
     ids_before = [item.id for item in evidence]
 
     retrieved_at = datetime(2026, 7, 15, tzinfo=timezone.utc)
@@ -103,7 +107,6 @@ def test_phase0_annotates_web_academic_and_patent_without_reordering():
 
 
 def test_pdf_evidence_is_citable_only_with_stable_page_locator():
-    engine = object.__new__(SearchEngine)
     with_pages = AcademicResult(
         url="https://doi.org/10.1/with-pages",
         title="Located PDF",
@@ -126,7 +129,7 @@ def test_pdf_evidence_is_citable_only_with_stable_page_locator():
         rerank_score=0.8,
     )
 
-    evidence = engine._build_evidence([], [with_pages, without_pages], [])
+    evidence = EvidenceAssembler().assemble([], [with_pages, without_pages], [])
     annotate_evidence(evidence)
     by_result = {item.result_id: item for item in evidence}
 
@@ -148,7 +151,6 @@ def test_pdf_evidence_is_citable_only_with_stable_page_locator():
 
 
 def test_serpapi_snippet_is_discovery_only():
-    engine = object.__new__(SearchEngine)
     result = SearchResult(
         url="https://example.org/result",
         title="Snippet",
@@ -158,7 +160,7 @@ def test_serpapi_snippet_is_discovery_only():
         rerank_score=0.8,
     )
 
-    evidence = engine._build_evidence([result], [], [])
+    evidence = EvidenceAssembler().assemble([result], [], [])
     annotate_evidence(evidence)
 
     assert evidence[0].provenance is not None
@@ -169,7 +171,6 @@ def test_serpapi_snippet_is_discovery_only():
 
 
 def test_search_boundary_exposes_limits_and_serializes_to_json():
-    engine = object.__new__(SearchEngine)
     paper = AcademicResult(
         url="https://doi.org/10.1/example",
         title="论文 Paper",
@@ -180,7 +181,7 @@ def test_search_boundary_exposes_limits_and_serializes_to_json():
         license="cc-by",
         rerank_score=0.8,
     )
-    evidence = engine._build_evidence([], [paper], [])
+    evidence = EvidenceAssembler().assemble([], [paper], [])
     annotate_evidence(evidence)
 
     boundary = build_search_boundary(
@@ -206,14 +207,13 @@ def test_search_boundary_exposes_limits_and_serializes_to_json():
     assert data["query_time"] == "2026-07-15T00:00:00Z"
 
 
-def test_engine_off_bypasses_phase0_annotations(monkeypatch):
-    engine = _empty_engine()
+def test_engine_off_bypasses_phase0_annotations(monkeypatch, empty_engine):
 
     def fail_if_called(*args, **kwargs):
         raise AssertionError("annotate_evidence must not run in off mode")
 
-    monkeypatch.setattr("src.engine.annotate_evidence", fail_if_called)
-    response = engine.search(
+    monkeypatch.setattr("src.application.trust_annotator.annotate_evidence", fail_if_called)
+    response = empty_engine.search(
         "query",
         include_academic=False,
         include_patent=False,
@@ -224,10 +224,8 @@ def test_engine_off_bypasses_phase0_annotations(monkeypatch):
     assert response.search_boundary is None
 
 
-def test_engine_defaults_to_annotate_mode():
-    engine = _empty_engine()
-
-    response = engine.search(
+def test_engine_defaults_to_annotate_mode(empty_engine):
+    response = empty_engine.search(
         "query",
         include_academic=False,
         include_patent=False,
@@ -239,8 +237,6 @@ def test_engine_defaults_to_annotate_mode():
     json.dumps(response.model_dump())
 
 
-def test_engine_rejects_unknown_trust_mode():
-    engine = _empty_engine()
-
+def test_engine_rejects_unknown_trust_mode(empty_engine):
     with pytest.raises(ValueError, match="off / annotate"):
-        engine.search("query", trust_mode="verify")
+        empty_engine.search("query", trust_mode="verify")

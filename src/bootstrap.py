@@ -8,9 +8,18 @@ from typing import Any, AsyncIterator, Optional
 
 import requests
 
+from src.application.answerability import AnswerabilityPolicy
+from src.application.evidence_assembler import EvidenceAssembler
+from src.application.query_planner import QueryPlanner
+from src.application.ranking_service import RankingService
+from src.application.recall import RecallCoordinator
+from src.application.search_service import SearchService
+from src.application.trust_annotator import TrustAnnotator
+from src.application.verify_service import VerifyService
 from src.cache import build_cache
 from src.config import Settings
 from src.engine import SearchEngine
+from src.infrastructure.openalex_pdf import OpenAlexPdfGateway
 from src.pipeline.rerank import Reranker, build_text_scorer
 from src.providers.base import SearchProvider
 from src.trust import build_claim_verifier
@@ -118,6 +127,14 @@ def _claim_verifier(settings: Settings, http: requests.Session):
     )
 
 
+def _source_snapshot(settings: Settings, source: str) -> str:
+    if source == "patent_es":
+        return f"index-alias:{settings.patent_es_index}"
+    if source == "openalex_local":
+        return "service-index:unspecified"
+    return "provider-managed"
+
+
 @dataclass
 class Container:
     """单个应用实例的运行时资源；不与其他 app 共享可变单例。"""
@@ -183,6 +200,7 @@ def build_container(
     providers: list[SearchProvider] = []
     academic_provider: Optional[SearchProvider] = None
     patent_provider: Optional[SearchProvider] = None
+    ranking_service: Optional[RankingService] = None
     try:
         scorer_factory = _scorer_factory(config, http)
         scorer = scorer_factory(
@@ -199,17 +217,46 @@ def build_container(
         providers = _web_providers(config, http)
         academic_provider = _academic_provider(config, http)
         patent_provider = _patent_provider(config, http)
+        ranking_service = RankingService(
+            config,
+            scorer,
+            scorer_factory,
+            executor,
+        )
+        pdf_gateway = OpenAlexPdfGateway(config, http, executor)
+        search_service = SearchService(
+            query_planner=QueryPlanner(config, http),
+            recall=RecallCoordinator(
+                config,
+                providers,
+                academic_provider,
+                patent_provider,
+                cache,
+                executor,
+            ),
+            ranking=ranking_service,
+            pdf_gateway=pdf_gateway,
+            evidence_assembler=EvidenceAssembler(),
+            trust_annotator=TrustAnnotator(
+                lambda source: _source_snapshot(config, source)
+            ),
+            answerability=AnswerabilityPolicy(),
+            provider_names=[provider.name for provider in providers],
+            academic_available=academic_provider is not None,
+            patent_available=patent_provider is not None,
+        )
+        verify_service = VerifyService(verifier)
         engine = SearchEngine(
             settings=config,
+            search_service=search_service,
+            verify_service=verify_service,
+            pdf_gateway=pdf_gateway,
             providers=providers,
             academic_provider=academic_provider,
             patent_provider=patent_provider,
             cache=cache,
             text_scorer=scorer,
-            claim_verifier=verifier,
-            text_scorer_factory=scorer_factory,
-            http_session=http,
-            executor=executor,
+            ranking_service=ranking_service,
         )
 
         mcp = None
@@ -242,6 +289,7 @@ def build_container(
                     pass
             else:
                 resources = [
+                    ranking_service,
                     scorer,
                     verifier,
                     getattr(verifier, "classifier", None),

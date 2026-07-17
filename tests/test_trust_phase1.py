@@ -1,7 +1,7 @@
 """Phase 1 陈述拆解、蕴含、一致性和门禁测试。"""
 import json
 
-from src.engine import SearchEngine
+from src.application.evidence_assembler import EvidenceAssembler
 from src.models import AcademicResult, CandidateClaim
 from src.trust import ClaimVerifier, annotate_evidence
 from src.trust.claims import decompose_claims
@@ -20,7 +20,6 @@ def _academic_evidence(
     page_from: int | None = 1,
     abstract_only: bool = False,
 ):
-    engine = object.__new__(SearchEngine)
     paper = AcademicResult(
         url=f"https://doi.org/{doi}",
         title=f"Paper {work_id}",
@@ -34,7 +33,7 @@ def _academic_evidence(
         pdf_page_to=None if abstract_only else page_from,
         rerank_score=0.9,
     )
-    evidence = engine._build_evidence([], [paper], [])
+    evidence = EvidenceAssembler().assemble([], [paper], [])
     annotate_evidence(evidence)
     return evidence[0]
 

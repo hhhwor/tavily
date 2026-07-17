@@ -18,9 +18,11 @@ from typing import Dict, List, Optional, Tuple
 
 from eval.agent_answer_eval import AnswerPairJudge, EvidenceAnswerAgent, answer_support_audit
 from eval.e2e_judge import ScenarioPairJudge, compact_response, evidence_type_counts
+from src.application.answerability import AnswerabilityPolicy
+from src.application.evidence_assembler import EvidenceAssembler
 from src.config import Settings
 from src.bootstrap import build_container
-from src.engine import SearchEngine, _build_answerability
+from src.engine import SearchEngine
 from src.l0 import detect_recency
 from src.models import SearchResponse
 from src.providers.baidu import BaiduSearchProvider
@@ -54,8 +56,8 @@ def run_baidu_only(provider: BaiduSearchProvider, task: str, k: int) -> SearchRe
     t0 = time.time()
     recency = detect_recency(task)
     results = provider.search(task, k, recency)
-    evidence = SearchEngine._build_evidence(results, [], [])
-    answerability = _build_answerability(
+    evidence = EvidenceAssembler().assemble(results, [], [])
+    answerability = AnswerabilityPolicy().evaluate(
         evidence,
         [],
         expected_web=True,

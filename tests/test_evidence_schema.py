@@ -4,13 +4,13 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from src.engine import SearchEngine, _build_answerability
+from src.application.answerability import AnswerabilityPolicy
+from src.application.evidence_assembler import EvidenceAssembler
 from src.l0 import plan_query
 from src.models import AcademicResult, PatentResult, SearchFailure, SearchResponse, SearchResult
 
 
 def test_build_evidence_mixes_sources_by_relevance():
-    engine = object.__new__(SearchEngine)
     web = SearchResult(
         url="https://example.com/web",
         title="Web Result",
@@ -59,7 +59,7 @@ def test_build_evidence_mixes_sources_by_relevance():
         rerank_score=0.7,
     )
 
-    evidence = engine._build_evidence([web], [paper], [patent])
+    evidence = EvidenceAssembler().assemble([web], [paper], [patent])
 
     assert [e.type for e in evidence] == ["academic", "patent", "web"]
     top = evidence[0]
@@ -92,7 +92,6 @@ def test_build_evidence_mixes_sources_by_relevance():
 
 
 def test_build_evidence_marks_pdf_gap_for_abstract_only_paper():
-    engine = object.__new__(SearchEngine)
     paper = AcademicResult(
         url="https://openalex.org/W1",
         title="Paper",
@@ -104,7 +103,7 @@ def test_build_evidence_marks_pdf_gap_for_abstract_only_paper():
         rerank_score=0.8,
     )
 
-    evidence = engine._build_evidence([], [paper], [])
+    evidence = EvidenceAssembler().assemble([], [paper], [])
 
     assert len(evidence) == 1
     assert evidence[0].passage.snippet_type == "abstract"
@@ -142,7 +141,7 @@ def test_answerability_reports_gaps_and_partial_failure():
         message="boom",
     )
 
-    answerability = _build_answerability(
+    answerability = AnswerabilityPolicy().evaluate(
         [],
         [failure],
         expected_web=False,

@@ -1,12 +1,12 @@
 # Agent 搜索引擎架构审阅与解耦设计
 
-> 状态：渐进式重构进行中；F-01、F-02 已实施
+> 状态：渐进式重构进行中；F-01、F-02、F-03 已实施
 >
 > 审阅基线：2026-07-17，`feebcf6` 加当前 F-02 工作树
 >
 > 审阅范围：`src/`、`tests/`、`eval/`、`scripts/`、`deploy/` 与直接运行依赖
 >
-> 验证基线：当前工作树 81 个测试全部通过
+> 验证基线：当前工作树 112 个测试全部通过
 >
 > 关联文档：[当前技术路线](tech-route-summary.md)、[Trust Layer 设计](agent-search-trust-layer-design.md)、[评测方法](eval-methodology.md)
 
@@ -127,11 +127,17 @@ flowchart TD
 
 兼容入口 `src.api:app`、`create_app(container)` 与 `SearchEngine.search(...)` 均保留；REST 与 MCP 使用同一 Container，不再共享隐式模块单例。
 
-#### F-03 `SearchEngine` 职责过载
+#### F-03 `SearchEngine` 职责过载（已解决）
 
-[engine.py](../src/engine.py) 同时负责 Provider 工厂、Scorer/Verifier 生命周期、缓存策略、两轮并发、PDF HTTP、三类 Evidence 映射、Trust 接入、Answerability 和错误降级。新增一种领域或富化步骤需要在同一文件修改多个分支。
+2026-07-17 已把原先集中在 [engine.py](../src/engine.py) 的真实搜索链路迁到
+`src/application/`，Engine 从约 1000 行降为约 160 行兼容门面：
 
-处理建议：保留同名门面，但内部依次委托给 `QueryPlanner`、`RecallCoordinator`、`RankingService`、`PdfTextGateway`、`EvidenceAssembler`、`TrustAnnotator` 和 `AnswerabilityPolicy`。门面只负责兼容旧调用签名。
+- 冻结 `SearchCommand` 统一承载旧 `SearchEngine.search(...)` 参数；门面只负责参数映射和用例转发。
+- `SearchService` 固定编排 `QueryPlanner → RecallCoordinator → RankingService → PdfTextGateway → EvidenceAssembler → TrustAnnotator → AnswerabilityPolicy`，并集中合并阶段失败与组装 `SearchResponse`。
+- `RecallOutcome`、`RankingOutcome`、`PdfEnrichmentOutcome` 等阶段契约冻结为 tuple 边界，调用方只消费显式返回值，为 F-04 的不可变文档模型留出替换点。
+- OpenAlex PDF HTTP 已迁到 `infrastructure/openalex_pdf.py` 并实现应用层 `PdfTextGateway` Port；陈述校验由 `VerifyService` 承接。
+- 组合根负责装配全部应用服务。Engine 不再导入 `requests`、线程池、具体 Provider、查询规划函数或领域 reranker。
+- 旧测试和评测入口不再依赖 `_build_evidence`、`_build_answerability`、`_enrich_academic_pdf_text` 等 Engine 私有函数。
 
 #### F-04 可变对象把缓存、排序和可信判断耦合在一起
 
@@ -303,10 +309,11 @@ class SearchUseCase(Protocol):
 
 ## 5. 渐进式重构计划
 
-### Phase 0：冻结行为与修正契约（进行中；F-01/F-02 已完成）
+### Phase 0：冻结行为与修正契约（进行中；F-01/F-02/F-03 已完成）
 
 - [x] F-01：统一 Ranking Profile 与 threshold 语义，并补参数解析、排序行为和兼容性测试。
 - [x] F-02：引入不可变 Settings、唯一 composition root、惰性应用工厂和受管资源生命周期。
+- [x] F-03：拆分搜索应用服务并将 SearchEngine 收敛为兼容门面。
 - [ ] 为 REST/MCP 输出差异、缓存不污染和输入对象不变补测试。
 - 修复无效开关，限制模型选择，增加统一错误脱敏。
 - 把当前未跟踪的 Trust 测试纳入版本控制。
@@ -325,9 +332,10 @@ class SearchUseCase(Protocol):
 
 ### Phase 2：拆分 Engine 用例
 
-- 依次抽出 `EvidenceAssembler`、`AnswerabilityPolicy`、`PdfTextGateway`。
-- 抽出 `RecallCoordinator` 与 `RankingService`，统一 Stage Outcome 和 Deadline。
-- 将 Claim Verification 从 Engine 门面移到 `VerifyService`。
+- [x] 抽出 `EvidenceAssembler`、`AnswerabilityPolicy`、`PdfTextGateway`。
+- [x] 抽出 `RecallCoordinator` 与 `RankingService`，统一 Stage Outcome。
+- [x] 将 Claim Verification 从 Engine 门面移到 `VerifyService`。
+- [ ] 引入跨阶段全局 Deadline 与取消传播。
 
 退出条件：`SearchEngine` 只做兼容委托；每个服务可用 Fake Port 独立测试；部分失败与降级行为保持不变。
 
