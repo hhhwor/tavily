@@ -11,28 +11,28 @@ anyio.to_thread 卸到线程池,避免阻塞事件循环影响并发请求。
 """
 from __future__ import annotations
 
-import os
 from typing import Any, Literal, Optional
 
 import anyio
 from mcp.server.fastmcp import FastMCP
 from mcp.server.transport_security import TransportSecuritySettings
 
+from src.config import Settings
 from src.engine import SearchEngine
 from src.models import CandidateClaim, Evidence, SearchBoundary
 
 
-def _transport_security() -> Optional[TransportSecuritySettings]:
-    """DNS rebinding 防护配置(放在反代/隧道后时需放行公网 Host)。
+def _transport_security(settings: Settings) -> Optional[TransportSecuritySettings]:
+    """由不可变配置生成 DNS rebinding 防护(环境只在 bootstrap 读取)。
 
     - MCP_DNS_REBINDING_PROTECTION=false → 关闭 Host/Origin 校验(可信反代 + token 鉴权场景)。
     - 否则按 MCP_ALLOWED_HOSTS / MCP_ALLOWED_ORIGINS(逗号分隔,精确匹配或 `host:*` 端口通配)放行。
     - 都不设 → 返回 None(SDK 默认仅放行 localhost)。
     """
-    if os.getenv("MCP_DNS_REBINDING_PROTECTION", "true").lower() == "false":
+    if not settings.mcp_dns_rebinding_protection:
         return TransportSecuritySettings(enable_dns_rebinding_protection=False)
-    hosts = [h.strip() for h in os.getenv("MCP_ALLOWED_HOSTS", "").split(",") if h.strip()]
-    origins = [o.strip() for o in os.getenv("MCP_ALLOWED_ORIGINS", "").split(",") if o.strip()]
+    hosts = list(settings.mcp_allowed_hosts)
+    origins = list(settings.mcp_allowed_origins)
     if hosts or origins:
         return TransportSecuritySettings(
             enable_dns_rebinding_protection=True,
@@ -50,8 +50,9 @@ def _evidence_counts(evidence: list[Any]) -> dict[str, int]:
     return counts
 
 
-def build_mcp(engine: SearchEngine) -> FastMCP:
+def build_mcp(engine: SearchEngine, settings: Optional[Settings] = None) -> FastMCP:
     """构建挂载用的 FastMCP 实例(复用传入的引擎单例)。"""
+    settings = settings or Settings()
     mcp = FastMCP(
         "chukonu-web-search",
         instructions=(
@@ -61,7 +62,7 @@ def build_mcp(engine: SearchEngine) -> FastMCP:
         stateless_http=True,      # 每次请求独立,无会话状态
         json_response=True,       # 直接返回 JSON(非 SSE 流),便于无状态调用
         streamable_http_path="/mcp",  # 子应用挂在根("/")时,端点即规范的 /mcp(无重定向)
-        transport_security=_transport_security(),  # 反代/隧道后放行公网 Host(见上)
+        transport_security=_transport_security(settings),  # 反代/隧道后放行公网 Host(见上)
     )
 
     @mcp.tool(

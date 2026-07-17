@@ -9,7 +9,6 @@ from __future__ import annotations
 import hashlib
 import hmac
 import json
-import os
 import time
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
@@ -74,10 +73,12 @@ class TencentSearchProvider(SearchProvider):
         secret_id: Optional[str] = None,
         secret_key: Optional[str] = None,
         timeout: int = 15,
+        http_session: Optional[requests.Session] = None,
     ):
-        self.secret_id = secret_id or os.getenv("TENCENT_SECRET_ID", "")
-        self.secret_key = secret_key or os.getenv("TENCENT_SECRET_KEY", "")
+        self.secret_id = secret_id or ""
+        self.secret_key = secret_key or ""
         self.timeout = timeout
+        self._http = http_session or requests
         if not self.secret_id or not self.secret_key:
             raise ValueError("缺少腾讯云凭证: TENCENT_SECRET_ID / TENCENT_SECRET_KEY")
 
@@ -94,7 +95,7 @@ class TencentSearchProvider(SearchProvider):
         payload = json.dumps(body, ensure_ascii=False)
         headers = _sign_v3(self.secret_id, self.secret_key, payload)
 
-        resp = requests.post(
+        resp = self._http.post(
             _ENDPOINT, headers=headers, data=payload.encode("utf-8"), timeout=self.timeout
         )
         resp.raise_for_status()

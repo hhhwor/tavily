@@ -11,6 +11,7 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import atexit
 import hashlib
 import json
 import os
@@ -19,6 +20,7 @@ import time
 from typing import Any, Dict, List, Optional, Tuple
 
 from eval.e2e_judge import E2EBundleJudge, evidence_type_counts, quality_value
+from src.bootstrap import build_container
 from src.engine import SearchEngine
 from src.models import SearchResponse
 
@@ -374,7 +376,10 @@ def main() -> None:
     args = ap.parse_args()
 
     queries = load_queries(args.dataset, args.max_queries)
-    engine = None if args.endpoint else SearchEngine()
+    container = None if args.endpoint else build_container(include_mcp=False)
+    if container is not None:
+        atexit.register(container.close)
+    engine = None if container is None else container.engine
     os.makedirs(_CACHE_DIR, exist_ok=True)
     response_cache_path = os.path.join(_CACHE_DIR, "e2e_search.json")
     response_cache = _load_response_cache(response_cache_path) if args.cache_responses else {}
@@ -417,6 +422,9 @@ def main() -> None:
     with open(_REPORT_PATH, "w", encoding="utf-8") as f:
         f.write(report)
     print(f"-> wrote {_REPORT_PATH}")
+    if container is not None:
+        container.close()
+        atexit.unregister(container.close)
 
 
 if __name__ == "__main__":

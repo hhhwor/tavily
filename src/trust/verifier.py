@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import re
 import time
-from typing import Dict, List, Optional, Sequence
+from typing import Any, Dict, List, Optional, Sequence
 
 from src.models import (
     CandidateClaim,
@@ -421,13 +421,16 @@ def build_claim_verifier(
     timeout: int,
     max_claims: int,
     max_evidence_per_claim: int,
+    http_session: Any = None,
 ) -> ClaimVerifier:
     backend = (backend or "auto").strip().lower()
     if backend not in {"auto", "rules", "siliconflow"}:
         raise ValueError(f"未知 TRUST_VERIFY_BACKEND: {backend}")
     use_model = backend == "siliconflow" or (backend == "auto" and bool(api_key))
     if use_model:
-        classifier = SiliconFlowEntailmentClassifier(api_key, base_url, model, timeout)
+        classifier = SiliconFlowEntailmentClassifier(
+            api_key, base_url, model, timeout, http_session=http_session
+        )
     else:
         classifier = RuleEntailmentClassifier()
     return ClaimVerifier(

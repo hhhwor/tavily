@@ -12,11 +12,13 @@ import anyio
 
 from eval.agent_answer_eval import AnswerPairJudge, EvidenceAnswerAgent, answer_support_audit
 from eval.e2e_judge import compact_response, evidence_type_counts
-from src.config import settings
+from src.config import Settings
 from src.models import SearchResponse
 
 _REPORT_PATH = "eval/tool_agent_report.md"
 _DETAILS_PATH = "eval/tool_agent_details.json"
+
+settings = Settings()
 
 _AGENT_SYSTEM = (
     "你是技术情报 agent。你必须按需调用可用搜索工具,不要凭记忆补外部事实。\n"
@@ -423,7 +425,10 @@ def _judge_against_baidu(details: List[dict], args: argparse.Namespace) -> Dict[
     from eval.run_agent_scenario_compare import run_baidu_only
     from src.providers.baidu import BaiduSearchProvider
 
-    baidu = BaiduSearchProvider(timeout=settings.provider_timeout)
+    baidu = BaiduSearchProvider(
+        api_key=settings.qianfan_api_key,
+        timeout=settings.provider_timeout,
+    )
     answer_agent = EvidenceAnswerAgent(model=args.answer_model, evidence_k=args.evidence_k)
     baseline_items = []
     baidu_responses: Dict[str, SearchResponse] = {}
@@ -456,6 +461,8 @@ def _public_details(details: List[dict]) -> List[dict]:
 
 
 def main() -> None:
+    global settings
+    settings = Settings.from_env()
     ap = argparse.ArgumentParser()
     for name, default in [
         ("--dataset", "eval/agent_scenarios.jsonl"),

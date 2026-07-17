@@ -11,7 +11,7 @@ import re
 import time
 import unicodedata
 from collections import OrderedDict
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 from urllib.parse import urlparse
 
 import requests as _requests
@@ -160,6 +160,7 @@ def rewrite_query(
     model: str = "Qwen/Qwen2.5-7B-Instruct",
     cache_size: int = 512,
     failures: Optional[List[SearchFailure]] = None,
+    http_session: Any = None,
 ) -> str:
     """用 LLM 将查询改写为检索友好的关键词。
 
@@ -171,7 +172,7 @@ def rewrite_query(
         return cached
 
     try:
-        resp = _requests.post(
+        resp = (http_session or _requests).post(
             f"{base_url.rstrip('/')}/chat/completions",
             headers={
                 "Authorization": f"Bearer {api_key}",
@@ -225,6 +226,7 @@ def rewrite_academic_query(
     model: str = "Qwen/Qwen2.5-7B-Instruct",
     cache_size: int = 512,
     failures: Optional[List[SearchFailure]] = None,
+    http_session: Any = None,
 ) -> str:
     """把(可能中文/口语化的)查询改写为适合 OpenAlex 的学术检索词。
 
@@ -238,7 +240,7 @@ def rewrite_academic_query(
         return cached
 
     try:
-        resp = _requests.post(
+        resp = (http_session or _requests).post(
             f"{base_url.rstrip('/')}/chat/completions",
             headers={
                 "Authorization": f"Bearer {api_key}",
@@ -288,6 +290,7 @@ def plan_query(
     force_academic: Optional[bool] = None,
     patent_detect: bool = True,
     force_patent: Optional[bool] = None,
+    http_session: Any = None,
 ) -> SearchPlan:
     """L0 查询理解:规范化 + 时效识别 + 学术/专利意图识别 + (可选)LLM 改写 → SearchPlan。
 
@@ -315,6 +318,7 @@ def plan_query(
         rewritten = rewrite_query(
             norm, rewrite_api_key, rewrite_base_url, rewrite_model, rewrite_cache_size,
             failures=failures,
+            http_session=http_session,
         )
 
     return SearchPlan(

@@ -1,10 +1,14 @@
 """OpenAlex PDF enrichment tests."""
 import os
 import sys
+from concurrent.futures import Future
+
+import requests
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from src.engine import SearchEngine
+from src.config import Settings
 from src.models import AcademicResult
 
 
@@ -45,6 +49,24 @@ class _TextResp:
         }
 
 
+class _InlineExecutor:
+    def submit(self, fn, *args, **kwargs):
+        future = Future()
+        try:
+            future.set_result(fn(*args, **kwargs))
+        except BaseException as exc:
+            future.set_exception(exc)
+        return future
+
+
+def _engine() -> SearchEngine:
+    engine = object.__new__(SearchEngine)
+    engine.settings = Settings()
+    engine._http = requests
+    engine._executor = _InlineExecutor()
+    return engine
+
+
 def test_pdf_enrichment_attaches_pdf_fields(monkeypatch):
     calls = []
 
@@ -53,7 +75,7 @@ def test_pdf_enrichment_attaches_pdf_fields(monkeypatch):
         return _Resp()
 
     monkeypatch.setattr("src.engine.requests.post", fake_post)
-    engine = object.__new__(SearchEngine)
+    engine = _engine()
     paper = AcademicResult(
         url="https://doi.org/10.1/example",
         title="Paper",
@@ -85,7 +107,7 @@ def test_pdf_enrichment_attaches_pdf_fields(monkeypatch):
 
 
 def test_pdf_enrichment_marks_missing_pdf_url():
-    engine = object.__new__(SearchEngine)
+    engine = _engine()
     paper = AcademicResult(
         url="https://openalex.org/W123",
         title="Paper",
@@ -114,7 +136,7 @@ def test_get_pdf_text_reads_next_page(monkeypatch):
         return _TextResp()
 
     monkeypatch.setattr("src.engine.requests.get", fake_get)
-    engine = object.__new__(SearchEngine)
+    engine = _engine()
 
     resp = engine.get_pdf_text("W123", cursor="cursor1", max_chars=500)
 

@@ -8,7 +8,6 @@
 """
 from __future__ import annotations
 
-import os
 from typing import Any, Dict, List, Optional
 
 import requests
@@ -36,11 +35,13 @@ class SerpApiProvider(SearchProvider):
         timeout: int = 15,
         gl: str = "us",
         hl: str = "en",
+        http_session: Optional[requests.Session] = None,
     ):
-        self.api_key = api_key or os.getenv("SERPAPI_API_KEY", "")
+        self.api_key = api_key or ""
         self.timeout = timeout
         self.gl = gl
         self.hl = hl
+        self._http = http_session or requests
         if not self.api_key:
             raise ValueError("缺少 SerpAPI 凭证: SERPAPI_API_KEY")
 
@@ -56,7 +57,7 @@ class SerpApiProvider(SearchProvider):
         if recency and recency in _RECENCY_TBS:
             params["tbs"] = _RECENCY_TBS[recency]
 
-        resp = requests.get(_ENDPOINT, params=params, timeout=self.timeout)
+        resp = self._http.get(_ENDPOINT, params=params, timeout=self.timeout)
         resp.raise_for_status()
         data = resp.json()
 

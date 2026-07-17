@@ -1,12 +1,12 @@
 # Agent 搜索引擎架构审阅与解耦设计
 
-> 状态：建议稿，尚未实施重构
+> 状态：渐进式重构进行中；F-01、F-02 已实施
 >
-> 审阅基线：2026-07-17，`main@390482c` 加当前工作树中尚未提交的 Trust Phase 0/1 改动
+> 审阅基线：2026-07-17，`feebcf6` 加当前 F-02 工作树
 >
 > 审阅范围：`src/`、`tests/`、`eval/`、`scripts/`、`deploy/` 与直接运行依赖
 >
-> 验证基线：当前工作树 43 个测试全部通过；其中 16 个 Trust 测试尚未被 Git 跟踪
+> 验证基线：当前工作树 81 个测试全部通过
 >
 > 关联文档：[当前技术路线](tech-route-summary.md)、[Trust Layer 设计](agent-search-trust-layer-design.md)、[评测方法](eval-methodology.md)
 
@@ -112,15 +112,20 @@ flowchart TD
 
 旧的 `FusionReranker` / `ThresholdReranker` 仍供历史评测路径兼容，但生产领域重排只使用上述一条规范路径。后续删除旧实现前，需先迁移 `eval/run_eval.py`。
 
-#### F-02 组合根位于模块导入阶段
+#### F-02 组合根位于模块导入阶段（已解决）
 
-全局 `settings` 在 [config.py](../src/config.py#L136) 导入时创建，`api.py` 又在导入时立刻构造 [SearchEngine 单例](../src/api.py#L32) 和 MCP。Engine 构造函数继续创建具体 Provider、模型、Cache 和 Verifier。Provider 内部还会再次直接读取环境变量。
+2026-07-17 已新增唯一组合根 [bootstrap.py](../src/bootstrap.py)，并切断
+`import src.api → Settings → Engine → MCP` 的导入副作用链：
 
-启用语义也因此不够明确：`OPENALEX_API_URL` 默认非空，使 `OPENALEX_ENABLED=false` 仍不能关闭学术 Provider；反过来，`PATENT_ES_ENABLED=true` 即使 URL 为空也能构造一个只会返回空结果的 Provider。环境变量中的数值一旦格式错误，还会在模块导入阶段直接终止启动。
+- `Settings` 改为冻结配置快照，只能由 `Settings.from_env()` 显式读取环境；`.env` 解析不再修改 `os.environ`，删除模块级 `settings` 单例。
+- `src.api:app = create_app()` 只注册路由和固定 MCP 代理。配置解析、Provider/Cache/Scorer/Verifier/Engine/MCP 创建全部延迟到父应用 lifespan。
+- `Container` 统一持有并按顺序关闭 Engine、共享 `ThreadPoolExecutor` 与 `requests.Session`；父 lifespan 显式管理 MCP session manager，避免 mounted child 生命周期不执行或重复执行。
+- Engine 改为构造器注入配置和资源；请求级 scorer 覆盖也经注入工厂创建。三处临时线程池已统一为共享 executor。
+- Provider、MCP、文本 scorer、查询改写、PDF 与 Trust classifier 均使用组合根注入的 HTTP session，不再自行读取环境变量。
+- OpenAlex/Patent 启用改为三态语义：显式 `false` 强制关闭，显式 `true` 必须有 URL，未设置时按 URL 自动启用以兼容现有部署。
+- 配置错误现在发生在 lifespan 启动阶段；即使数值环境变量损坏，导入 `src.api` 和生成 OpenAPI 仍然安全。
 
-这使配置、资源生命周期和业务逻辑绑定在一起；测试不得不使用 `object.__new__(SearchEngine)` 绕过构造函数，或 monkeypatch 模块级 `requests`。
-
-处理建议：新增唯一的 `bootstrap.py`，由 `Settings.from_env()` 生成不可变配置并装配 Container；提供 `create_app(container)`，在 lifespan 中创建和关闭模型、HTTP session 与共享执行器。除 composition root 外，不允许读取环境变量或构造具体适配器。
+兼容入口 `src.api:app`、`create_app(container)` 与 `SearchEngine.search(...)` 均保留；REST 与 MCP 使用同一 Container，不再共享隐式模块单例。
 
 #### F-03 `SearchEngine` 职责过载
 
@@ -298,9 +303,10 @@ class SearchUseCase(Protocol):
 
 ## 5. 渐进式重构计划
 
-### Phase 0：冻结行为与修正契约（进行中；F-01 已完成）
+### Phase 0：冻结行为与修正契约（进行中；F-01/F-02 已完成）
 
 - [x] F-01：统一 Ranking Profile 与 threshold 语义，并补参数解析、排序行为和兼容性测试。
+- [x] F-02：引入不可变 Settings、唯一 composition root、惰性应用工厂和受管资源生命周期。
 - [ ] 为 REST/MCP 输出差异、缓存不污染和输入对象不变补测试。
 - 修复无效开关，限制模型选择，增加统一错误脱敏。
 - 把当前未跟踪的 Trust 测试纳入版本控制。

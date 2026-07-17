@@ -4,7 +4,7 @@ from __future__ import annotations
 import json
 import re
 from dataclasses import dataclass
-from typing import Dict, List, Sequence, Tuple
+from typing import Any, Dict, List, Sequence, Tuple
 
 import requests
 
@@ -94,7 +94,14 @@ class RuleEntailmentClassifier:
 class SiliconFlowEntailmentClassifier:
     """一次请求批量判断模糊 pair；输出仍由本地标签白名单约束。"""
 
-    def __init__(self, api_key: str, base_url: str, model: str, timeout: int = 15):
+    def __init__(
+        self,
+        api_key: str,
+        base_url: str,
+        model: str,
+        timeout: int = 15,
+        http_session: Any = None,
+    ):
         if not api_key:
             raise ValueError("SiliconFlow entailment 缺少 API key")
         self.api_key = api_key
@@ -102,6 +109,7 @@ class SiliconFlowEntailmentClassifier:
         self.model = model
         self.timeout = timeout
         self.name = f"siliconflow:{model.split('/')[-1]}"
+        self._http = http_session or requests
 
     def classify_pairs(self, pairs: Sequence[EntailmentPair]) -> Dict[str, EntailmentDecision]:
         if not pairs:
@@ -130,7 +138,7 @@ class SiliconFlowEntailmentClassifier:
             "confidence 只能 high/medium/low/none，quote 使用最短原文片段。\n输入："
             + json.dumps(payload, ensure_ascii=False)
         )
-        response = requests.post(
+        response = self._http.post(
             self.url,
             headers={"Authorization": f"Bearer {self.api_key}", "Content-Type": "application/json"},
             json={

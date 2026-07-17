@@ -1,23 +1,17 @@
-"""FastAPI 服务:面向 Agent 的搜索 API + 网页端 + 进程内 MCP server。
-
-启动:  cd /home/ec2-user/tavily && .venv311/bin/uvicorn src.api:app --host 0.0.0.0 --port 8000
-网页:  浏览器打开 http://<host>:8000/
-调用:  POST /search  {"query": "...", "top_k": 10}
-MCP:   Streamable HTTP 端点 http://<host>:8000/mcp(工具 search;同进程挂载)
-"""
+"""FastAPI 传输层；运行资源在 lifespan 中由 ``src.bootstrap`` 装配。"""
 from __future__ import annotations
 
 import hmac
 import os
 from contextlib import asynccontextmanager
-from typing import List, Literal, Optional
+from dataclasses import dataclass
+from typing import Callable, List, Literal, Optional
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel, Field, model_validator
 
-from src.config import settings
-from src.engine import SearchEngine
+from src.bootstrap import Container, build_container
 from src.models import (
     CandidateClaim,
     Evidence,
@@ -29,67 +23,7 @@ from src.models import (
 from src.pipeline.ranking_options import resolve_ranking_options
 
 _STATIC_DIR = os.path.join(os.path.dirname(__file__), "static")
-
-engine = SearchEngine()
-
-# 进程内 MCP:复用同一引擎单例;streamable_http_app() 惰性创建 session_manager。
-# mcp 需 Python ≥3.10 —— 在旧 3.9 .venv 下导入失败时降级为「仅 REST」,不影响 /search。
-try:
-    from src.mcp_server import build_mcp
-
-    _mcp = build_mcp(engine)
-    _mcp_app = _mcp.streamable_http_app()
-except Exception as e:  # mcp 未安装(如 3.9 venv)或构建失败
-    print(f"[api] MCP 未挂载(降级为仅 REST): {e}")
-    _mcp = None
-    _mcp_app = None
-
-
-@asynccontextmanager
-async def lifespan(_app: FastAPI):
-    # MCP Streamable HTTP 需要在应用生命周期内运行 session manager(子应用挂载不会自动启动)
-    if _mcp is not None:
-        async with _mcp.session_manager.run():
-            yield
-    else:
-        yield
-
-
-app = FastAPI(title="Agent Search Engine (MVP)", version="0.1.0", lifespan=lifespan)
-
-# 鉴权:配了 API_AUTH_TOKEN 时,对受保护路径强制 Bearer / X-API-Key 校验。
-# 公开放行(便于网页加载、健康检查、读文档;真正的数据出口 /search 与 /mcp 受保护):
 _PUBLIC_PATHS = {"/", "/health", "/docs", "/redoc", "/openapi.json", "/docs/oauth2-redirect"}
-
-
-def _request_token(request: Request) -> str:
-    """从 Authorization: Bearer 或 X-API-Key 取 token。"""
-    auth = request.headers.get("authorization", "")
-    if auth[:7].lower() == "bearer ":
-        return auth[7:].strip()
-    return request.headers.get("x-api-key", "").strip()
-
-
-@app.middleware("http")
-async def auth_middleware(request: Request, call_next):
-    # 同时覆盖 REST(/search)与挂载的 MCP 子应用(/mcp);公开路径放行
-    if settings.auth_enabled and request.url.path not in _PUBLIC_PATHS:
-        token = _request_token(request)
-        ok = bool(token) and any(hmac.compare_digest(token, t) for t in settings.auth_tokens)
-        if not ok:
-            return JSONResponse(
-                {"detail": "缺少或无效的 API token(Authorization: Bearer <token> 或 X-API-Key)"},
-                status_code=401,
-                headers={"WWW-Authenticate": "Bearer"},
-            )
-    return await call_next(request)
-
-
-
-@app.get("/")
-def index() -> FileResponse:
-    """网页搜索界面。"""
-    return FileResponse(os.path.join(_STATIC_DIR, "index.html"))
 
 
 class SearchRequest(BaseModel):
@@ -113,7 +47,6 @@ class SearchRequest(BaseModel):
         None, ge=1, le=30000, description="每条 PDF 正文最多返回字符数"
     )
     pdf_timeout_ms: Optional[int] = Field(None, ge=1000, le=60000, description="单篇 PDF 同步抽取预算")
-    # 以下参数留空(None)则用服务端全局默认;网页端「高级选项」可按请求覆盖
     ranking_profile: Optional[Literal["fast", "semantic", "quality"]] = Field(
         None,
         description=(
@@ -152,18 +85,16 @@ class SearchRequest(BaseModel):
     )
 
     @model_validator(mode="after")
-    def validate_ranking_options(self) -> "SearchRequest":
-        """让 REST 冲突以 422 返回；Engine 仍会用同一解析器生成有效配置。"""
+    def validate_explicit_ranking_options(self) -> "SearchRequest":
+        """只校验请求内部冲突；服务端默认相关冲突由注入的 Engine 校验。"""
         resolve_ranking_options(
-            default_profile=settings.ranking_profile,
-            default_threshold=settings.rerank_threshold,
-            default_threshold_mode=settings.rerank_threshold_mode,
+            default_profile="quality",
+            default_threshold=0.3,
+            default_threshold_mode="prefer",
             ranking_profile=self.ranking_profile,
             rerank_enabled=self.rerank_enabled,
             fusion_enabled=self.fusion_enabled,
-            # 与 Engine 一致地校验最终后端；否则服务端默认 none 与非 fast
-            # 请求的冲突会绕过 422，直到路由执行时才抛出 ValueError。
-            rerank_backend=self.rerank_backend or settings.rerank_backend,
+            rerank_backend=self.rerank_backend,
             rerank_threshold=self.rerank_threshold,
             rerank_threshold_mode=self.rerank_threshold_mode,
         )
@@ -180,82 +111,173 @@ class VerifyRequest(BaseModel):
     search_boundary: Optional[SearchBoundary] = None
 
 
-@app.get("/health")
-def health() -> dict:
-    return {
-        "status": "ok",
-        "providers": settings.enabled_providers,
-        "academic": engine.academic_provider is not None,
-        "patent": engine.patent_provider is not None,
-        "reranker": engine.text_scorer.name,
-        "claim_verifier": engine.claim_verifier.classifier.name,
-        "auth": settings.auth_enabled,
-        "mcp": _mcp_app is not None,
-        "cache": engine.cache.stats() if engine.cache else {"enabled": False},
-        "defaults": {
-            "ranking_profile": settings.ranking_profile,
-            "rerank_enabled": settings.rerank_enabled,
-            "rerank_backend": settings.rerank_backend,
-            "rerank_model": settings.rerank_model,
-            "rerank_threshold": settings.rerank_threshold,
-            "rerank_threshold_mode": settings.rerank_threshold_mode,
-            "ranking_warnings": list(settings.ranking_warnings),
-            "fusion_enabled": settings.fusion_enabled,
-            "rewrite_enabled": settings.rewrite_enabled,
-            "trust_mode": "annotate",
-            "top_k": settings.default_top_k,
-        },
-    }
+@dataclass
+class _RuntimeSlot:
+    active: Optional[Container] = None
 
 
-@app.post("/search", response_model=SearchResponse)
-def search(req: SearchRequest) -> SearchResponse:
-    return engine.search(
-        req.query,
-        req.top_k,
-        req.include_academic,
-        req.include_patent,
-        ranking_profile=req.ranking_profile,
-        rerank_enabled=req.rerank_enabled,
-        rerank_backend=req.rerank_backend,
-        rerank_model=req.rerank_model,
-        rerank_threshold=req.rerank_threshold,
-        rerank_threshold_mode=req.rerank_threshold_mode,
-        fusion_enabled=req.fusion_enabled,
-        rewrite_enabled=req.rewrite_enabled,
-        trust_mode=req.trust_mode,
-        include_pdf_text=req.include_pdf_text,
-        pdf_text_mode=req.pdf_text_mode,
-        pdf_max_results=req.pdf_max_results,
-        pdf_max_chars_per_result=req.pdf_max_chars_per_result,
-        pdf_timeout_ms=req.pdf_timeout_ms,
+class _DeferredMcpApp:
+    """固定 mount；请求时转发给 lifespan 中创建的 MCP ASGI app。"""
+
+    def __init__(self, slot: _RuntimeSlot):
+        self._slot = slot
+
+    async def __call__(self, scope, receive, send) -> None:
+        target = self._slot.active.mcp_app if self._slot.active else None
+        if target is None:
+            if scope["type"] == "http":
+                await send({"type": "http.response.start", "status": 404, "headers": []})
+                await send({"type": "http.response.body", "body": b"Not Found"})
+            elif scope["type"] == "websocket":
+                await send({"type": "websocket.close", "code": 1000})
+            return
+        await target(scope, receive, send)
+
+
+def _request_token(request: Request) -> str:
+    auth = request.headers.get("authorization", "")
+    if auth[:7].lower() == "bearer ":
+        return auth[7:].strip()
+    return request.headers.get("x-api-key", "").strip()
+
+
+def create_app(
+    container: Optional[Container] = None,
+    *,
+    container_factory: Callable[[], Container] = build_container,
+) -> FastAPI:
+    """创建隔离的 API app；此调用本身不读取环境或创建运行资源。
+
+    显式传入的 ``container`` 是一次性运行时；需要重复启动同一个 app（例如测试）
+    时应传 ``container_factory``，使每次 lifespan 都获得新的 Container。
+    """
+    slot = _RuntimeSlot()
+
+    @asynccontextmanager
+    async def lifespan(application: FastAPI):
+        runtime = container if container is not None else container_factory()
+        slot.active = runtime
+        application.state.container = runtime
+        try:
+            async with runtime.lifespan():
+                yield
+        finally:
+            slot.active = None
+            application.state.container = None
+
+    application = FastAPI(
+        title="Agent Search Engine (MVP)",
+        version="0.2.0",
+        lifespan=lifespan,
     )
 
+    def runtime() -> Container:
+        if slot.active is None:
+            raise HTTPException(status_code=503, detail="应用资源尚未启动")
+        return slot.active
 
-@app.post("/verify", response_model=VerifyResponse)
-def verify(req: VerifyRequest) -> VerifyResponse:
-    """基于 search 返回的 evidence 校验候选陈述；Phase 1 不自动补充检索。"""
-    return engine.verify_claims(
-        req.query,
-        req.claims,
-        req.evidence,
-        profile=req.profile,
-        search_boundary=req.search_boundary,
-    )
+    @application.middleware("http")
+    async def auth_middleware(request: Request, call_next):
+        current = slot.active
+        if current is None:
+            return JSONResponse({"detail": "应用资源尚未启动"}, status_code=503)
+        settings = current.settings
+        if settings.auth_enabled and request.url.path not in _PUBLIC_PATHS:
+            token = _request_token(request)
+            ok = bool(token) and any(
+                hmac.compare_digest(token, expected) for expected in settings.auth_tokens
+            )
+            if not ok:
+                return JSONResponse(
+                    {"detail": "缺少或无效的 API token(Authorization: Bearer <token> 或 X-API-Key)"},
+                    status_code=401,
+                    headers={"WWW-Authenticate": "Bearer"},
+                )
+        return await call_next(request)
+
+    @application.get("/")
+    def index() -> FileResponse:
+        return FileResponse(os.path.join(_STATIC_DIR, "index.html"))
+
+    @application.get("/health")
+    def health() -> dict:
+        current = runtime()
+        settings = current.settings
+        engine = current.engine
+        classifier = getattr(engine.claim_verifier, "classifier", None)
+        return {
+            "status": "ok",
+            "providers": list(settings.enabled_providers),
+            "academic": engine.academic_provider is not None,
+            "patent": engine.patent_provider is not None,
+            "reranker": engine.text_scorer.name,
+            "claim_verifier": getattr(classifier, "name", "unknown"),
+            "auth": settings.auth_enabled,
+            "mcp": current.mcp_available,
+            "cache": engine.cache.stats() if engine.cache else {"enabled": False},
+            "defaults": {
+                "ranking_profile": settings.ranking_profile,
+                "rerank_enabled": settings.rerank_enabled,
+                "rerank_backend": settings.rerank_backend,
+                "rerank_model": settings.rerank_model,
+                "rerank_threshold": settings.rerank_threshold,
+                "rerank_threshold_mode": settings.rerank_threshold_mode,
+                "ranking_warnings": list(settings.ranking_warnings),
+                "fusion_enabled": settings.fusion_enabled,
+                "rewrite_enabled": settings.rewrite_enabled,
+                "trust_mode": "annotate",
+                "top_k": settings.default_top_k,
+            },
+        }
+
+    @application.post("/search", response_model=SearchResponse)
+    def search(req: SearchRequest) -> SearchResponse:
+        try:
+            return runtime().engine.search(
+                req.query,
+                req.top_k,
+                req.include_academic,
+                req.include_patent,
+                ranking_profile=req.ranking_profile,
+                rerank_enabled=req.rerank_enabled,
+                rerank_backend=req.rerank_backend,
+                rerank_model=req.rerank_model,
+                rerank_threshold=req.rerank_threshold,
+                rerank_threshold_mode=req.rerank_threshold_mode,
+                fusion_enabled=req.fusion_enabled,
+                rewrite_enabled=req.rewrite_enabled,
+                trust_mode=req.trust_mode,
+                include_pdf_text=req.include_pdf_text,
+                pdf_text_mode=req.pdf_text_mode,
+                pdf_max_results=req.pdf_max_results,
+                pdf_max_chars_per_result=req.pdf_max_chars_per_result,
+                pdf_timeout_ms=req.pdf_timeout_ms,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    @application.post("/verify", response_model=VerifyResponse)
+    def verify(req: VerifyRequest) -> VerifyResponse:
+        return runtime().engine.verify_claims(
+            req.query,
+            req.claims,
+            req.evidence,
+            profile=req.profile,
+            search_boundary=req.search_boundary,
+        )
+
+    @application.get("/academic/pdf/text/{work_id}", response_model=PdfTextResponse)
+    def get_pdf_text(
+        work_id: str,
+        cursor: Optional[str] = None,
+        max_chars: int = 8000,
+    ) -> PdfTextResponse:
+        return runtime().engine.get_pdf_text(work_id, cursor=cursor, max_chars=max_chars)
+
+    # 必须最后注册，避免 root mount 截获显式 REST 路由。
+    application.mount("/", _DeferredMcpApp(slot), name="mcp")
+    return application
 
 
-@app.get("/academic/pdf/text/{work_id}", response_model=PdfTextResponse)
-def get_pdf_text(
-    work_id: str,
-    cursor: Optional[str] = None,
-    max_chars: int = 8000,
-) -> PdfTextResponse:
-    """分页读取已抽取的 OpenAlex PDF 正文。"""
-    return engine.get_pdf_text(work_id, cursor=cursor, max_chars=max_chars)
-
-
-# 进程内 MCP server:Streamable HTTP 端点 /mcp(工具 search)。
-# 挂在根("/")—— 显式路由(/、/health、/search、/docs)已先注册、优先匹配,
-# 该 Mount 仅兜住 /mcp,从而给出无重定向的规范 /mcp 端点。未启用 MCP 时跳过。
-if _mcp_app is not None:
-    app.mount("/", _mcp_app)
+# Uvicorn 兼容入口；这里只创建路由，配置和资源延迟到 lifespan。
+app = create_app()

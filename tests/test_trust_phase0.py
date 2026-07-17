@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 import pytest
 
 from src.engine import SearchEngine
+from src.config import Settings
 from src.models import AcademicResult, PatentResult, SearchResult
 from src.pipeline.rerank import NoOpReranker
 from src.trust import annotate_evidence, build_search_boundary
@@ -18,6 +19,8 @@ def _empty_engine() -> SearchEngine:
     engine.cache = None
     engine.text_scorer = NoOpReranker()
     engine._text_scorer_cache = {}
+    engine.settings = Settings()
+    engine._http = None
     return engine
 
 

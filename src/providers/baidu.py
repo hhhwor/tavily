@@ -7,7 +7,6 @@
 """
 from __future__ import annotations
 
-import os
 from typing import Any, Dict, List, Optional
 
 import requests
@@ -57,9 +56,15 @@ def trim_query(query: str, limit: int = _QUERY_LIMIT) -> str:
 class BaiduSearchProvider(SearchProvider):
     name = "baidu"
 
-    def __init__(self, api_key: Optional[str] = None, timeout: int = 15):
-        self.api_key = api_key or os.getenv("QIANFAN_API_KEY", "")
+    def __init__(
+        self,
+        api_key: Optional[str] = None,
+        timeout: int = 15,
+        http_session: Optional[requests.Session] = None,
+    ):
+        self.api_key = api_key or ""
         self.timeout = timeout
+        self._http = http_session or requests
         if not self.api_key:
             raise ValueError("缺少百度千帆凭证: QIANFAN_API_KEY")
 
@@ -77,7 +82,7 @@ class BaiduSearchProvider(SearchProvider):
             "Authorization": f"Bearer {self.api_key}",
             "Content-Type": "application/json",
         }
-        resp = requests.post(_ENDPOINT, headers=headers, json=body, timeout=self.timeout)
+        resp = self._http.post(_ENDPOINT, headers=headers, json=body, timeout=self.timeout)
         resp.raise_for_status()
         data = resp.json()
         if "references" not in data:

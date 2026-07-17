@@ -252,6 +252,7 @@ class SiliconFlowReranker(Reranker):
         model: str = "BAAI/bge-reranker-v2-m3",
         chunk_max_chars: int = 400,
         chunk_overlap: int = 50,
+        http_session: Any = None,
     ):
         self._api_key = api_key
         self._url = f"{base_url.rstrip('/')}/rerank"
@@ -259,6 +260,7 @@ class SiliconFlowReranker(Reranker):
         self.name = f"siliconflow:{model.split('/')[-1]}"
         self._chunk_max_chars = chunk_max_chars
         self._chunk_overlap = chunk_overlap
+        self._http = http_session or _requests
 
     def score(self, query: str, texts: Sequence[str]) -> List[float]:
         if not texts:
@@ -275,7 +277,7 @@ class SiliconFlowReranker(Reranker):
         doc_scores: dict[int, float] = {}
         documents = [t for _, t in pairs]
 
-        resp = _requests.post(
+        resp = self._http.post(
             self._url,
             headers={
                 "Authorization": f"Bearer {self._api_key}",
@@ -1312,6 +1314,7 @@ def build_reranker(
     threshold: float = 0.3,
     siliconflow_api_key: str = "",
     siliconflow_base_url: str = "https://api.siliconflow.cn/v1",
+    http_session: Any = None,
     fusion_enabled: bool = True,
     fusion_time_sensitive: bool = False,
     fusion_alpha: float = 0.7,
@@ -1330,6 +1333,7 @@ def build_reranker(
         chunk_overlap=chunk_overlap,
         siliconflow_api_key=siliconflow_api_key,
         siliconflow_base_url=siliconflow_base_url,
+        http_session=http_session,
     )
     if isinstance(inner, NoOpReranker):
         return inner
@@ -1354,6 +1358,7 @@ def build_text_scorer(
     chunk_overlap: int = 50,
     siliconflow_api_key: str = "",
     siliconflow_base_url: str = "https://api.siliconflow.cn/v1",
+    http_session: Any = None,
 ) -> Reranker:
     """构建纯文本 scorer。backend 只返回文本相关性分,不做领域融合。"""
     if not enabled or backend == "none":
@@ -1377,6 +1382,7 @@ def build_text_scorer(
                 api_key=siliconflow_api_key, base_url=siliconflow_base_url,
                 model=model_name,
                 chunk_max_chars=chunk_max_chars, chunk_overlap=chunk_overlap,
+                http_session=http_session,
             )
         else:
             return NoOpReranker()

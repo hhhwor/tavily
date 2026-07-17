@@ -72,7 +72,8 @@ POST /search {query, top_k, ranking_profile?, rerank_threshold_mode?, ...}
 
 | 层 | 实际选型 | 代码 | 状态 |
 |----|---------|------|------|
-| **API** | FastAPI:`POST /search`(支持 `include_academic` / `include_patent`) · `GET /health` · `GET /`(网页端) | [api.py](../src/api.py) · [static/index.html](../src/static/index.html) | ✅ |
+| **API** | FastAPI 应用工厂:`POST /search` · `GET /health` · `GET /`;导入无配置/模型副作用 | [api.py](../src/api.py) · [static/index.html](../src/static/index.html) | ✅ |
+| **组合根/生命周期** | 冻结 `Settings.from_env()` + `Container`;lifespan 统一创建/关闭 Engine、HTTP Session、Executor、MCP | [bootstrap.py](../src/bootstrap.py) · [config.py](../src/config.py) | ✅ |
 | **L0 查询理解** | 规则版(NFKC 规范化 + 时效识别 + 学术意图识别 + 专利意图识别 + 输入校验)+ 可选 LLM 改写(SiliconFlow Qwen2.5-7B,LRU+TTL 缓存) | [l0.py](../src/l0.py) | ✅ 规则;LLM 改写默认关 |
 | **L1 搜索源** | 腾讯 SearchPro + 百度千帆 + SerpAPI,凭证驱动自动启用,并发检索 | [providers/](../src/providers/) · [engine.py](../src/engine.py) | ✅ |
 | **L1′ 学术源** | OpenAlex `/works`(独立能力支线;摘要倒排索引重建;凭证驱动启用) | [providers/openalex.py](../src/providers/openalex.py) | ✅ 需 `OPENALEX_API_KEY` |
@@ -167,7 +168,7 @@ POST /search {query, top_k, ranking_profile?, rerank_threshold_mode?, ...}
 
 ## 5. 配置开关总表(默认值 vs 推荐值)
 
-> 全部经 `.env` 环境变量控制,集中在 [config.py](../src/config.py)。新配置以 `RANKING_PROFILE` 为权威；旧布尔字段仅用于兼容已有部署和客户端。
+> 全部经 `.env` 环境变量控制，由 [config.py](../src/config.py) 的 `Settings.from_env()` 在应用 lifespan 中一次性读取为不可变快照；导入模块不会读取环境。新配置以 `RANKING_PROFILE` 为权威。
 
 | 开关 | 默认值 | 含义 | 推荐(质量优先) |
 |------|--------|------|----------------|
@@ -184,14 +185,14 @@ POST /search {query, top_k, ranking_profile?, rerank_threshold_mode?, ...}
 | `SEARCH_PROVIDER_TIMEOUT` | `15` | 单源超时(秒) | 同默认 |
 | `OPENALEX_API_URL` | `http://localhost:9001` | 学术数据源 = 本地 Chukonu 检索系统基址(其 ES 灌了 5 万条 OpenAlex);配了即启用学术检索 | 指回全量服务可扩覆盖 |
 | `OPENALEX_API_KEY` | 空 | 可选 `X-API-Key`(Chukonu 服务未配 `SE4AI_API_KEYS` 时全部放行,留空即可) | 服务开鉴权时再配 |
-| `OPENALEX_ENABLED` | **`false`** | 即便没配 URL 也强制开学术能力的旁路开关 | — |
+| `OPENALEX_ENABLED` | 未设置=`auto` | `false` 强制关；`true` 要求 URL；未设置按 URL 自动启用 | 需要临时停用时显式 `false` |
 | `OPENALEX_QUERY_REWRITE` | **`true`** | 学术 query 中→英改写(NL→检索词,缓解中文召回弱) | 同默认 |
 | `OPENALEX_ACADEMIC_DETECT` | **`true`** | L0 学术意图自动识别开关(关掉则仅 `include_academic=true` 触发) | 同默认 |
 | `OPENALEX_PER_PAGE` | `25` | 学术单次召回数(≤100) | 同默认 |
 | `OPENALEX_TOPIC_FILTER` / `OPENALEX_MAILTO` | — | 旧公网 API 残留项,当前 Chukonu 后端未用 | 忽略 |
 | `PATENT_ES_URL` | 空 | 专利只读 ES 地址(如 `https://search.houdutech.cn:9243`);缺失则专利能力关闭 | 配上即启用专利检索 |
 | `PATENT_ES_INDEX` | `epo_docdb_read` | 检索的 ES 索引/别名(读别名,当前指向 `epo_docdb_v2_20260620`,多语种、当事人 object 结构;固定版本号或 `epo_docdb`/`google_patents` 字段结构不同) | 用别名,蓝绿切换免改 |
-| `PATENT_ES_ENABLED` | **`false`** | 无 URL 时也想显式开(留作旁路开关) | — |
+| `PATENT_ES_ENABLED` | 未设置=`auto` | `false` 强制关；`true` 要求 URL；未设置按 URL 自动启用 | 需要临时停用时显式 `false` |
 | `PATENT_ES_VERIFY_TLS` | **`true`** | 校验 TLS 证书(houdutech 证书已覆盖域名) | 同默认 |
 | `PATENT_ES_PER_PAGE` | `25` | 专利单次召回数(≤100) | 同默认 |
 | `PATENT_DETECT` | **`true`** | L0 专利意图自动识别开关(关掉则仅 `include_patent=true` 触发) | 同默认 |
@@ -199,6 +200,8 @@ POST /search {query, top_k, ranking_profile?, rerank_threshold_mode?, ...}
 | `CACHE_BACKEND` | `memory` | 进程内 LRU+TTL(预留 `redis`,未实现时回退 memory) | 多实例/持久化再换 redis |
 | `CACHE_TTL` | `21600` | 非时效结果缓存 TTL(秒,默认 6h) | 同默认 |
 | `CACHE_MAX_SIZE` | `512` | 进程内缓存条目上限(LRU 淘汰) | 同默认 |
+| `EXECUTOR_MAX_WORKERS` | `16` | 召回、排序与 PDF 共用的有界线程池 | 按并发与外部限流调整 |
+| `MCP_ENABLED` | `auto` | `false`=仅 REST；`true`=MCP 依赖失败则启动失败；`auto`=缺依赖时降级 | 部署已安装 MCP 时保留 `auto` |
 | `API_AUTH_TOKEN` | 空 | API 鉴权 token(可逗号分隔多个);配了即对 `/search` 与 `/mcp` 强制 Bearer/X-API-Key | 对外暴露时**必配** |
 
 凭证(任一组齐全即自动启用对应源):`TENCENT_SECRET_ID`+`TENCENT_SECRET_KEY` · `QIANFAN_API_KEY` · `SERPAPI_API_KEY`;`SILICONFLOW_API_KEY`(重排/改写共用);`OPENALEX_API_URL`(学术检索数据源 = 本地 Chukonu 服务,有默认值;独立于 web 源);`PATENT_ES_URL`(专利检索,独立于 web 源,缺失则专利能力静默关闭)。
@@ -314,7 +317,7 @@ curl -X POST localhost:8000/search \
 - **工具 `search(query, top_k=10, include_academic=None, include_patent=None, rerank=None, include_pdf_text=False, ...)`**:返回 LLM-ready 结构化 JSON —— `evidence[]` 按相关性混排,每条带 `type/source/title/url/passage/citation/patent/scores/access/diagnostics`;`patent` 仅在专利证据中承载专属元数据;`meta` 带 `providers_used/reranker/elapsed_ms/counts`。代码:[mcp_server.py](../src/mcp_server.py)(`build_mcp`),挂载在 [api.py](../src/api.py)。
 - **工具 `get_pdf_text(work_id, cursor=None, max_chars=8000)`**:续读已抽取的 OpenAlex PDF 正文。Agent 从 `search` 返回的 academic evidence 中读取 `citation.work_id` 与 `access.next_cursor`,调用该工具获取后续 `text/page_from/page_to/next_cursor`。该工具只读缓存,不触发下载解析;REST 同步暴露 `GET /academic/pdf/text/{work_id}`。
 - **可答性与部分失败**:`partial_failure=true` 表示至少一个 provider/rerank/PDF 富化子任务失败,但已有 evidence 仍可使用;失败明细在 `failures[]`。`answerability.gaps[]` 明确告诉 Agent 缺少哪类证据(如 `NO_ACADEMIC_EVIDENCE` / `NO_PATENT_EVIDENCE` / `PDF_TEXT_UNAVAILABLE` / `PARTIAL_FAILURE`),`status=not_answerable` 时不应直接输出确定性答案。
-- **实现要点**:`FastMCP(stateless_http=True, json_response=True, streamable_http_path="/mcp")`,子应用挂在根("/"),显式路由(`/`、`/health`、`/search`、`/docs`)先注册优先匹配,Mount 仅兜 `/mcp`(无重定向);session manager 在 FastAPI `lifespan` 内 `run()`。引擎 `search()` 是同步阻塞,工具内用 `anyio.to_thread` 卸到线程池,避免阻塞事件循环。
+- **实现要点**:`FastMCP(stateless_http=True, json_response=True, streamable_http_path="/mcp")`。API 创建时只注册固定 root proxy，lifespan 中由 Container 创建 MCP 后再转发；父 lifespan 显式运行且只运行一次 session manager。显式 REST 路由优先匹配，禁用 MCP 时 `/mcp` 返回 404。引擎 `search()` 是同步阻塞，工具内用 `anyio.to_thread` 卸到线程池。
 - **接入消费端**:Claude Code `claude mcp add chukonu-web-search --transport http http://localhost:8000/mcp --header "Authorization: Bearer <token>"`(未开鉴权时去掉 `--header`);或 MCP Inspector 连 `http://localhost:8000/mcp`(在 Inspector 里填 Authorization 头)调试。MCP 服务名(serverInfo.name)为 `chukonu-web-search`。
 - 🔐 **鉴权**:`/mcp` 与 `/search` 共用 `API_AUTH_TOKEN`(见下「鉴权」小节);开启后 MCP 客户端需带 `Authorization: Bearer <token>`,否则握手 401。
 

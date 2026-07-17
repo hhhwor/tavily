@@ -17,7 +17,7 @@ import os
 import time
 from typing import Dict, List, Tuple
 
-from src.config import settings
+from src.config import Settings
 from src.l0 import rewrite_academic_query
 from src.models import SearchResult, PatentResult, AcademicResult
 from src.pipeline.dedup import dedup
@@ -27,6 +27,8 @@ from src.pipeline.rerank import (
 )
 
 from eval import metrics as M
+
+settings = Settings()
 
 # (名称, 来源列表, 策略)
 # 策略: orig=原始去重 / rrf=RRF融合 / bge=BGE重排 / sf=SiliconFlow重排 / sf+fusion=SF重排+信号融合
@@ -75,12 +77,23 @@ def load_queries(path: str, limit: int) -> List[dict]:
 def _provider(name: str):
     if name == "tencent":
         from src.providers.tencent import TencentSearchProvider
-        return TencentSearchProvider(timeout=settings.provider_timeout)
+
+        return TencentSearchProvider(
+            secret_id=settings.tencent_secret_id,
+            secret_key=settings.tencent_secret_key,
+            timeout=settings.provider_timeout,
+        )
     if name == "serpapi":
         from src.providers.serpapi import SerpApiProvider
-        return SerpApiProvider(timeout=settings.provider_timeout)
+        return SerpApiProvider(
+            api_key=settings.serpapi_api_key,
+            timeout=settings.provider_timeout,
+        )
     from src.providers.baidu import BaiduSearchProvider
-    return BaiduSearchProvider(timeout=settings.provider_timeout)
+    return BaiduSearchProvider(
+        api_key=settings.qianfan_api_key,
+        timeout=settings.provider_timeout,
+    )
 
 
 def retrieve_cached(provider_names: List[str], queries: List[dict], k: int) -> Dict[str, dict]:
@@ -429,6 +442,8 @@ def run_web_vs_academic_coverage(
 
 
 def main() -> None:
+    global settings
+    settings = Settings.from_env()
     ap = argparse.ArgumentParser()
     ap.add_argument("--k", type=int, default=10)
     ap.add_argument("--max-queries", type=int, default=0)

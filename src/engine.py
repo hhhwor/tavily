@@ -7,15 +7,15 @@ from __future__ import annotations
 
 import time
 import hashlib
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import Executor, as_completed
 from datetime import datetime, timezone
-from typing import List, Optional, Sequence
+from typing import Callable, List, Optional, Sequence
 from urllib.parse import quote
 
 import requests
 
-from src.config import settings
-from src.cache import build_cache
+from src.cache import CacheBackend
+from src.config import Settings
 from src.l0 import plan_query, rewrite_academic_query
 from src.models import (
     AcademicResult,
@@ -43,11 +43,11 @@ from src.pipeline.rerank import (
     PatentReranker,
     WebReranker,
     build_rerank_context,
-    build_text_scorer,
+    Reranker,
 )
 from src.pipeline.ranking_options import resolve_ranking_options
 from src.providers.base import SearchProvider
-from src.trust import annotate_evidence, build_claim_verifier, build_search_boundary
+from src.trust import ClaimVerifier, annotate_evidence, build_search_boundary
 
 _EVIDENCE_PASSAGE_MAX_CHARS = 1800
 
@@ -187,91 +187,68 @@ def _build_answerability(
     return Answerability(status="answerable", confidence=confidence, gaps=gaps)
 
 
-def _build_providers() -> List[SearchProvider]:
-    providers: List[SearchProvider] = []
-    for name in settings.enabled_providers:
-        try:
-            if name == "tencent":
-                from src.providers.tencent import TencentSearchProvider
-
-                providers.append(TencentSearchProvider(timeout=settings.provider_timeout))
-            elif name == "baidu":
-                from src.providers.baidu import BaiduSearchProvider
-
-                providers.append(BaiduSearchProvider(timeout=settings.provider_timeout))
-            elif name == "serpapi":
-                from src.providers.serpapi import SerpApiProvider
-
-                providers.append(SerpApiProvider(timeout=settings.provider_timeout))
-        except Exception as e:  # 凭证缺失等
-            print(f"[engine] 跳过 provider {name}: {e}")
-    return providers
-
-
-def _build_academic_provider() -> Optional[SearchProvider]:
-    """学术检索源(OpenAlex);未启用或构建失败返回 None。"""
-    if not settings.academic_enabled:
-        return None
-    try:
-        from src.providers.openalex import OpenAlexProvider
-
-        return OpenAlexProvider(
-            base_url=settings.openalex_api_url,
-            api_key=settings.openalex_api_key,
-            per_page=settings.openalex_per_page,
-            timeout=settings.provider_timeout,
-        )
-    except Exception as e:
-        print(f"[engine] 跳过学术源 openalex_local: {e}")
-        return None
-
-
-def _build_patent_provider() -> Optional[SearchProvider]:
-    """专利检索源(houdutech 只读 ES);未启用或构建失败返回 None。"""
-    if not settings.patent_enabled:
-        return None
-    try:
-        from src.providers.patent_es import PatentEsProvider
-
-        return PatentEsProvider(
-            base_url=settings.patent_es_url,
-            index=settings.patent_es_index,
-            timeout=settings.provider_timeout,
-            verify_tls=settings.patent_es_verify_tls,
-            per_page=settings.patent_es_per_page,
-        )
-    except Exception as e:
-        print(f"[engine] 跳过专利源 patent_es: {e}")
-        return None
-
-
 class SearchEngine:
-    def __init__(self) -> None:
-        self.providers = _build_providers()
-        self.academic_provider = _build_academic_provider()
-        self.patent_provider = _build_patent_provider()
+    """搜索用例门面；所有具体资源由 composition root 注入。"""
+
+    def __init__(
+        self,
+        *,
+        settings: Settings,
+        providers: Sequence[SearchProvider],
+        academic_provider: Optional[SearchProvider],
+        patent_provider: Optional[SearchProvider],
+        cache: Optional[CacheBackend],
+        text_scorer: Reranker,
+        claim_verifier: ClaimVerifier,
+        text_scorer_factory: Callable[[bool, str, str], Reranker],
+        http_session: requests.Session,
+        executor: Executor,
+    ) -> None:
+        self.settings = settings
+        self.providers = list(providers)
+        self.academic_provider = academic_provider
+        self.patent_provider = patent_provider
         self._text_scorer_cache: dict = {}  # 按请求参数缓存 scorer(避免本地模型重复加载)
-        self.cache = build_cache(settings.cache_backend, settings.cache_max_size) \
-            if settings.cache_enabled else None  # provider 召回结果缓存
-        self.text_scorer = self._make_text_scorer(
-            settings.rerank_enabled, settings.rerank_backend,
-            settings.rerank_model,
-        )
-        try:
-            self.claim_verifier = self._make_claim_verifier()
-        except Exception as exc:
-            print(f"[engine] 陈述校验模型不可用,降级到规则: {exc}")
-            self.claim_verifier = build_claim_verifier(
-                backend="rules",
-                api_key="",
-                base_url=settings.siliconflow_base_url,
-                model=settings.trust_verify_model,
-                timeout=settings.trust_verify_timeout,
-                max_claims=settings.trust_verify_max_claims,
-                max_evidence_per_claim=settings.trust_verify_max_evidence,
-            )
+        self.cache = cache
+        self.text_scorer = text_scorer
+        self.claim_verifier = claim_verifier
+        self._text_scorer_factory = text_scorer_factory
+        self._http = http_session
+        self._executor = executor
+        self._closed = False
         if not self.providers and not self.academic_provider and not self.patent_provider:
             print("[engine] 警告:无可用搜索源,请检查 .env 凭证")
+
+    def close(self) -> None:
+        """释放 Engine 自有适配器；共享 HTTP/Executor 由 Container 关闭。"""
+        if self._closed:
+            return
+        self._closed = True
+        resources = [
+            self.text_scorer,
+            *self._text_scorer_cache.values(),
+            self.claim_verifier,
+            getattr(self.claim_verifier, "classifier", None),
+            *self.providers,
+            self.academic_provider,
+            self.patent_provider,
+            self.cache,
+        ]
+        closed: set[int] = set()
+        first_error: Optional[BaseException] = None
+        for resource in resources:
+            if resource is None or id(resource) in closed:
+                continue
+            closed.add(id(resource))
+            close = getattr(resource, "close", None)
+            if callable(close):
+                try:
+                    close()
+                except BaseException as exc:
+                    first_error = first_error or exc
+        self._text_scorer_cache.clear()
+        if first_error is not None:
+            raise first_error
 
     def _cached_search(
         self, prov: SearchProvider, query: str, k: int,
@@ -289,30 +266,11 @@ class SearchEngine:
         if hit is not None:
             return [r.model_copy(deep=True) for r in hit]  # 返回副本,后续修改不污染缓存
         items = prov.search(query, k, recency)
-        self.cache.set(ck, [r.model_copy(deep=True) for r in items], settings.cache_ttl)
+        self.cache.set(ck, [r.model_copy(deep=True) for r in items], self.settings.cache_ttl)
         return items
 
     def _make_text_scorer(self, enabled: bool, backend: str, model: str):
-        """按给定参数构建文本 scorer(其余参数取全局 settings)。"""
-        return build_text_scorer(
-            enabled, backend, model, settings.rerank_cache_dir, settings.rerank_device,
-            chunk_max_chars=settings.chunk_max_chars,
-            chunk_overlap=settings.chunk_overlap,
-            siliconflow_api_key=settings.siliconflow_api_key,
-            siliconflow_base_url=settings.siliconflow_base_url,
-        )
-
-    @staticmethod
-    def _make_claim_verifier():
-        return build_claim_verifier(
-            backend=settings.trust_verify_backend,
-            api_key=settings.siliconflow_api_key,
-            base_url=settings.siliconflow_base_url,
-            model=settings.trust_verify_model,
-            timeout=settings.trust_verify_timeout,
-            max_claims=settings.trust_verify_max_claims,
-            max_evidence_per_claim=settings.trust_verify_max_evidence,
-        )
+        return self._text_scorer_factory(enabled, backend, model)
 
     def verify_claims(
         self,
@@ -324,11 +282,7 @@ class SearchEngine:
         search_boundary: Optional[SearchBoundary] = None,
     ) -> VerifyResponse:
         """基于客户端传入的 Phase 0 evidence 做陈述级校验；不自动补充检索。"""
-        verifier = getattr(self, "claim_verifier", None)
-        if verifier is None:
-            verifier = self._make_claim_verifier()
-            self.claim_verifier = verifier
-        return verifier.verify(
+        return self.claim_verifier.verify(
             query=query,
             claims=claims,
             evidence=evidence,
@@ -347,13 +301,21 @@ class SearchEngine:
         if enabled is None and backend is None and model is None:
             return self.text_scorer
         eff = (
-            settings.rerank_enabled if enabled is None else enabled,
-            backend or settings.rerank_backend,
-            model or settings.rerank_model,
+            self.settings.rerank_enabled if enabled is None else enabled,
+            backend or self.settings.rerank_backend,
+            model or self.settings.rerank_model,
         )
         r = self._text_scorer_cache.get(eff)
         if r is None:
             if len(self._text_scorer_cache) >= 16:
+                closed: set[int] = set()
+                for cached in self._text_scorer_cache.values():
+                    if id(cached) in closed:
+                        continue
+                    closed.add(id(cached))
+                    close = getattr(cached, "close", None)
+                    if callable(close):
+                        close()
                 self._text_scorer_cache.clear()
             r = self._make_text_scorer(*eff)
             self._text_scorer_cache[eff] = r
@@ -539,18 +501,26 @@ class SearchEngine:
         if not include_pdf_text or not papers:
             return
 
-        mode = (pdf_text_mode or settings.openalex_pdf_text_mode or "sync").strip().lower()
+        mode = (pdf_text_mode or self.settings.openalex_pdf_text_mode or "sync").strip().lower()
         if mode not in {"cached", "sync"}:
             mode = "sync"
-        max_results = settings.openalex_pdf_max_results if pdf_max_results is None else pdf_max_results
+        max_results = (
+            self.settings.openalex_pdf_max_results
+            if pdf_max_results is None
+            else pdf_max_results
+        )
         max_results = max(0, min(max_results, 5))
         max_chars = (
-            settings.openalex_pdf_max_chars
+            self.settings.openalex_pdf_max_chars
             if pdf_max_chars_per_result is None
             else pdf_max_chars_per_result
         )
         max_chars = max(1, min(max_chars, 30000))
-        timeout_ms = settings.openalex_pdf_timeout_ms if pdf_timeout_ms is None else pdf_timeout_ms
+        timeout_ms = (
+            self.settings.openalex_pdf_timeout_ms
+            if pdf_timeout_ms is None
+            else pdf_timeout_ms
+        )
         timeout_ms = max(1000, min(timeout_ms, 60000))
         if max_results <= 0:
             return
@@ -572,10 +542,12 @@ class SearchEngine:
             return
 
         headers = {"Content-Type": "application/json"}
-        if settings.openalex_api_key:
-            headers["X-API-Key"] = settings.openalex_api_key
-        endpoint = f"{settings.openalex_api_url.rstrip('/')}/openalex/pdf/extract"
-        deadline = time.monotonic() + (settings.openalex_pdf_total_budget_ms / 1000)
+        if self.settings.openalex_api_key:
+            headers["X-API-Key"] = self.settings.openalex_api_key
+        endpoint = f"{self.settings.openalex_api_url.rstrip('/')}/openalex/pdf/extract"
+        deadline = time.monotonic() + (
+            self.settings.openalex_pdf_total_budget_ms / 1000
+        )
 
         def _enrich_one(paper: AcademicResult) -> None:
             remaining = deadline - time.monotonic()
@@ -585,7 +557,7 @@ class SearchEngine:
                 return
             budget_ms = min(timeout_ms, int(remaining * 1000))
             try:
-                resp = requests.post(
+                resp = self._http.post(
                     endpoint,
                     json={
                         "work_id": paper.work_id,
@@ -621,16 +593,17 @@ class SearchEngine:
             paper.pdf_error_code = data.get("error_code")
             paper.pdf_error_message = data.get("error_message")
 
-        with ThreadPoolExecutor(max_workers=len(candidates)) as pool:
-            futures = {pool.submit(_enrich_one, paper): paper for paper in candidates}
-            for future in as_completed(futures):
-                paper = futures[future]
-                try:
-                    future.result()
-                except Exception as exc:
-                    paper.pdf_status = "failed"
-                    paper.pdf_error_code = "PDF_ENRICH_WORKER_FAILED"
-                    paper.pdf_error_message = str(exc)[:300]
+        futures = {
+            self._executor.submit(_enrich_one, paper): paper for paper in candidates
+        }
+        for future in as_completed(futures):
+            paper = futures[future]
+            try:
+                future.result()
+            except Exception as exc:
+                paper.pdf_status = "failed"
+                paper.pdf_error_code = "PDF_ENRICH_WORKER_FAILED"
+                paper.pdf_error_message = str(exc)[:300]
 
     def get_pdf_text(
         self,
@@ -652,21 +625,24 @@ class SearchEngine:
                 error_code="WORK_ID_MISSING",
                 error_message="work_id is required",
             )
-        chars = settings.openalex_pdf_max_chars if max_chars is None else max_chars
+        chars = self.settings.openalex_pdf_max_chars if max_chars is None else max_chars
         chars = max(1, min(int(chars), 30000))
-        endpoint = f"{settings.openalex_api_url.rstrip('/')}/openalex/pdf/text/{quote(work_id, safe='')}"
+        endpoint = (
+            f"{self.settings.openalex_api_url.rstrip('/')}/openalex/pdf/text/"
+            f"{quote(work_id, safe='')}"
+        )
         params = {"max_chars": chars}
         if cursor:
             params["cursor"] = cursor
         headers = {}
-        if settings.openalex_api_key:
-            headers["X-API-Key"] = settings.openalex_api_key
+        if self.settings.openalex_api_key:
+            headers["X-API-Key"] = self.settings.openalex_api_key
         try:
-            resp = requests.get(
+            resp = self._http.get(
                 endpoint,
                 params=params,
                 headers=headers or None,
-                timeout=max(1, settings.provider_timeout),
+                timeout=max(1, self.settings.provider_timeout),
             )
             resp.raise_for_status()
             data = resp.json()
@@ -722,22 +698,22 @@ class SearchEngine:
         trust_mode = (trust_mode or "annotate").strip().lower()
         if trust_mode not in {"off", "annotate"}:
             raise ValueError("trust_mode 仅支持 off / annotate")
-        top_k = top_k or settings.default_top_k
+        top_k = top_k or self.settings.default_top_k
         t0 = time.time()
         query_time = datetime.now(timezone.utc)
 
         ranking = resolve_ranking_options(
-            default_profile=settings.ranking_profile,
-            default_threshold=settings.rerank_threshold,
-            default_threshold_mode=settings.rerank_threshold_mode,
+            default_profile=self.settings.ranking_profile,
+            default_threshold=self.settings.rerank_threshold,
+            default_threshold_mode=self.settings.rerank_threshold_mode,
             ranking_profile=ranking_profile,
             rerank_enabled=rerank_enabled,
             fusion_enabled=fusion_enabled,
-            rerank_backend=rerank_backend or settings.rerank_backend,
+            rerank_backend=rerank_backend or self.settings.rerank_backend,
             rerank_threshold=rerank_threshold,
             rerank_threshold_mode=rerank_threshold_mode,
         )
-        default_text_scoring = settings.ranking_profile != "fast"
+        default_text_scoring = self.settings.ranking_profile != "fast"
         enabled_override = (
             None
             if ranking.text_scoring_enabled == default_text_scoring
@@ -757,20 +733,21 @@ class SearchEngine:
         academic_reranker = AcademicReranker(text_scorer, **reranker_options)
         patent_reranker = PatentReranker(text_scorer, **reranker_options)
         # 查询改写开关:请求未指定则用全局默认
-        rewrite = settings.rewrite_enabled if rewrite_enabled is None else rewrite_enabled
+        rewrite = self.settings.rewrite_enabled if rewrite_enabled is None else rewrite_enabled
 
         # 0) L0 查询理解:规范化 + 时效识别 + 学术意图识别 + (可选)LLM 改写
         plan = plan_query(
             query, [p.name for p in self.providers], top_k,
             rewrite=rewrite,
-            rewrite_api_key=settings.siliconflow_api_key,
-            rewrite_base_url=settings.siliconflow_base_url,
-            rewrite_model=settings.rewrite_model,
-            rewrite_cache_size=settings.rewrite_cache_size,
-            academic_detect=settings.openalex_academic_detect,
+            rewrite_api_key=self.settings.siliconflow_api_key,
+            rewrite_base_url=self.settings.siliconflow_base_url,
+            rewrite_model=self.settings.rewrite_model,
+            rewrite_cache_size=self.settings.rewrite_cache_size,
+            academic_detect=self.settings.openalex_academic_detect,
             force_academic=include_academic,
-            patent_detect=settings.patent_detect,
+            patent_detect=self.settings.patent_detect,
             force_patent=include_patent,
+            http_session=self._http,
         )
         active = [p for p in self.providers if p.name in plan.providers]
         do_academic = self.academic_provider is not None and plan.academic
@@ -796,12 +773,17 @@ class SearchEngine:
         search_query = plan.rewritten_query or plan.normalized_query
         # 学术检索单独改写 query:把自然语言问句提取为论文标题/英文检索词(web 仍用原 query)
         academic_query = search_query
-        if do_academic and settings.openalex_query_rewrite and settings.siliconflow_api_key:
+        if (
+            do_academic
+            and self.settings.openalex_query_rewrite
+            and self.settings.siliconflow_api_key
+        ):
             academic_query = rewrite_academic_query(
-                search_query, settings.siliconflow_api_key,
-                settings.siliconflow_base_url, settings.rewrite_model,
-                settings.rewrite_cache_size,
+                search_query, self.settings.siliconflow_api_key,
+                self.settings.siliconflow_base_url, self.settings.rewrite_model,
+                self.settings.rewrite_cache_size,
                 failures=failures,
+                http_session=self._http,
             )
         ctx = build_rerank_context(search_query, time_sensitive=plan.time_sensitive)
 
@@ -812,7 +794,11 @@ class SearchEngine:
         papers: List[AcademicResult] = []
         patents: List[PatentResult] = []
         used: List[str] = []
-        use_cache = settings.cache_enabled and self.cache is not None and not plan.time_sensitive
+        use_cache = (
+            self.settings.cache_enabled
+            and self.cache is not None
+            and not plan.time_sensitive
+        )
         # task: (kind, provider, query)
         tasks = [("web", p, search_query) for p in active]
         if do_academic:
@@ -822,40 +808,43 @@ class SearchEngine:
             tasks.append(("patent", self.patent_provider, search_query))
 
         if tasks:
-            with ThreadPoolExecutor(max_workers=len(tasks)) as pool:
-                futures = {
-                    pool.submit(
-                        self._cached_search, prov, q,
-                        settings.per_provider_k, plan.recency, use_cache,
-                    ): (kind, prov.name)
-                    for kind, prov, q in tasks
-                }
-                for fut in as_completed(futures):
-                    kind, name = futures[fut]
-                    try:
-                        items = fut.result()
-                        if kind == "academic":
-                            papers.extend(items)
-                            if items:
-                                used.append(name)  # 学术源也计入来源归属(供 providers_used)
-                        elif kind == "patent":
-                            patents.extend(items)
-                            if items:
-                                used.append(name)  # 专利源也计入来源归属
-                        else:
-                            for i, r in enumerate(items):
-                                r.provider_rank = i  # 记录源内排名,供 RRF 融合
-                            raw.extend(items)
-                            used.append(name)
-                    except Exception as e:
-                        failures.append(_search_failure(
-                            stage="provider_search",
-                            source=name,
-                            source_type=kind,
-                            code="PROVIDER_SEARCH_FAILED",
-                            message=e,
-                        ))
-                        print(f"[engine] provider {name} 失败: {e}")
+            futures = {
+                self._executor.submit(
+                    self._cached_search,
+                    prov,
+                    q,
+                    self.settings.per_provider_k,
+                    plan.recency,
+                    use_cache,
+                ): (kind, prov.name)
+                for kind, prov, q in tasks
+            }
+            for fut in as_completed(futures):
+                kind, name = futures[fut]
+                try:
+                    items = fut.result()
+                    if kind == "academic":
+                        papers.extend(items)
+                        if items:
+                            used.append(name)  # 学术源也计入来源归属(供 providers_used)
+                    elif kind == "patent":
+                        patents.extend(items)
+                        if items:
+                            used.append(name)  # 专利源也计入来源归属
+                    else:
+                        for i, r in enumerate(items):
+                            r.provider_rank = i  # 记录源内排名,供 RRF 融合
+                        raw.extend(items)
+                        used.append(name)
+                except Exception as e:
+                    failures.append(_search_failure(
+                        stage="provider_search",
+                        source=name,
+                        source_type=kind,
+                        code="PROVIDER_SEARCH_FAILED",
+                        message=e,
+                    ))
+                    print(f"[engine] provider {name} 失败: {e}")
 
         # 2) 多路独立重排(并发),复用线程安全的 text_scorer;请求上下文显式传入。
         def _rank_web() -> List[SearchResult]:
@@ -902,21 +891,20 @@ class SearchEngine:
                 ranked = [r for r in items if isinstance(r, SearchResult)]
 
         if len(rank_jobs) > 1:
-            with ThreadPoolExecutor(max_workers=len(rank_jobs)) as pool:
-                futures = {pool.submit(fn): kind for kind, fn in rank_jobs}
-                for future in as_completed(futures):
-                    kind = futures[future]
-                    try:
-                        _assign_ranked(kind, future.result())
-                    except Exception as e:
-                        failures.append(_search_failure(
-                            stage="rerank",
-                            source=f"{kind}_reranker",
-                            source_type=kind,
-                            code="RERANK_FAILED",
-                            message=e,
-                        ))
-                        _assign_ranked(kind, _fallback_rank(kind))
+            futures = {self._executor.submit(fn): kind for kind, fn in rank_jobs}
+            for future in as_completed(futures):
+                kind = futures[future]
+                try:
+                    _assign_ranked(kind, future.result())
+                except Exception as e:
+                    failures.append(_search_failure(
+                        stage="rerank",
+                        source=f"{kind}_reranker",
+                        source_type=kind,
+                        code="RERANK_FAILED",
+                        message=e,
+                    ))
+                    _assign_ranked(kind, _fallback_rank(kind))
         else:
             for kind, fn in rank_jobs:
                 try:
@@ -957,7 +945,7 @@ class SearchEngine:
             source_snapshot = {}
             for name in planned_sources:
                 if name == "patent_es":
-                    source_snapshot[name] = f"index-alias:{settings.patent_es_index}"
+                    source_snapshot[name] = f"index-alias:{self.settings.patent_es_index}"
                 elif name == "openalex_local":
                     source_snapshot[name] = "service-index:unspecified"
                 else:
@@ -968,7 +956,7 @@ class SearchEngine:
                 evidence=evidence,
                 query_time=query_time,
                 source_snapshot=source_snapshot,
-                max_candidates=settings.per_provider_k * len(tasks),
+                max_candidates=self.settings.per_provider_k * len(tasks),
             )
         answerability = _build_answerability(
             evidence,
@@ -1004,9 +992,14 @@ class SearchEngine:
 
 if __name__ == "__main__":
     import sys
+    from src.bootstrap import build_container
 
     q = sys.argv[1] if len(sys.argv) > 1 else "2026年人工智能最新进展"
-    resp = SearchEngine().search(q)
+    container = build_container(include_mcp=False)
+    try:
+        resp = container.engine.search(q)
+    finally:
+        container.close()
     print(
         f"\n query={resp.query!r}  norm={resp.normalized_query!r}"
         + (f"  rewrite={resp.rewritten_query!r}" if resp.rewritten_query else "")

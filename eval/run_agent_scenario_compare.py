@@ -11,17 +11,21 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import atexit
 import json
 import time
 from typing import Dict, List, Optional, Tuple
 
 from eval.agent_answer_eval import AnswerPairJudge, EvidenceAnswerAgent, answer_support_audit
 from eval.e2e_judge import ScenarioPairJudge, compact_response, evidence_type_counts
-from src.config import settings
+from src.config import Settings
+from src.bootstrap import build_container
 from src.engine import SearchEngine, _build_answerability
 from src.l0 import detect_recency
 from src.models import SearchResponse
 from src.providers.baidu import BaiduSearchProvider
+
+settings = Settings()
 
 _REPORT_PATH = "eval/agent_scenario_report.md"
 _DETAILS_PATH = "eval/agent_scenario_details.json"
@@ -227,6 +231,8 @@ def write_details(
 
 
 def main() -> None:
+    global settings
+    settings = Settings.from_env()
     ap = argparse.ArgumentParser()
     ap.add_argument("--dataset", default="eval/agent_scenarios.jsonl")
     ap.add_argument("--k", type=int, default=8)
@@ -251,8 +257,13 @@ def main() -> None:
         raise SystemExit("缺少 QIANFAN_API_KEY,无法运行 baidu-only baseline")
 
     scenarios = load_scenarios(args.dataset, args.max_scenarios)
-    engine = SearchEngine()
-    baidu = BaiduSearchProvider(timeout=settings.provider_timeout)
+    container = build_container(settings, include_mcp=False)
+    atexit.register(container.close)
+    engine = container.engine
+    baidu = BaiduSearchProvider(
+        api_key=settings.qianfan_api_key,
+        timeout=settings.provider_timeout,
+    )
 
     rows: List[dict] = []
     pairs: List[Tuple[str, SearchResponse, SearchResponse]] = []
@@ -347,6 +358,8 @@ def main() -> None:
         args.detail_k,
     )
     print(f"-> wrote {args.details_path}")
+    container.close()
+    atexit.unregister(container.close)
 
 
 if __name__ == "__main__":

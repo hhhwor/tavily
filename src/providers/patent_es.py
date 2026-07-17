@@ -18,7 +18,6 @@
 """
 from __future__ import annotations
 
-import os
 import re
 from datetime import date, timedelta
 from typing import Any, Dict, List, Optional
@@ -87,12 +86,14 @@ class PatentEsProvider(SearchProvider):
         timeout: int = 15,
         verify_tls: bool = True,
         per_page: int = 25,
+        http_session: Optional[requests.Session] = None,
     ):
-        self.base_url = (base_url if base_url is not None else os.getenv("PATENT_ES_URL", "")).rstrip("/")
+        self.base_url = (base_url or "").rstrip("/")
         self.index = index or _DEFAULT_INDEX
         self.timeout = timeout
         self.verify_tls = verify_tls
         self.per_page = max(1, min(per_page, 100))
+        self._http = http_session or requests
 
     def search(
         self, query: str, top_k: int = 10, recency: Optional[str] = None
@@ -114,7 +115,7 @@ class PatentEsProvider(SearchProvider):
         }
 
         try:
-            resp = requests.post(
+            resp = self._http.post(
                 f"{self.base_url}/{self.index}/_search",
                 json=body, timeout=self.timeout, verify=self.verify_tls,
             )

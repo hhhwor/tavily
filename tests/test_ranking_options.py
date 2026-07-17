@@ -81,20 +81,10 @@ def test_zero_threshold_is_effectively_off():
     assert options.threshold_mode == "off"
 
 
-def test_settings_do_not_treat_unset_legacy_false_as_semantic(monkeypatch):
+def test_settings_do_not_treat_unset_legacy_false_as_semantic():
     from src.config import Settings
 
-    for name in (
-        "RANKING_PROFILE",
-        "RERANK_ENABLED",
-        "RERANK_BACKEND",
-        "RERANK_THRESHOLD",
-        "RERANK_THRESHOLD_MODE",
-        "FUSION_ENABLED",
-    ):
-        monkeypatch.delenv(name, raising=False)
-
-    configured = Settings()
+    configured = Settings.from_env({})
 
     assert configured.ranking_profile == "quality"
     assert configured.rerank_threshold_mode == "prefer"
@@ -104,6 +94,7 @@ def test_settings_do_not_treat_unset_legacy_false_as_semantic(monkeypatch):
 
 def test_engine_noop_disables_strict_threshold_without_partial_failure(monkeypatch):
     from src.engine import SearchEngine
+    from src.config import Settings
     from src.pipeline.rerank import NoOpReranker
 
     engine = object.__new__(SearchEngine)
@@ -113,6 +104,8 @@ def test_engine_noop_disables_strict_threshold_without_partial_failure(monkeypat
     engine.cache = None
     engine.text_scorer = NoOpReranker()
     engine._text_scorer_cache = {}
+    engine.settings = Settings()
+    engine._http = None
     monkeypatch.setattr(
         engine,
         "_select_text_scorer",
