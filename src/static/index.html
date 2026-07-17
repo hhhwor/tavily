@@ -136,11 +136,12 @@
     <details class="adv">
       <summary></summary>
       <div class="adv-grid">
-        <label>重排
-          <select id="rerank_enabled">
+        <label>排序策略
+          <select id="ranking_profile">
             <option value="">默认</option>
-            <option value="true">开（cross-encoder）</option>
-            <option value="false">关（RRF 融合）</option>
+            <option value="fast">fast（快速先验排序）</option>
+            <option value="semantic">semantic（纯语义重排）</option>
+            <option value="quality">quality（语义 + 领域信号）</option>
           </select>
         </label>
         <label>重排后端
@@ -149,7 +150,6 @@
             <option value="siliconflow">siliconflow（云端 API）</option>
             <option value="bge">bge（本地）</option>
             <option value="flashrank">flashrank（本地轻量）</option>
-            <option value="none">none（不重排）</option>
           </select>
         </label>
         <label>重排模型
@@ -161,8 +161,16 @@
             <option value="netease-youdao/bce-reranker-base_v1"></option>
           </datalist>
         </label>
-        <label>相关性阈值
+        <label>语义相关性阈值
           <input id="rerank_threshold" type="number" step="0.05" min="0" max="1" placeholder="默认 0.3">
+        </label>
+        <label>阈值模式
+          <select id="rerank_threshold_mode">
+            <option value="">默认</option>
+            <option value="off">off（不使用阈值）</option>
+            <option value="prefer">prefer（达标项优先）</option>
+            <option value="strict">strict（删除未达标项）</option>
+          </select>
         </label>
         <label>学术检索
           <select id="include_academic">
@@ -203,13 +211,6 @@
         </label>
         <label>PDF 字符数/篇
           <input id="pdf_max_chars_per_result" type="number" min="1" max="30000" placeholder="默认 8000">
-        </label>
-        <label>信号融合
-          <select id="fusion_enabled">
-            <option value="">默认</option>
-            <option value="true">开（新鲜度/权威度）</option>
-            <option value="false">关</option>
-          </select>
         </label>
         <label>API Token（服务端开启鉴权时必填）
           <input id="api_token" type="password" placeholder="Bearer token，本地保存于浏览器">
@@ -257,11 +258,11 @@
       const opt = {
         include_academic: triBool('include_academic'),
         include_patent: triBool('include_patent'),
-        rerank_enabled: triBool('rerank_enabled'),
+        ranking_profile: optStr('ranking_profile'),
         rerank_backend: optStr('rerank_backend'),
         rerank_model: optStr('rerank_model'),
         rerank_threshold: optNum('rerank_threshold'),
-        fusion_enabled: triBool('fusion_enabled'),
+        rerank_threshold_mode: optStr('rerank_threshold_mode'),
         rewrite_enabled: triBool('rewrite_enabled'),
         include_pdf_text: triBool('include_pdf_text'),
         pdf_text_mode: optStr('pdf_text_mode'),
@@ -324,7 +325,11 @@
       if (counts.academic) pills.push(`<span class="pill">论文 <b>${counts.academic}</b> 条</span>`);
       if (counts.patent) pills.push(`<span class="pill">专利 <b>${counts.patent}</b> 条</span>`);
       pills.push(`<span class="pill">来源 <b>${esc((d.providers_used || []).join(' · '))}</b></span>`);
-      pills.push(`<span class="pill">重排 <b>${esc(d.reranker)}</b></span>`);
+      if (d.ranking_profile)
+        pills.push(`<span class="pill">排序策略 <b>${esc(d.ranking_profile)}</b></span>`);
+      pills.push(`<span class="pill">重排器 <b>${esc(d.reranker)}</b></span>`);
+      if (d.rerank_threshold_mode)
+        pills.push(`<span class="pill">阈值 <b>${esc(d.rerank_threshold_mode)} / ${esc(String(d.rerank_threshold ?? ''))}</b></span>`);
       pills.push(`<span class="pill">耗时 <b>${d.elapsed_ms ?? clientMs}ms</b></span>`);
       if (d.rewritten_query && d.rewritten_query !== d.normalized_query)
         pills.push(`<span class="pill">改写 <b>${esc(d.rewritten_query)}</b></span>`);
@@ -341,7 +346,8 @@
     function renderDiagnostics(d) {
       const gaps = (d.answerability && d.answerability.gaps) || [];
       const failures = d.failures || [];
-      if (!gaps.length && !failures.length) {
+      const rankingWarnings = d.ranking_warnings || [];
+      if (!gaps.length && !failures.length && !rankingWarnings.length) {
         $('diagnostics').innerHTML = '';
         return;
       }
@@ -351,8 +357,12 @@
       const failureItems = failures.map(f =>
         `<div><b>${esc(f.code)}</b> ${esc(f.stage || '')}/${esc(f.source || '')}: ${esc(f.message || '')}</div>`
       ).join('');
+      const rankingItems = rankingWarnings.map(w =>
+        `<div><b>${esc(w)}</b> 排序策略已按可用能力调整。</div>`
+      ).join('');
+      const sections = [gapItems, failureItems, rankingItems].filter(Boolean);
       $('diagnostics').innerHTML =
-        `<div class="warn">${gapItems}${failureItems ? '<hr style="border-color:#3a2b1c;border-width:0 0 1px;margin:8px 0">' + failureItems : ''}</div>`;
+        `<div class="warn">${sections.join('<hr style="border-color:#3a2b1c;border-width:0 0 1px;margin:8px 0">')}</div>`;
     }
 
     const TYPE_LABELS = { web: '网页', academic: '论文', patent: '专利' };

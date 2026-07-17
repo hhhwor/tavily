@@ -2,7 +2,9 @@
 from __future__ import annotations
 
 import os
-from typing import List
+from typing import List, Optional
+
+from src.pipeline.ranking_options import resolve_ranking_options
 
 
 def load_dotenv(path: str = "") -> None:
@@ -23,6 +25,19 @@ def _project_root() -> str:
     return os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 
 
+def _optional_env_bool(name: str) -> Optional[bool]:
+    """读取兼容布尔开关，并保留“未配置”与 false 的区别。"""
+    value = os.getenv(name)
+    if value is None:
+        return None
+    normalized = value.strip().lower()
+    if normalized == "true":
+        return True
+    if normalized == "false":
+        return False
+    raise ValueError(f"{name} 仅支持 true / false，收到 {value!r}")
+
+
 class Settings:
     """运行配置(从环境变量读取)。"""
 
@@ -37,21 +52,36 @@ class Settings:
         self.default_top_k = int(os.getenv("SEARCH_TOP_K", "10"))
         self.per_provider_k = int(os.getenv("SEARCH_PER_PROVIDER_K", "10"))
         self.provider_timeout = int(os.getenv("SEARCH_PROVIDER_TIMEOUT", "15"))
-        # 重排(默认启用:走 siliconflow 云端 cross-encoder 重排,质量更高但慢数秒;
-        #  设 RERANK_ENABLED=false 可关闭,改走本地 RRF 多源融合,毫秒级)
-        self.rerank_enabled = os.getenv("RERANK_ENABLED", "true").lower() == "true"
+        # 排序策略：canonical 配置默认 quality/prefer。旧 RERANK_ENABLED 与
+        # FUSION_ENABLED 只作为兼容别名；未配置旧变量时不能把 false 默认误判为 semantic。
         self.rerank_backend = os.getenv("RERANK_BACKEND", "siliconflow")  # siliconflow | bge | flashrank | none
         self.rerank_model = os.getenv("RERANK_MODEL", "BAAI/bge-reranker-v2-m3")
         self.rerank_device = os.getenv("RERANK_DEVICE", "") or None  # None=自动(GPU 优先)
         self.rerank_cache_dir = os.getenv("RERANK_CACHE_DIR", "/data/.flashrank")
+        ranking_options = resolve_ranking_options(
+            default_profile="quality",
+            default_threshold=0.3,
+            default_threshold_mode="prefer",
+            ranking_profile=os.getenv("RANKING_PROFILE"),
+            rerank_enabled=_optional_env_bool("RERANK_ENABLED"),
+            fusion_enabled=_optional_env_bool("FUSION_ENABLED"),
+            rerank_backend=self.rerank_backend,
+            rerank_threshold=os.getenv("RERANK_THRESHOLD"),
+            rerank_threshold_mode=os.getenv("RERANK_THRESHOLD_MODE"),
+        )
+        self.ranking_profile = ranking_options.profile
+        self.rerank_threshold = ranking_options.threshold
+        self.rerank_threshold_mode = ranking_options.threshold_mode
+        self.ranking_warnings = ranking_options.warnings
+        # 兼容旧调用方；值始终从 canonical profile 派生，而非再次解析环境变量。
+        self.rerank_enabled = ranking_options.text_scoring_enabled
+        self.fusion_enabled = ranking_options.fusion_enabled
         # SiliconFlow API reranker
         self.siliconflow_api_key = os.getenv("SILICONFLOW_API_KEY", "")
         self.siliconflow_base_url = os.getenv("SILICONFLOW_BASE_URL", "https://api.siliconflow.cn/v1")
         # 分块
         self.chunk_max_chars = int(os.getenv("CHUNK_MAX_CHARS", "400"))
         self.chunk_overlap = int(os.getenv("CHUNK_OVERLAP", "50"))
-        # 阈值过滤
-        self.rerank_threshold = float(os.getenv("RERANK_THRESHOLD", "0.3"))
         # L0 查询改写
         self.rewrite_enabled = os.getenv("REWRITE_ENABLED", "false").lower() == "true"
         self.rewrite_model = os.getenv("REWRITE_MODEL", "Qwen/Qwen2.5-7B-Instruct")
@@ -62,8 +92,7 @@ class Settings:
         self.trust_verify_timeout = int(os.getenv("TRUST_VERIFY_TIMEOUT", "15"))
         self.trust_verify_max_claims = int(os.getenv("TRUST_VERIFY_MAX_CLAIMS", "20"))
         self.trust_verify_max_evidence = int(os.getenv("TRUST_VERIFY_MAX_EVIDENCE", "5"))
-        # 辅助信号融合(评测证明对通用查询是负优化,默认关闭;时效场景可手动开)
-        self.fusion_enabled = os.getenv("FUSION_ENABLED", "false").lower() == "true"
+        # 旧通用 FusionReranker 权重，迁移期保留；canonical quality profile 使用领域权重。
         self.fusion_alpha = float(os.getenv("FUSION_ALPHA", "0.7"))    # 文本相关性
         self.fusion_beta = float(os.getenv("FUSION_BETA", "0.15"))     # 新鲜度
         self.fusion_gamma = float(os.getenv("FUSION_GAMMA", "0.10"))   # 来源权威度

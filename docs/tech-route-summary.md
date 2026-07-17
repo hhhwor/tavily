@@ -3,7 +3,7 @@
 > 对象:本项目(面向 AI Agent / LLM 的通用 Web 搜索引擎,Tavily 路线)**当前已落地的真实实现**。
 > 一句话:**元搜索聚合**——包装现成搜索源 + 跨源去重/融合 + cross-encoder 段落级重排,以结构化 JSON 返回 LLM-ready 内容,**不自建全网爬虫与倒排索引**。另接入 **OpenAlex 学术检索(经本地 Chukonu 检索系统)** 与 **专利检索(houdutech 只读 ES)** 作为两条独立能力支线(学术论文 / 专利结果各自单独成块)。
 > 代码:[src/](../src/) ｜ 调研与选型对比:[agent-search-engine-tech-research.md](./agent-search-engine-tech-research.md) ｜ 学术引擎可行性:[academic-search-engine-feasibility.md](./academic-search-engine-feasibility.md) ｜ 评测体系:[eval-methodology.md](./eval-methodology.md)
-> 编写日期:2026-06-10 ｜ 更新:2026-06-11(接入 OpenAlex 学术检索 + provider 召回缓存)｜ 2026-06-16(接入专利检索 ES 支线)｜ 2026-06-17(专利源切换到 epo_docdb_v2 多语种索引;引擎升级 Python 3.11 + FastAPI 进程内挂载 MCP server `/mcp`)｜ 2026-06-21(专利索引切到读别名 `epo_docdb_read`→`epo_docdb_v2_20260620`:修复 CN-B 当事人缺失、当事人改 object 结构、当事人可检索;学术数据源由公网 OpenAlex API 切到本地 Chukonu 检索系统 `/openalex` ES)
+> 编写日期:2026-06-10 ｜ 更新:2026-06-11(接入 OpenAlex 学术检索 + provider 召回缓存)｜ 2026-06-16(接入专利检索 ES 支线)｜ 2026-06-17(专利源切换到 epo_docdb_v2 多语种索引;引擎升级 Python 3.11 + FastAPI 进程内挂载 MCP server `/mcp`)｜ 2026-06-21(专利索引切到读别名 `epo_docdb_read`→`epo_docdb_v2_20260620`)｜ 2026-07-17(排序配置统一为 Ranking Profile + 明确阈值模式)
 
 本篇只讲**现在到底怎么做的**:分层、选型、默认开关、评测结论、运行方式。选型「为什么这么选 / 和谁对比过」见调研文档;评测「指标怎么算」见评测文档。
 
@@ -24,7 +24,7 @@ Agent 需要的不是给人导航的 SERP(标题+链接),而是**正文内容本
 ## 2. 端到端数据流
 
 ```
-POST /search {query, top_k, include_academic?, include_patent?}
+POST /search {query, top_k, ranking_profile?, rerank_threshold_mode?, ...}
       │
       ▼
  L0 查询理解  ── NFKC 规范化 + 时效识别(day/week/month/year)+ 学术意图识别 + 专利意图识别 + 输入校验
@@ -43,11 +43,11 @@ POST /search {query, top_k, include_academic?, include_patent?}
  L2 正文抓取  ── 省略(腾讯/百度直接返回正文;SerpAPI 用 snippet 充当;OpenAlex 用摘要;专利用摘要)
       │
       ▼
- L3 + L4 跨源处理(两条路径,由 RERANK_ENABLED 决定) ── web/学术/专利三路独立重排(并发,复用同一 reranker)
-   ├─ 重排开(质量优先):dedup(URL 归一化) → 切 chunk → 逐块 cross-encoder 打分
-   │                     → max-pooling → sigmoid 归一化 → 阈值过滤 → (可选)信号融合
-   └─ 重排关(默认/低延迟):RRF 融合 Σ 1/(k+rank),k=60,与来源绝对分数无关
-      │   学术/专利结果:同一 cross-encoder 对 query↔(标题+摘要) 打分;NoOp 时按来源原始分排序
+ L3 + L4 跨源处理(由 RANKING_PROFILE 决定) ── web/学术/专利三路独立排序
+   ├─ quality(默认):cross-encoder 文本分 + 各领域辅助信号
+   ├─ semantic:仅 cross-encoder 文本相关性,辅助特征权重为 0
+   └─ fast:不调用文本模型;Web 走 RRF,学术/专利按来源原始分
+      │   文本阈值模式:off=关闭;prefer=达标项优先并回填;strict=硬过滤
       ▼
  L5 摘要/合成  ── 未做(留 hook)
       │
@@ -61,7 +61,9 @@ POST /search {query, top_k, include_academic?, include_patent?}
                          scores:{relevance,source_rank,rerank_score,authority,confidence},
                          access:{is_open,license,oa_pdf_url,pdf_status,next_cursor},
                          diagnostics:{warnings,partial,failure_code}}],
-              count, providers_used, reranker, elapsed_ms}
+              count, providers_used, reranker,
+              ranking_profile, rerank_threshold, rerank_threshold_mode, ranking_warnings,
+              elapsed_ms}
 ```
 
 ---
@@ -77,7 +79,7 @@ POST /search {query, top_k, include_academic?, include_patent?}
 | **L1″ 专利源** | houdutech 只读 ES `/{index}/_search`(独立能力支线;multi_match 中文检索;URL 驱动启用) | [providers/patent_es.py](../src/providers/patent_es.py) | ✅ 需 `PATENT_ES_URL` |
 | **L2 抓取** | 省略(源自带正文) | — | ⏸ 不需要 |
 | **L3 去重/分块** | URL 归一化跨源去重 + 文档分块(段落→句子→字符三级,合并短段+重叠) | [dedup.py](../src/pipeline/dedup.py) · [chunk.py](../src/pipeline/chunk.py) | ✅ |
-| **L4 重排** | SiliconFlow API(BGE-v2-m3,默认 backend)/ 本地 BGE / FlashRank;段落级 + 阈值过滤 + 可选信号融合;RRF 兜底;**web / 学术 / 专利三路独立重排** | [rerank.py](../src/pipeline/rerank.py) · [fusion.py](../src/pipeline/fusion.py) | ✅ |
+| **L4 重排** | `quality/semantic/fast` 三档;SiliconFlow API(BGE-v2-m3)/本地 BGE/FlashRank;`off/prefer/strict` 阈值策略;**web / 学术 / 专利三路独立重排** | [ranking_options.py](../src/pipeline/ranking_options.py) · [rerank.py](../src/pipeline/rerank.py) · [fusion.py](../src/pipeline/fusion.py) | ✅ |
 | **L5 合成** | 未做 | — | ⏳ TODO |
 | **缓存** | provider 召回级缓存(进程内 LRU+TTL,线程安全;接口化预留 Redis);时效查询不缓存 | [cache.py](../src/cache.py) · [engine.py](../src/engine.py) | ✅ |
 | **横切**(安全/可观测/MCP) | 未做 | — | ⏳ TODO |
@@ -113,16 +115,17 @@ POST /search {query, top_k, include_academic?, include_patent?}
 
 ### L4 — 重排(质量分水岭)([rerank.py](../src/pipeline/rerank.py))
 
-构建链:`backend → ThresholdReranker → (可选)FusionReranker`,任一环节失败自动回退 `NoOpReranker`,保证管线始终可跑。
+生产链先把新旧请求字段解析成一个不可变 `RankingOptions(profile, threshold, threshold_mode)`，再由三类领域 reranker 执行。旧 `ThresholdReranker` / `FusionReranker` 仅保留给历史评测代码，不再是生产构建链。
 
 - **段落级打分**:每个文档切 chunk,逐 `(query, chunk)` pair 交 cross-encoder 打分,**每文档取 chunk 最高分(max-pooling)**。彻底解决「BGE 512 token 上限 vs 长正文硬截断」的矛盾。
 - **三种 backend**:
   - `siliconflow`(默认)—— 云端 BGE-v2-m3,无需 GPU;当前实现不再假设 25 文档硬上限,返回分数已在 0–1。
   - `bge` —— 本地 `sentence-transformers` CrossEncoder,需 torch。
   - `flashrank` —— 轻量本地 cross-encoder。
-- **归一化 + 阈值**:本地 backend 用 sigmoid 归一化到 0–1;`ThresholdReranker` 丢弃低于 `RERANK_THRESHOLD=0.3` 的结果,保持喂给 agent 的上下文纯净。
-- **信号融合**(`FusionReranker`,默认关):`final = α·text + β·freshness + γ·authority + δ·rank`(0.7/0.15/0.10/0.05)。新鲜度对时效查询用指数衰减、非时效用线性衰减;权威度按源给默认权重。**评测证明对通用查询是负优化,默认关闭**(见 §6)。
-- **RRF 兜底**(`fusion.py`):重排关闭时走 `rrf_fuse()`,`score = Σ 1/(60+rank)`,只看源内排名、与各源不一致的绝对分数无关,天然实现多源共识加权。
+- **三种 Profile**:`quality` 为当前默认，文本分与 Web RRF、学术 citations/freshness/venue/OA、专利来源分/freshness/citations/status 融合；`semantic` 只使用文本分；`fast` 完全不调用文本模型，Web 使用 RRF，垂直源按原始分排序。
+- **归一化 + 阈值**:本地 backend 用 sigmoid 归一化到 0–1；阈值判断的是**领域融合前文本分**。`off` 不应用阈值，`prefer`（默认）让达标项优先且在不足 `top_k` 时回填低分项，`strict` 才真正丢弃低分项。
+- **NoOp 降级**:使用 `fast` 或 scorer 不可用而降级为 NoOp 时，文本阈值自动关闭并记录 `THRESHOLD_SKIPPED_NO_SCORER`；这属于预期降级诊断，不构成 partial failure。
+- **RRF**(`fusion.py`):Web fast 路径使用 `rrf_fuse()`,`score = Σ 1/(60+rank)`,只看源内排名、与各源不一致的绝对分数无关,天然实现多源共识加权。
 
 ### L1′ — 学术检索(OpenAlex 数据,经 Chukonu 服务)([providers/openalex.py](../src/providers/openalex.py))
 
@@ -131,7 +134,7 @@ POST /search {query, top_k, include_academic?, include_patent?}
 - **触发**:`L0 学术意图识别` 命中(或 `include_academic=true` 强制)且学术源已启用时,OpenAlex 与 web 源**同一线程池并发召回**,不阻塞 web 主流程。
 - **召回**:`POST {OPENALEX_API_URL}/openalex/search/keyword`,body `{query, size, year_min/year_max?}`;服务端在 `title^3/abstract^2/authors/concepts` 上 `best_fields` 检索。时效(recency)近似映射为 `year_min=year_max=当年`。可选 `X-API-Key`(服务未配 `SE4AI_API_KEYS` 时全部放行)。
 - **摘要**:Chukonu 服务已把 `abstract_inverted_index` 重建为正文(`abstract` 字段直接可用),provider 无需再还原。
-- **语义排序复用现有重排**:`AcademicResult` 设计为 `SearchResult` 子类,天然带 `text_for_rerank()`(返回「标题+摘要」),**现有 cross-encoder reranker 零改动**即可对 query↔论文打分;web 与学术两路独立重排、并发执行。重排关闭(NoOp)时按服务 `_score` 排序兜底。
+- **语义排序复用现有重排**:`AcademicResult` 设计为 `SearchResult` 子类,天然带 `text_for_rerank()`(返回「标题+摘要」),**现有 cross-encoder reranker 零改动**即可对 query↔论文打分;web 与学术两路独立重排、并发执行。`fast` 时按服务 `_score` 排序。
 - **学术 evidence 元数据**:对外返回 `type=academic`。标题/URL/年份进入顶层字段;作者/年份/期刊/DOI/OpenAlex work_id 进入 `citation`;开放获取、license、`oa_pdf_url`、PDF 抽取状态和 `next_cursor` 进入 `access`;正文优先用 PDF 抽取文本(`snippet_type=pdf_text`),否则用摘要(`snippet_type=abstract`)。
 - **启用**:配了 `OPENALEX_API_URL`(默认 `http://localhost:9001`)即启用;服务不可达时静默返回空,web 搜索零影响。
 - ⚠️ **覆盖收窄**:Chukonu 当前 ES 仅 **5 万条 OpenAlex 子集**(非公网全量 ~2.4 亿 works),冷门主题召回会明显变弱;换公网全量需把 `OPENALEX_API_URL` 指回自建/官方全量服务(provider 协议一致)。
@@ -143,7 +146,7 @@ POST /search {query, top_k, include_academic?, include_patent?}
 
 - **触发**:`L0 专利意图识别` 命中(`detect_patent`:专利/发明专利/实用新型/外观设计/公开号/申请号/patent/IPC 等)或 `include_patent=true` 强制,且专利源已启用时,专利 ES 与 web/学术源**同一线程池并发召回**。
 - **检索**:`POST {base}/{index}/_search`,构造 ES Query DSL —— `multi_match` over `patent_name^3 / abstract^2 / title_zh^2 / abstract_zh / applicant.original^2 / applicant.docdb`(`best_fields`)。通用 `patent_name/abstract` 是 `icu_analyzer`(跨语种),分语种 `title_zh/abstract_zh` 是 `ik_smart`(补 CJK 召回),当事人字段补「公司/机构名」召回(如「华为 折叠屏」可按申请人命中),故**中英文查询都能命中**。时效映射 `range(application_date >= 计算起点)`,`_source` 裁剪字段,`highlight` 摘要片段当 snippet。**只触达只读 `_search` 端点**(落在前置 nginx 只读白名单内),绝不构造写/管理 DSL。
-- **语义排序复用现有重排**:`PatentResult` 设计为 `SearchResult` 子类,`text_for_rerank()` 返回「专利名+摘要」,**现有 cross-encoder reranker 零改动**即可对 query↔专利打分;NoOp(重排关)时按 ES `_score`(存入 `score`)降序兜底。
+- **语义排序复用现有重排**:`PatentResult` 设计为 `SearchResult` 子类,`text_for_rerank()` 返回「专利名+摘要」,**现有 cross-encoder reranker 零改动**即可对 query↔专利打分;`fast` 时按 ES `_score`(存入 `score`)降序。
 - **专利 evidence 元数据**:对外返回 `type=patent`。`citation.publication_number` 只作为引用字段;完整结构化元数据进入 `patent` 子对象(`publication_number/application_number/applicant/inventor/ipc_main/cpc_main/country/status/family_id/application_date/publication_date/patent_type/citation_count`)。申请日/公开日用于 `published_date`;摘要进入 `passage.text`(`snippet_type=patent_abstract`);引用数同时进入 `scores.authority`。专利无原生网页,`url` 用 Google Patents 落地页 `https://patents.google.com/patent/{公开号去横线}`(如 `US-2024030484-A1` → `.../US2024030484A1`)。
 - **鉴权与网络**:ES 自身**无鉴权、不区分读写**,只读保证完全靠前置 nginx(只读白名单)+ AWS 安全组**来源 IP 白名单**(详见 `~/adhoc-2026-06-15-read-only-es-nginx-in-se4ai-v2.md`)。本项目所在开发机出口 IP 已在白名单,直连可用;**换部署机器需先给新出口 IP 放行 9243**。TLS 证书覆盖该域名,默认 `verify=True`。凭证缺失(无 `PATENT_ES_URL`)则专利能力**静默关闭**,web/学术零影响。
 - ⚠️ **库与字段随版本变化**:`epo_docdb_v2` 相比旧 `patents` **无 `claims`/`grant_*`/`current_holder`**,新增 CPC/优先权/同族/国别/法律状态等。`20260620` 相比 `20260615` 修复了**中国授权(CN-B)当事人大面积缺失**(申请人 80.8%→90.1%、发明人 76.1%→85.8%,新增中文原文名),代价是当事人字段从扁平 string 改为 object(breaking,已适配;见 [patent-es-cn-b-missing-applicant-bug.md](./patent-es-cn-b-missing-applicant-bug.md))。换索引(如 `epo_docdb`/`google_patents`)字段结构不同,需各自 `_mapping` 适配(`PATENT_ES_INDEX` 可配)。
@@ -164,16 +167,18 @@ POST /search {query, top_k, include_academic?, include_patent?}
 
 ## 5. 配置开关总表(默认值 vs 推荐值)
 
-> 全部经 `.env` 环境变量控制,集中在 [config.py](../src/config.py)。**注意默认值与「评测最优生产配置」不同**:开箱默认走低延迟 RRF 快路径,质量优先需显式开重排。
+> 全部经 `.env` 环境变量控制,集中在 [config.py](../src/config.py)。新配置以 `RANKING_PROFILE` 为权威；旧布尔字段仅用于兼容已有部署和客户端。
 
 | 开关 | 默认值 | 含义 | 推荐(质量优先) |
 |------|--------|------|----------------|
-| `RERANK_ENABLED` | **`false`** | 关=RRF 融合(毫秒级);开=cross-encoder 重排(质量高、慢数秒) | **`true`**(+0.13 NDCG) |
+| `RANKING_PROFILE` | **`quality`** | `quality`=文本+领域信号；`semantic`=纯文本；`fast`=无文本模型 | `quality`，低延迟场景用 `fast` |
 | `RERANK_BACKEND` | `siliconflow` | `siliconflow`/`bge`/`flashrank`/`none` | `siliconflow`(零 GPU、~2.7s) |
 | `RERANK_MODEL` | `BAAI/bge-reranker-v2-m3` | 重排模型 | 同默认 |
-| `RERANK_THRESHOLD` | `0.3` | sigmoid 归一化后低于此分丢弃 | 同默认 |
+| `RERANK_THRESHOLD` | `0.3` | 融合前的文本相关性门槛；`0` 等同关闭 | 同默认 |
+| `RERANK_THRESHOLD_MODE` | **`prefer`** | `off`=关闭；`prefer`=达标优先并回填；`strict`=硬过滤 | `prefer`；只在确需空结果时使用 `strict` |
+| `RERANK_ENABLED` | 兼容字段 | `false → fast`；`true` 使用非 fast 默认档 | 新调用改用 `RANKING_PROFILE` |
 | `REWRITE_ENABLED` | **`false`** | L0 LLM 查询改写 | 视查询分布评测后再定 |
-| `FUSION_ENABLED` | **`false`** | 辅助信号融合(新鲜度/权威度/源内排名) | 仅时效场景手动开 |
+| `FUSION_ENABLED` | 兼容字段 | 非 fast 场景中 `true → quality`、`false → semantic` | 新调用改用 `RANKING_PROFILE` |
 | `CHUNK_MAX_CHARS` / `CHUNK_OVERLAP` | `400` / `50` | 分块大小与重叠 | 同默认 |
 | `SEARCH_TOP_K` / `SEARCH_PER_PROVIDER_K` | `10` / `10` | 返回条数 / 每源召回数 | 同默认 |
 | `SEARCH_PROVIDER_TIMEOUT` | `15` | 单源超时(秒) | 同默认 |
@@ -217,8 +222,8 @@ POST /search {query, top_k, include_academic?, include_patent?}
 
 三条由评测直接支撑的决策:
 
-1. **重排是核心质量杠杆** —— 比纯 RRF **+0.13 NDCG**(0.906 vs 0.774),API 化后零 GPU、~2.7s/查询。这是「质量优先」配置开 `RERANK_ENABLED` 的依据。
-2. **信号融合是负优化,默认关闭** —— 0.896 < 0.906;分桶分析显示新鲜度信号误伤 `factual` 类的权威老页面(百科等)。**这一结论 12 条抽检看不出来,扩到 30 条全量 A/B 才暴露**——印证「每项改动都要在评测集上量化,不凭感觉」。
+1. **文本重排是核心质量杠杆** —— 比纯 RRF **+0.13 NDCG**(0.906 vs 0.774),API 化后零 GPU、~2.7s/查询。
+2. **旧通用 `FusionReranker` 在该评测集上是负优化** —— 0.896 < 0.906；这组历史实验不是当前按领域设计的 `quality` Profile。三个新 Profile 必须用版本化 E2E 缓存重新 A/B，不能复用旧融合结论或缓存。
 3. **SerpAPI 单源弱但聚合有益** —— 单源仅 0.482,但并入后整体 Recall 仍升,补了英文/全球覆盖。
 
 ---
@@ -243,8 +248,11 @@ curl -X POST localhost:8000/search \
   -H 'Content-Type: application/json' \
   -d '{"query":"...","top_k":5}'
 
-# 质量优先(开重排)
-RERANK_ENABLED=true scripts/serve.sh
+# 默认即质量优先；也可显式指定
+RANKING_PROFILE=quality scripts/serve.sh
+
+# 低延迟 fast 路径
+RANKING_PROFILE=fast scripts/serve.sh
 ```
 
 ### 启用学术检索(OpenAlex 数据,经 Chukonu 服务)
@@ -355,7 +363,7 @@ curl -s -X POST localhost:8000/search -H "Authorization: Bearer $TOKEN" \
 
 ## 8. 现状与待办
 
-**已落地(相对调研文档的新增)**:L0 LLM 查询改写、SerpAPI 第三源、`FusionReranker` 信号融合 —— 三者代码均已实现并接入评测,其中信号融合经评测后默认关闭。**OpenAlex 学术检索**(L0 学术意图识别 + 内部独立重排 + 对外 `type=academic` evidence)已实现并通过端到端验证。**专利检索(houdutech 只读 ES)**(L0 专利意图识别 + 内部独立重排 + 对外 `type=patent` evidence + multi_match 中文检索)作为第二条垂直支线已实现并通过端到端验证。**provider 召回级缓存**(进程内 LRU+TTL,接口化预留 Redis;时效查询不缓存)已落地,避免重复调用搜索源 API。
+**已落地(相对调研文档的新增)**:L0 LLM 查询改写、SerpAPI 第三源，以及统一的 `quality/semantic/fast` 排序 Profile 和 `off/prefer/strict` 阈值策略。旧 `FusionReranker` 仅保留历史评测兼容。**OpenAlex 学术检索**(L0 学术意图识别 + 内部独立重排 + 对外 `type=academic` evidence)已实现并通过端到端验证。**专利检索(houdutech 只读 ES)**(L0 专利意图识别 + 内部独立重排 + 对外 `type=patent` evidence + multi_match 中文检索)作为第二条垂直支线已实现并通过端到端验证。**provider 召回级缓存**(进程内 LRU+TTL,接口化预留 Redis;时效查询不缓存)已落地,避免重复调用搜索源 API。
 
 **与调研的关键差异**:
 

@@ -24,6 +24,20 @@ from src.models import SearchResponse
 
 _CACHE_DIR = "eval/cache"
 _REPORT_PATH = "eval/e2e_report.md"
+_CACHE_KEY_VERSION = "e2e-search-v2-ranking-options"
+
+_SEARCH_OPTION_FIELDS = (
+    "include_academic",
+    "include_patent",
+    "ranking_profile",
+    "rerank_enabled",
+    "rerank_backend",
+    "rerank_model",
+    "rerank_threshold",
+    "rerank_threshold_mode",
+    "fusion_enabled",
+    "rewrite_enabled",
+)
 
 _TIMELY_HINTS = re.compile(
     r"今天|今日|本周|这周|本月|今年|最近|最新|近期|实时|"
@@ -75,16 +89,7 @@ def _expected(row: dict) -> Dict[str, bool]:
 
 def _search_payload(row: dict, args: argparse.Namespace) -> dict:
     payload: Dict[str, Any] = {"query": row["query"], "top_k": args.k}
-    for key in (
-        "include_academic",
-        "include_patent",
-        "rerank_enabled",
-        "rerank_backend",
-        "rerank_model",
-        "rerank_threshold",
-        "fusion_enabled",
-        "rewrite_enabled",
-    ):
+    for key in _SEARCH_OPTION_FIELDS:
         value = getattr(args, key, None)
         if value is not None:
             payload[key] = value
@@ -92,7 +97,21 @@ def _search_payload(row: dict, args: argparse.Namespace) -> dict:
 
 
 def _cache_key(payload: dict, endpoint: str) -> str:
-    raw = json.dumps({"endpoint": endpoint or "inprocess", "payload": payload}, sort_keys=True)
+    # Version the key whenever request/response semantics change. Keep the two
+    # canonical ranking controls explicit even when they are absent (server
+    # defaults), so cached runs cannot be confused with the pre-F01 schema.
+    raw = json.dumps(
+        {
+            "version": _CACHE_KEY_VERSION,
+            "endpoint": endpoint or "inprocess",
+            "payload": payload,
+            "ranking_options": {
+                "ranking_profile": payload.get("ranking_profile"),
+                "rerank_threshold_mode": payload.get("rerank_threshold_mode"),
+            },
+        },
+        sort_keys=True,
+    )
     return hashlib.sha1(raw.encode("utf-8")).hexdigest()
 
 
@@ -154,10 +173,12 @@ def _engine_kwargs(payload: dict) -> dict:
         "top_k": payload["top_k"],
         "include_academic": payload.get("include_academic"),
         "include_patent": payload.get("include_patent"),
+        "ranking_profile": payload.get("ranking_profile"),
         "rerank_enabled": payload.get("rerank_enabled"),
         "rerank_backend": payload.get("rerank_backend"),
         "rerank_model": payload.get("rerank_model"),
         "rerank_threshold": payload.get("rerank_threshold"),
+        "rerank_threshold_mode": payload.get("rerank_threshold_mode"),
         "fusion_enabled": payload.get("fusion_enabled"),
         "rewrite_enabled": payload.get("rewrite_enabled"),
     }
@@ -235,6 +256,8 @@ def build_report(
         f"- mode: `{mode}`",
         f"- judge: {'off (--no-judge)' if not has_judge else args.judge_model}",
         f"- latency_budget_p95: {args.latency_budget_ms} ms",
+        f"- ranking_profile: `{args.ranking_profile or 'server-default'}`",
+        f"- rerank_threshold_mode: `{args.rerank_threshold_mode or 'server-default'}`",
         "",
         "## 总览",
         "| Final | BundleQuality | Route | RequiredEvidence | P95 latency | LatencyScore |",
@@ -320,11 +343,33 @@ def main() -> None:
     ap.add_argument("--latency-budget-ms", type=int, default=8000)
     ap.add_argument("--include-academic", type=_bool_arg, default=None)
     ap.add_argument("--include-patent", type=_bool_arg, default=None)
-    ap.add_argument("--rerank-enabled", type=_bool_arg, default=None)
+    ap.add_argument(
+        "--ranking-profile",
+        choices=("fast", "semantic", "quality"),
+        default=None,
+        help="canonical ranking strategy; omit to use the server default",
+    )
+    ap.add_argument(
+        "--rerank-enabled",
+        type=_bool_arg,
+        default=None,
+        help="legacy alias: false selects fast",
+    )
     ap.add_argument("--rerank-backend", default=None)
     ap.add_argument("--rerank-model", default=None)
     ap.add_argument("--rerank-threshold", type=float, default=None)
-    ap.add_argument("--fusion-enabled", type=_bool_arg, default=None)
+    ap.add_argument(
+        "--rerank-threshold-mode",
+        choices=("off", "prefer", "strict"),
+        default=None,
+        help="off=no threshold, prefer=passing results first with backfill, strict=hard filter",
+    )
+    ap.add_argument(
+        "--fusion-enabled",
+        type=_bool_arg,
+        default=None,
+        help="legacy alias: true=quality, false=semantic",
+    )
     ap.add_argument("--rewrite-enabled", type=_bool_arg, default=None)
     args = ap.parse_args()
 

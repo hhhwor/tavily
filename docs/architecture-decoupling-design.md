@@ -98,18 +98,19 @@ flowchart TD
 
 ### 3.2 P0：重构前必须处理
 
-#### F-01 公开排序配置与执行行为不一致
+#### F-01 公开排序配置与执行行为不一致（已解决）
 
-`fusion_enabled` 在 [API 请求模型](../src/api.py#L124)、UI、全局配置和 [Engine 方法签名](../src/engine.py#L702) 中均存在，但 `SearchEngine.search` 没有读取该值；真正包含 `FusionReranker` 的 [build_reranker](../src/pipeline/rerank.py#L1156) 也不在生产调用链上。
+2026-07-17 已将生产排序入口收敛为规范配置 `ranking_profile` 与
+`rerank_threshold_mode`，并补充兼容解析和行为测试：
 
-`rerank_threshold` 的 API 描述声称“低于此分丢弃”，但 [rerank_domain](../src/pipeline/rerank.py#L421) 只记录是否过阈值并附加 bonus，不会剔除低分项；现有学术测试还要求候选回填。这已经不是内部实现细节，而是公开契约偏差。
+- `quality`（默认）：文本相关性与 Web RRF / 学术元数据 / 专利元数据融合，保持修复前真实生产排序的默认行为。
+- `semantic`：启用文本 scorer，但领域辅助特征权重为零。
+- `fast`：不调用文本 scorer；Web 使用 RRF，学术和专利使用来源原始分。
+- 阈值始终作用于融合前的文本相关性分。`off` 不应用阈值，`prefer`（默认）把达标项置前并用低分项回填到 `top_k`，`strict` 才硬过滤低分项。
+- `fast` 或 scorer 降级为 NoOp 时跳过阈值，并返回 `THRESHOLD_SKIPPED_NO_SCORER` 诊断，不把预期降级误报成 partial failure。
+- 旧字段继续作为兼容别名：`rerank_enabled=false` 选择 `fast`；非 fast 场景中 `fusion_enabled=true/false` 分别选择 `quality/semantic`。显式新旧配置互相矛盾时拒绝请求，不再静默忽略。
 
-处理建议：
-
-- 先增加两组行为刻画测试，明确当前真实结果。
-- 决定阈值语义是“硬过滤”还是“软门槛+回填”，使字段名、文档和实现一致。
-- 将多个布尔开关收敛为服务端允许的 `RankingProfile`，例如 `fast / quality / off`。
-- 所有公开配置都必须有“改变输入后可观察到行为变化”的契约测试；无效配置应删除或明确废弃。
+旧的 `FusionReranker` / `ThresholdReranker` 仍供历史评测路径兼容，但生产领域重排只使用上述一条规范路径。后续删除旧实现前，需先迁移 `eval/run_eval.py`。
 
 #### F-02 组合根位于模块导入阶段
 
@@ -297,9 +298,10 @@ class SearchUseCase(Protocol):
 
 ## 5. 渐进式重构计划
 
-### Phase 0：冻结行为与修正契约
+### Phase 0：冻结行为与修正契约（进行中；F-01 已完成）
 
-- 为 `fusion_enabled`、threshold 语义、REST/MCP 输出差异、缓存不污染和输入对象不变补测试。
+- [x] F-01：统一 Ranking Profile 与 threshold 语义，并补参数解析、排序行为和兼容性测试。
+- [ ] 为 REST/MCP 输出差异、缓存不污染和输入对象不变补测试。
 - 修复无效开关，限制模型选择，增加统一错误脱敏。
 - 把当前未跟踪的 Trust 测试纳入版本控制。
 - 记录一份固定语料的排序和 Evidence golden baseline。

@@ -5,7 +5,8 @@
 #   scripts/serve.sh                 # 前台启动(Ctrl+C 退出)
 #   scripts/serve.sh -d              # 后台启动(nohup,日志写 /tmp/se.log)
 #   HOST=127.0.0.1 PORT=8080 scripts/serve.sh   # 自定义监听地址/端口
-#   RERANK_ENABLED=true scripts/serve.sh        # 质量优先(开 cross-encoder 重排)
+#   RANKING_PROFILE=quality scripts/serve.sh    # 质量优先(默认)
+#   RANKING_PROFILE=fast scripts/serve.sh       # 低延迟,不调用文本重排模型
 #
 # 远端访问:EC2 无公网 IP,在你本地电脑开 SSH 隧道后用浏览器访问 localhost:
 #   ssh -i <密钥.pem> -N -L ${PORT:-8000}:localhost:${PORT:-8000} ec2-user@<EC2地址>

@@ -12,7 +12,7 @@ anyio.to_thread 卸到线程池,避免阻塞事件循环影响并发请求。
 from __future__ import annotations
 
 import os
-from typing import Any, Optional
+from typing import Any, Literal, Optional
 
 import anyio
 from mcp.server.fastmcp import FastMCP
@@ -81,6 +81,9 @@ def build_mcp(engine: SearchEngine) -> FastMCP:
         top_k: int = 10,
         include_academic: Optional[bool] = None,
         include_patent: Optional[bool] = None,
+        ranking_profile: Optional[Literal["fast", "semantic", "quality"]] = None,
+        rerank_threshold: Optional[float] = None,
+        rerank_threshold_mode: Optional[Literal["off", "prefer", "strict"]] = None,
         rerank: Optional[bool] = None,
         include_pdf_text: bool = False,
         pdf_text_mode: Optional[str] = None,
@@ -90,7 +93,10 @@ def build_mcp(engine: SearchEngine) -> FastMCP:
     ) -> dict[str, Any]:
         """query: 检索词。top_k: 返回条数(默认 10)。
         include_academic / include_patent: None=按查询意图自动判定,true=强制开,false=强制关。
-        rerank: None=服务端默认,true=开 cross-encoder 重排(质量更高,慢数秒),false=走 RRF 快路径。
+        ranking_profile: fast=快速先验排序,semantic=纯语义重排,quality=语义+领域信号。
+        rerank_threshold: 0-1 的语义相关性阈值。0 等同关闭阈值。
+        rerank_threshold_mode: off=不使用,prefer=达标项优先并回填,strict=删除未达标项。
+        rerank: 已废弃的兼容别名;None=服务端默认,true=启用,false=fast。
         include_pdf_text: true 时对重排后的前几篇学术结果同步补 PDF 正文。
         pdf_text_mode: cached 只读缓存,sync 允许本次请求下载解析。
         trust_mode: annotate 补可信 Phase 0 标注;off 返回旧 evidence 结构。"""
@@ -99,7 +105,10 @@ def build_mcp(engine: SearchEngine) -> FastMCP:
         resp = await anyio.to_thread.run_sync(
             lambda: engine.search(
                 query, top_k, include_academic, include_patent,
+                ranking_profile=ranking_profile,
                 rerank_enabled=rerank,
+                rerank_threshold=rerank_threshold,
+                rerank_threshold_mode=rerank_threshold_mode,
                 include_pdf_text=include_pdf_text,
                 pdf_text_mode=pdf_text_mode,
                 pdf_max_results=pdf_max_results,
@@ -122,6 +131,10 @@ def build_mcp(engine: SearchEngine) -> FastMCP:
             "meta": {
                 "providers_used": resp.providers_used,
                 "reranker": resp.reranker,
+                "ranking_profile": resp.ranking_profile,
+                "rerank_threshold": resp.rerank_threshold,
+                "rerank_threshold_mode": resp.rerank_threshold_mode,
+                "ranking_warnings": resp.ranking_warnings,
                 "elapsed_ms": resp.elapsed_ms,
                 "counts": _evidence_counts(resp.evidence),
             },

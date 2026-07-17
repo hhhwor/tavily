@@ -1,7 +1,7 @@
 """归一化数据模型 —— 所有 Provider / 管线层共用。"""
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Literal, Optional
 
 from pydantic import BaseModel, Field
 
@@ -384,6 +384,11 @@ class SearchResponse(BaseModel):
     count: int
     providers_used: List[str]
     reranker: str
+    # 带默认值以兼容 F01 之前写入的评测/响应缓存。
+    ranking_profile: Literal["fast", "semantic", "quality"] = "quality"
+    rerank_threshold: float = 0.3
+    rerank_threshold_mode: Literal["off", "prefer", "strict"] = "prefer"
+    ranking_warnings: List[str] = Field(default_factory=list)
     elapsed_ms: int
 
 

@@ -1,13 +1,14 @@
-"""重排序:cross-encoder 段落级重排 + sigmoid 归一化 + 阈值过滤。
+"""领域重排序:可选文本 scorer、结构化信号融合与显式阈值策略。
 
 段落级重排:
   1. 文档先切 chunk(src.pipeline.chunk)
   2. 逐块与 query 组 pair 交给 cross-encoder 打分
   3. 每文档取 chunk 最高分(max-pooling)
   4. sigmoid 归一化到 0-1
-  5. 低于阈值的结果被过滤
+  5. 按 off / prefer / strict 应用融合前文本分阈值
 
-回退:reranker 不可用时自动降级为 NoOpReranker,保证管线始终可跑。
+Profile:quality 融合文本与领域信号;semantic 只用文本;fast 不调用文本模型。
+回退:scorer 不可用时自动降级为 NoOpReranker,保证管线始终可跑。
 """
 from __future__ import annotations
 
@@ -24,6 +25,12 @@ from src.models import AcademicResult, PatentResult, SearchResult
 from src.pipeline.chunk import chunk_text
 from src.pipeline.dedup import normalize_url
 from src.pipeline.fusion import rrf_fuse
+from src.pipeline.ranking_options import (
+    RankingProfile,
+    ThresholdMode,
+    parse_ranking_profile,
+    parse_threshold_mode,
+)
 
 
 T = TypeVar("T", bound=SearchResult)
@@ -40,6 +47,7 @@ STATUS = "status"
 
 class Reranker(ABC):
     name: str = "base"
+    supports_text_scoring: bool = True
 
     @abstractmethod
     def rerank(self, query: str, results: List[SearchResult], top_k: int) -> List[SearchResult]:
@@ -59,6 +67,7 @@ class NoOpReranker(Reranker):
     """不重排:按来源原始分(若有)降序,否则保持原顺序。"""
 
     name = "noop"
+    supports_text_scoring = False
 
     def rerank(self, query: str, results: List[SearchResult], top_k: int) -> List[SearchResult]:
         ordered = sorted(
@@ -311,6 +320,7 @@ class ThresholdReranker(Reranker):
         self._inner = inner
         self._threshold = threshold
         self.name = inner.name
+        self.supports_text_scoring = inner.supports_text_scoring
 
     def rerank(self, query: str, results: List[SearchResult], top_k: int) -> List[SearchResult]:
         ranked = self._inner.rerank(query, results, top_k)
@@ -400,7 +410,10 @@ class DomainConfig(Generic[T]):
     compress_fn: Callable[[T], str]
     feature_fns: Dict[str, FeatureFn[T]]
     weight_fn: Callable[[str, RerankContext], Dict[str, float]]
+    profile: RankingProfile = "quality"
     threshold: float = 0.3
+    threshold_mode: ThresholdMode = "prefer"
+    score_text: bool = True
     max_docs: Optional[int] = None
     prepare_fn: Optional[Callable[[List[T]], List[T]]] = None
     pass_bonus: float = 0.0
@@ -435,11 +448,20 @@ def rerank_domain(
     if not pool:
         return []
 
-    texts = [config.compress_fn(c) for c in pool]
-    text_scores = list(text_scorer.score(query, texts))
-    if len(text_scores) < len(pool):
-        text_scores.extend([0.0] * (len(pool) - len(text_scores)))
-    text_scores = text_scores[: len(pool)]
+    scorer_available = config.score_text and text_scorer.supports_text_scoring
+    if scorer_available:
+        texts = [config.compress_fn(c) for c in pool]
+        text_scores = list(text_scorer.score(query, texts))
+        if len(text_scores) != len(pool):
+            raise ValueError(
+                f"{config.name} scorer 返回 {len(text_scores)} 个分数，期望 {len(pool)} 个"
+            )
+    else:
+        text_scores = [0.0 for _ in pool]
+
+    threshold_mode: ThresholdMode = config.threshold_mode
+    if config.threshold <= 0 or not scorer_available:
+        threshold_mode = "off"
 
     weights = config.weight_fn(query, ctx)
     _validate_weights(config, weights)
@@ -451,15 +473,16 @@ def rerank_domain(
             name: clamp01(fn(c, i, pool, ctx))
             for name, fn in config.feature_fns.items()
         }
+        passed_threshold = text >= config.threshold
         final = weights[TEXT] * text + sum(weights[name] * features[name] for name in features)
-        if config.pass_bonus and text >= config.threshold:
+        if threshold_mode != "off" and config.pass_bonus and passed_threshold:
             final += config.pass_bonus
         scored.append(
             Scored(
                 key=config.key_fn(c, i),
                 text=text,
                 features=features,
-                passed_threshold=text >= config.threshold,
+                passed_threshold=passed_threshold,
                 final=clamp01(final),
             )
         )
@@ -471,7 +494,15 @@ def rerank_domain(
         tiebreaker = config.tiebreaker_fn(pool[i], i) if config.tiebreaker_fn else (i,)
         return (-scored[i].final, *tiebreaker)
 
-    order = sorted(range(len(pool)), key=sort_key)
+    base_order = sorted(range(len(pool)), key=sort_key)
+    if threshold_mode == "strict":
+        order = [i for i in base_order if scored[i].passed_threshold]
+    elif threshold_mode == "prefer":
+        passed = [i for i in base_order if scored[i].passed_threshold]
+        failed = [i for i in base_order if not scored[i].passed_threshold]
+        order = passed + failed
+    else:
+        order = base_order
     return [pool[i] for i in order][:top_k]
 
 
@@ -575,9 +606,23 @@ def build_web_config(
     text_weight: float = 0.85,
     rrf_weight: float = 0.15,
     pass_bonus: float = 0.02,
+    profile: str = "quality",
+    threshold_mode: str = "prefer",
 ) -> DomainConfig[SearchResult]:
+    effective_profile = parse_ranking_profile(profile)
+    effective_threshold_mode = parse_threshold_mode(threshold_mode)
+
     def weights(query: str, ctx: RerankContext) -> Dict[str, float]:
+        if effective_profile == "semantic":
+            return {TEXT: 1.0, PRIOR: 0.0}
+        if effective_profile == "fast":
+            return {TEXT: 0.0, PRIOR: 1.0}
         return {TEXT: text_weight, PRIOR: rrf_weight}
+
+    def tiebreaker(result: SearchResult, idx: int) -> Tuple[Any, ...]:
+        if effective_profile == "semantic":
+            return (_web_key(result, idx), idx)
+        return _web_tiebreaker(result, idx)
 
     return DomainConfig(
         name="web",
@@ -585,10 +630,13 @@ def build_web_config(
         compress_fn=lambda r: _compress_web_text(r, max_chars=max_chars),
         feature_fns={PRIOR: _web_prior_feature},
         weight_fn=weights,
+        profile=effective_profile,
         threshold=threshold,
+        threshold_mode=effective_threshold_mode,
+        score_text=effective_profile != "fast",
         prepare_fn=_stable_rrf_prepare,
         pass_bonus=pass_bonus,
-        tiebreaker_fn=_web_tiebreaker,
+        tiebreaker_fn=tiebreaker,
     )
 
 
@@ -617,6 +665,15 @@ def _academic_citations_feature(
         lambda p: math.log1p(max(0, p.citations)),
         default=0.0,
     )
+
+
+def _academic_source_score_feature(
+    result: AcademicResult,
+    idx: int,
+    pool: Sequence[AcademicResult],
+    ctx: RerankContext,
+) -> float:
+    return _feature_normalized(pool, idx, lambda p: p.score, default=0.0)
 
 
 def _academic_freshness_feature(
@@ -695,21 +752,50 @@ def build_academic_config(
     threshold: float = 0.3,
     max_docs: int = 25,
     max_chars: int = 480,
+    profile: str = "quality",
+    threshold_mode: str = "prefer",
 ) -> DomainConfig[AcademicResult]:
+    effective_profile = parse_ranking_profile(profile)
+    effective_threshold_mode = parse_threshold_mode(threshold_mode)
+
+    def weights(query: str, ctx: RerankContext) -> Dict[str, float]:
+        if effective_profile == "semantic":
+            return {
+                TEXT: 1.0, SOURCE_SCORE: 0.0, CITATIONS: 0.0,
+                FRESHNESS: 0.0, VENUE: 0.0, OA: 0.0,
+            }
+        if effective_profile == "fast":
+            return {
+                TEXT: 0.0, SOURCE_SCORE: 1.0, CITATIONS: 0.0,
+                FRESHNESS: 0.0, VENUE: 0.0, OA: 0.0,
+            }
+        return {SOURCE_SCORE: 0.0, **_academic_weights(query, ctx)}
+
+    def tiebreaker(result: AcademicResult, idx: int) -> Tuple[Any, ...]:
+        if effective_profile == "semantic":
+            return (_academic_key(result, idx), idx)
+        if effective_profile == "fast":
+            return (idx,)
+        return _academic_tiebreaker(result, idx)
+
     return DomainConfig(
         name="academic",
         key_fn=_academic_key,
         compress_fn=lambda p: _compress_academic_text(p, max_chars=max_chars),
         feature_fns={
+            SOURCE_SCORE: _academic_source_score_feature,
             CITATIONS: _academic_citations_feature,
             FRESHNESS: _academic_freshness_feature,
             VENUE: _academic_venue_feature,
             OA: _academic_oa_feature,
         },
-        weight_fn=_academic_weights,
+        weight_fn=weights,
+        profile=effective_profile,
         threshold=threshold,
+        threshold_mode=effective_threshold_mode,
+        score_text=effective_profile != "fast",
         max_docs=max_docs,
-        tiebreaker_fn=_academic_tiebreaker,
+        tiebreaker_fn=tiebreaker,
     )
 
 
@@ -815,7 +901,32 @@ def _patent_tiebreaker(result: PatentResult, idx: int) -> Tuple[Any, ...]:
 def build_patent_config(
     threshold: float = 0.3,
     max_chars: int = 520,
+    profile: str = "quality",
+    threshold_mode: str = "prefer",
 ) -> DomainConfig[PatentResult]:
+    effective_profile = parse_ranking_profile(profile)
+    effective_threshold_mode = parse_threshold_mode(threshold_mode)
+
+    def weights(query: str, ctx: RerankContext) -> Dict[str, float]:
+        if effective_profile == "semantic":
+            return {
+                TEXT: 1.0, SOURCE_SCORE: 0.0, FRESHNESS: 0.0,
+                CITATIONS: 0.0, STATUS: 0.0,
+            }
+        if effective_profile == "fast":
+            return {
+                TEXT: 0.0, SOURCE_SCORE: 1.0, FRESHNESS: 0.0,
+                CITATIONS: 0.0, STATUS: 0.0,
+            }
+        return _patent_weights(query, ctx)
+
+    def tiebreaker(result: PatentResult, idx: int) -> Tuple[Any, ...]:
+        if effective_profile == "semantic":
+            return (_patent_key(result, idx), idx)
+        if effective_profile == "fast":
+            return (idx,)
+        return _patent_tiebreaker(result, idx)
+
     return DomainConfig(
         name="patent",
         key_fn=_patent_key,
@@ -826,9 +937,12 @@ def build_patent_config(
             CITATIONS: _patent_citations_feature,
             STATUS: _patent_status_feature,
         },
-        weight_fn=_patent_weights,
+        weight_fn=weights,
+        profile=effective_profile,
         threshold=threshold,
-        tiebreaker_fn=_patent_tiebreaker,
+        threshold_mode=effective_threshold_mode,
+        score_text=effective_profile != "fast",
+        tiebreaker_fn=tiebreaker,
     )
 
 
@@ -858,6 +972,11 @@ class FusionReranker(Reranker):
         self._delta = delta
         self._authority = authority_weights or _DEFAULT_AUTHORITY
         self.name = inner.name
+        self.supports_text_scoring = inner.supports_text_scoring
+
+    def score(self, query: str, texts: Sequence[str]) -> List[float]:
+        """领域融合只作用于结果排序；文本打分能力由内部 scorer 提供。"""
+        return self._inner.score(query, texts)
 
     def _freshness_score(self, days_ago: Optional[int]) -> float:
         """新鲜度分数(0-1)。时效查询用指数衰减,非时效查询用线性衰减。"""
@@ -904,14 +1023,24 @@ class AcademicReranker(Reranker):
         max_docs: int = 25,
         max_chars: int = 480,
         threshold: float = 0.3,
+        profile: str = "quality",
+        threshold_mode: str = "prefer",
     ):
         self._inner = inner
         self._max_docs = max_docs
         self._max_chars = max_chars
         self._config = build_academic_config(
-            threshold=threshold, max_docs=max_docs, max_chars=max_chars
+            threshold=threshold,
+            max_docs=max_docs,
+            max_chars=max_chars,
+            profile=profile,
+            threshold_mode=threshold_mode,
         )
         self.name = f"academic:{inner.name}"
+        self.supports_text_scoring = inner.supports_text_scoring
+
+    def score(self, query: str, texts: Sequence[str]) -> List[float]:
+        return self._inner.score(query, texts)
 
     def rerank_with_context(
         self,
@@ -1047,6 +1176,8 @@ class WebReranker(Reranker):
         rrf_weight: float = 0.15,
         pass_bonus: float = 0.02,
         threshold: float = 0.3,
+        profile: str = "quality",
+        threshold_mode: str = "prefer",
     ):
         self._inner = inner
         self._max_chars = max_chars
@@ -1059,8 +1190,14 @@ class WebReranker(Reranker):
             text_weight=text_weight,
             rrf_weight=rrf_weight,
             pass_bonus=pass_bonus,
+            profile=profile,
+            threshold_mode=threshold_mode,
         )
         self.name = f"web:{inner.name}"
+        self.supports_text_scoring = inner.supports_text_scoring
+
+    def score(self, query: str, texts: Sequence[str]) -> List[float]:
+        return self._inner.score(query, texts)
 
     @staticmethod
     def _stable_fused(results: List[SearchResult]) -> List[SearchResult]:
@@ -1128,10 +1265,21 @@ class PatentReranker(Reranker):
         inner: Reranker,
         max_chars: int = 520,
         threshold: float = 0.3,
+        profile: str = "quality",
+        threshold_mode: str = "prefer",
     ):
         self._inner = inner
-        self._config = build_patent_config(threshold=threshold, max_chars=max_chars)
+        self._config = build_patent_config(
+            threshold=threshold,
+            max_chars=max_chars,
+            profile=profile,
+            threshold_mode=threshold_mode,
+        )
         self.name = f"patent:{inner.name}"
+        self.supports_text_scoring = inner.supports_text_scoring
+
+    def score(self, query: str, texts: Sequence[str]) -> List[float]:
+        return self._inner.score(query, texts)
 
     def rerank_with_context(
         self,

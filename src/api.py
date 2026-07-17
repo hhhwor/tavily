@@ -14,7 +14,7 @@ from typing import List, Literal, Optional
 
 from fastapi import FastAPI, Request
 from fastapi.responses import FileResponse, JSONResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from src.config import settings
 from src.engine import SearchEngine
@@ -26,6 +26,7 @@ from src.models import (
     SearchResponse,
     VerifyResponse,
 )
+from src.pipeline.ranking_options import resolve_ranking_options
 
 _STATIC_DIR = os.path.join(os.path.dirname(__file__), "static")
 
@@ -113,20 +114,60 @@ class SearchRequest(BaseModel):
     )
     pdf_timeout_ms: Optional[int] = Field(None, ge=1000, le=60000, description="单篇 PDF 同步抽取预算")
     # 以下参数留空(None)则用服务端全局默认;网页端「高级选项」可按请求覆盖
-    rerank_enabled: Optional[bool] = Field(None, description="是否启用 cross-encoder 重排")
+    ranking_profile: Optional[Literal["fast", "semantic", "quality"]] = Field(
+        None,
+        description=(
+            "排序档位:fast=无文本模型;semantic=纯文本相关性;"
+            "quality=文本相关性与领域辅助信号融合"
+        ),
+    )
+    rerank_enabled: Optional[bool] = Field(
+        None,
+        description="兼容旧参数:false 映射 fast,true 启用服务端非 fast 档位",
+        json_schema_extra={"deprecated": True},
+    )
     rerank_backend: Optional[str] = Field(
         None, description="重排后端:siliconflow / bge / flashrank / none"
     )
     rerank_model: Optional[str] = Field(None, description="重排模型,如 BAAI/bge-reranker-v2-m3")
     rerank_threshold: Optional[float] = Field(
-        None, ge=0, le=1, description="相关性阈值,低于此分丢弃(0=不过滤)"
+        None,
+        ge=0,
+        le=1,
+        description="文本相关性阈值；具体过滤/回填行为由 rerank_threshold_mode 决定",
     )
-    fusion_enabled: Optional[bool] = Field(None, description="是否启用辅助信号融合(新鲜度/权威度)")
+    rerank_threshold_mode: Optional[Literal["off", "prefer", "strict"]] = Field(
+        None,
+        description="阈值模式:off=关闭,prefer=达标优先且不足时回填,strict=删除未达标项",
+    )
+    fusion_enabled: Optional[bool] = Field(
+        None,
+        description="兼容旧参数:true 映射 quality,false 映射 semantic",
+        json_schema_extra={"deprecated": True},
+    )
     rewrite_enabled: Optional[bool] = Field(None, description="是否启用 L0 LLM 查询改写")
     trust_mode: Literal["off", "annotate"] = Field(
         "annotate",
         description="可信证据 Phase 0:off=保持旧 evidence;annotate=补 provenance/locator/quality/边界",
     )
+
+    @model_validator(mode="after")
+    def validate_ranking_options(self) -> "SearchRequest":
+        """让 REST 冲突以 422 返回；Engine 仍会用同一解析器生成有效配置。"""
+        resolve_ranking_options(
+            default_profile=settings.ranking_profile,
+            default_threshold=settings.rerank_threshold,
+            default_threshold_mode=settings.rerank_threshold_mode,
+            ranking_profile=self.ranking_profile,
+            rerank_enabled=self.rerank_enabled,
+            fusion_enabled=self.fusion_enabled,
+            # 与 Engine 一致地校验最终后端；否则服务端默认 none 与非 fast
+            # 请求的冲突会绕过 422，直到路由执行时才抛出 ValueError。
+            rerank_backend=self.rerank_backend or settings.rerank_backend,
+            rerank_threshold=self.rerank_threshold,
+            rerank_threshold_mode=self.rerank_threshold_mode,
+        )
+        return self
 
 
 class VerifyRequest(BaseModel):
@@ -152,10 +193,13 @@ def health() -> dict:
         "mcp": _mcp_app is not None,
         "cache": engine.cache.stats() if engine.cache else {"enabled": False},
         "defaults": {
+            "ranking_profile": settings.ranking_profile,
             "rerank_enabled": settings.rerank_enabled,
             "rerank_backend": settings.rerank_backend,
             "rerank_model": settings.rerank_model,
             "rerank_threshold": settings.rerank_threshold,
+            "rerank_threshold_mode": settings.rerank_threshold_mode,
+            "ranking_warnings": list(settings.ranking_warnings),
             "fusion_enabled": settings.fusion_enabled,
             "rewrite_enabled": settings.rewrite_enabled,
             "trust_mode": "annotate",
@@ -171,10 +215,12 @@ def search(req: SearchRequest) -> SearchResponse:
         req.top_k,
         req.include_academic,
         req.include_patent,
+        ranking_profile=req.ranking_profile,
         rerank_enabled=req.rerank_enabled,
         rerank_backend=req.rerank_backend,
         rerank_model=req.rerank_model,
         rerank_threshold=req.rerank_threshold,
+        rerank_threshold_mode=req.rerank_threshold_mode,
         fusion_enabled=req.fusion_enabled,
         rewrite_enabled=req.rewrite_enabled,
         trust_mode=req.trust_mode,

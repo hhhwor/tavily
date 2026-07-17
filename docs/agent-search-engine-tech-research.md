@@ -29,7 +29,7 @@ Tavily 对外暴露的可组合 API:`Search`(发现页面)、`Extract`(抓正文
 ### 0.1 已落地的数据流
 
 ```
-POST /search {query, top_k}
+POST /search {query, top_k, ranking_profile?, rerank_threshold_mode?}
       │
       ▼
  L0 查询理解(规则版)              ── 规范化(NFKC/压空白)+ 时效识别 + 输入校验
@@ -40,8 +40,10 @@ POST /search {query, top_k}
       │  两源均直接返回正文摘要 → L2 抓取层省略
       ▼
  跨源处理
-   ├─ 重排开启(默认):dedup(URL 归一化去重) → 文档分块(chunk) → 逐块 BGE 打分 → max-pooling → sigmoid 归一化 → 阈值过滤
-   └─ 重排关闭:RRF 融合(Σ 1/(k+rank),与来源分数无关,避免跨源失真)
+   ├─ quality(默认):文本相关性 + 领域信号
+   ├─ semantic:仅文本相关性
+   └─ fast:不调用文本模型;Web RRF,垂直源按来源原始分
+      阈值:off=关闭 / prefer=达标优先并回填 / strict=硬过滤
       │
       ▼
  归一化 JSON  {query, results:[{url,title,snippet,content,date,site,source,rerank_score}], ...}
@@ -62,7 +64,8 @@ src/
     chunk.py               # L3 文档分块:段落→句子→字符三级拆分,合并短段落+重叠
     dedup.py               # URL 归一化跨源去重
     fusion.py              # RRF 多源融合(provider_rank)
-    rerank.py              # 段落级重排:BGE/FlashRank(逐chunk打分→max-pooling→sigmoid→阈值过滤) + NoOp 兜底
+    ranking_options.py     # quality/semantic/fast 与 off/prefer/strict 的规范配置和旧字段兼容
+    rerank.py              # 段落级文本打分 + 领域排序策略 + NoOp 兜底
   engine.py              # 编排:多源并发→去重/融合→重排→TopK
   api.py                 # FastAPI:GET /(网页) · POST /search · GET /health
   static/index.html      # 网页搜索界面(单文件,无构建依赖)
@@ -80,7 +83,7 @@ requirements.txt         # fastapi/uvicorn/pydantic/requests/flashrank/sentence-
 | 搜索源 L1 | **腾讯 SearchPro + 百度千帆 AI 搜索** | 均已验证;中文覆盖好、自带正文 |
 | 抓取 L2 | **省略** | 两源直接返回正文摘要 |
 | 去重 L3 | URL 归一化去重 / RRF 融合 / **文档分块(chunk)** ✅ | chunk 供段落级重排使用 |
-| 重排 L4 | **SiliconFlow API (BGE-v2-m3)**(默认,免费) / 本地 BGE / FlashRank | 段落级重排:逐 chunk 打分→max-pooling→sigmoid→阈值过滤 |
+| 重排 L4 | `quality/semantic/fast`;SiliconFlow API (BGE-v2-m3) / 本地 BGE / FlashRank | 段落级打分 + 按领域信号;阈值支持 `off/prefer/strict` |
 | 合成 L5 | 未做 | 留 hook |
 | 缓存/安全/可观测 | 未做 | 后续 |
 
@@ -153,11 +156,11 @@ ssh -i <密钥.pem> -N -L 8000:localhost:8000 ec2-user@<EC2地址>
 
 **L4(重排)**
 
-当前:段落级重排([src/pipeline/rerank.py](../src/pipeline/rerank.py))——逐 chunk 打分→max-pooling→sigmoid 归一化→阈值过滤。
+当前:段落级重排([src/pipeline/rerank.py](../src/pipeline/rerank.py))——逐 chunk 打分→max-pooling→sigmoid 归一化，并通过 `quality/semantic/fast` Profile 与 `off/prefer/strict` 阈值策略控制生产行为。
 
 - [x] 🔴 **段落级重排,替代「前 2000 字符硬截断」** ✅ —— 文档切 chunk 后逐块与 query 组 pair 交给 cross-encoder 打分,每文档取 chunk 最高分(max-pooling)。彻底解决 BGE 512 token 上限 vs 2000 字符截断的问题。
-- [x] 🔴 **相关性阈值过滤** ✅ —— sigmoid 归一化到 0–1,低于 RERANK_THRESHOLD(默认 0.3)的结果被丢弃,保持 agent 上下文纯净。
-- [ ] 🟡 **辅助信号融合** —— 排序不只看 BGE 文本分,线性融合新鲜度(用 L0 的 `recency`/`time_sensitive`)、来源原始排名、站点权威度。时效查询给新文档加权。
+- [x] 🔴 **相关性阈值策略** ✅ —— 阈值作用于融合前文本分:`off` 关闭，默认 `prefer` 把达标项置前并用低分项回填，`strict` 才硬过滤；NoOp scorer 自动跳过。
+- [x] 🟡 **按领域辅助信号融合** ✅ —— `quality` 融合 Web RRF、论文引用/新鲜度/venue/OA 与专利来源分/新鲜度/引用/状态；`semantic` 只看文本，`fast` 不调用文本模型。旧通用 `FusionReranker` 的负优化结论不直接等同于新 `quality` Profile，需重新 A/B。
 - [ ] 🟡 **MMR 多样性** —— rerank 后去近重复、提升结果多样性(与 L3 近重复去重呼应)。
 - [ ] 🟡 **混合召回再重排** —— 候选量大时先 BM25/dense + RRF 粗筛 top-N 再交 cross-encoder(当前候选 ~20,暂不急)。
 - [ ] 🟢 **GPU 推理优化** —— fp16/bf16 + 调 batch_size(~2x);BGE-v2-m3 支持指定推理层数(layerwise)加速。
@@ -166,7 +169,7 @@ ssh -i <密钥.pem> -N -L 8000:localhost:8000 ec2-user@<EC2地址>
 - [ ] 🟢 **rerank 分数缓存** —— `(query, url) → score` 短 TTL 缓存,重复查询省算力。
 - [ ] 🟢 **超时降级** —— rerank 超时回退 RRF 顺序,保证可用性。
 
-> ✅ **L3 分块 → L4 段落级重排 + 阈值过滤** 已落地。下一步建议:扩评测集 + 人工抽检 judge 一致性,验证质量提升。
+> ✅ **L3 分块 → L4 段落级重排 + Profile + 明确阈值策略** 已落地。下一步建议:用版本化 E2E 缓存对三个 Profile 做扩评测集 A/B，并人工抽检 judge 一致性。
 
 ---
 

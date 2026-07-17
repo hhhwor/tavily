@@ -21,7 +21,10 @@
 | `top_k` | int | `10` | 各检索分支重排保留上限;最终按相关性混排到 `evidence[]` |
 | `include_academic` | bool? | `null` | 学术检索(OpenAlex):`null`=按意图自动,`true`=强制开,`false`=强制关 |
 | `include_patent` | bool? | `null` | 专利检索(ES):同上 |
-| `rerank` | bool? | `null` | `null`=服务端默认,`true`=开 cross-encoder 重排(质量更高,慢数秒),`false`=走 RRF 快路径 |
+| `ranking_profile` | string? | `null` | 规范排序档位:`quality`=文本+领域信号,`semantic`=纯文本,`fast`=不调用文本模型;`null` 用服务端默认(`quality`) |
+| `rerank_threshold` | float? | `null` | 融合前文本分的门槛,范围 0–1;`0` 等同关闭 |
+| `rerank_threshold_mode` | string? | `null` | `off`=关闭,`prefer`=达标优先并回填,`strict`=硬过滤;`null` 用默认 `prefer` |
+| `rerank` | bool? | `null` | 旧兼容别名:`false → fast`;新调用应使用 `ranking_profile` |
 | `include_pdf_text` | bool | `false` | 是否对重排后的前几篇学术结果同步补 PDF 正文 |
 | `pdf_text_mode` | string? | `null` | `cached`=只读缓存,`sync`=允许本次下载解析 |
 | `pdf_max_results` | int? | `null` | 本次最多富化几篇 PDF |
@@ -76,8 +79,11 @@
       "quality": {"level": "citable", "is_original": true, "has_stable_locator": true, "can_support_key_claim": true, "reasons": []}
     }
   ],
-  "meta": {"providers_used", "reranker", "elapsed_ms",
-           "counts": {"web", "academic", "patent"}}
+  "meta": {"providers_used": ["tencent", "openalex_local"], "reranker": "siliconflow:bge-reranker-v2-m3",
+           "ranking_profile": "quality", "rerank_threshold": 0.3,
+           "rerank_threshold_mode": "prefer", "ranking_warnings": [],
+           "elapsed_ms": 2710,
+           "counts": {"web": 3, "academic": 2, "patent": 0}}
 }
 ```
 
@@ -90,6 +96,10 @@
 > Agent 应先看 `partial_failure` 和 `answerability.gaps`。`partial_failure=true` 不代表完全失败,而是至少一路 provider / rerank / PDF 富化失败;可用证据仍在 `evidence[]`。`answerability.status=not_answerable` 时不应直接生成确定性回答。
 >
 > `trust_mode=annotate` 是 Phase 0 证据分级，不是陈述级事实验证。`provider_extract` 通常为 `limited`，论文/专利摘要和搜索 snippet 为 `discovery_only`；只有带稳定原文 locator 的全文片段才可能为 `citable`。
+>
+> 阈值判断发生在领域信号融合之前。默认 `prefer` 会保留低分候选作为回填；只有显式 `strict` 才可能返回少于 `top_k`。`fast` 或 scorer 降级为 NoOp 时阈值自动关闭并返回 `THRESHOLD_SKIPPED_NO_SCORER` 诊断。
+>
+> `ranking_profile` 是权威字段。若同时传入旧 `rerank` 且含义矛盾（例如 `ranking_profile=quality, rerank=false`），工具调用会报参数冲突，而不是静默选择其中一个。
 
 ---
 
@@ -233,6 +243,8 @@ async def main():
         async with ClientSession(r, w) as s:
             await s.initialize()
             res = await s.call_tool("search", {"query": "什么是 RAG", "top_k": 3,
+                                               "ranking_profile": "quality",
+                                               "rerank_threshold_mode": "prefer",
                                                "include_patent": False})
             print(json.loads(res.content[0].text)["meta"]["counts"])
 
@@ -280,7 +292,7 @@ curl -s localhost:8000/health  # auth / mcp / providers 状态
 # 停止:kill <pid>(启动信息里给出)
 ```
 
-相关环境变量(`.env`):`API_AUTH_TOKEN`(鉴权)、`MCP_ALLOWED_HOSTS` / `MCP_ALLOWED_ORIGINS` / `MCP_DNS_REBINDING_PROTECTION`(反代/隧道放行)、`RERANK_ENABLED`(质量↑/延迟↑)。详见 [tech-route-summary.md](./tech-route-summary.md) §5/§7。
+相关环境变量(`.env`):`API_AUTH_TOKEN`(鉴权)、`MCP_ALLOWED_HOSTS` / `MCP_ALLOWED_ORIGINS` / `MCP_DNS_REBINDING_PROTECTION`(反代/隧道放行)、`RANKING_PROFILE=quality|semantic|fast`、`RERANK_THRESHOLD` 与 `RERANK_THRESHOLD_MODE=off|prefer|strict`。详见 [tech-route-summary.md](./tech-route-summary.md) §5/§7。
 
 ---
 
@@ -288,5 +300,5 @@ curl -s localhost:8000/health  # auth / mcp / providers 状态
 
 - **token 是唯一网关**:URL 不是秘密,token 才是;泄漏即失守。轮换:改 `.env` 的 `API_AUTH_TOKEN` 后重启。
 - **别裸绑明文公网**:对外要么走 SSH 隧道(已加密),要么走 cloudflared / nginx+TLS(HTTPS);明文 HTTP 暴露公网会泄露 token。
-- **延迟**:开重排(`rerank=true` 或服务端默认开)单次约 +2~5s;低延迟可走 RRF 快路径。
+- **延迟**:`quality` / `semantic` 调用文本 scorer,单次通常增加约 2–5s;低延迟请选择 `ranking_profile=fast`。
 - **专利当事人字段**:中国授权(CN-B)文献的 `applicant`/`inventor` 曾大面积缺失,已随上游索引升级到 `epo_docdb_v2_20260620`(读别名 `epo_docdb_read`)修复——当事人现为 object `{original/docdb/docdba}`,中文原文名也可检索(详见 [patent-es-cn-b-missing-applicant-bug.md](./patent-es-cn-b-missing-applicant-bug.md))。

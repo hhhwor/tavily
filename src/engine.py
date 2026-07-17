@@ -45,6 +45,7 @@ from src.pipeline.rerank import (
     build_rerank_context,
     build_text_scorer,
 )
+from src.pipeline.ranking_options import resolve_ranking_options
 from src.providers.base import SearchProvider
 from src.trust import annotate_evidence, build_claim_verifier, build_search_boundary
 
@@ -708,6 +709,8 @@ class SearchEngine:
         rerank_model: Optional[str] = None,
         rerank_threshold: Optional[float] = None,
         fusion_enabled: Optional[bool] = None,
+        ranking_profile: Optional[str] = None,
+        rerank_threshold_mode: Optional[str] = None,
         rewrite_enabled: Optional[bool] = None,
         trust_mode: str = "annotate",
         include_pdf_text: bool = False,
@@ -723,13 +726,36 @@ class SearchEngine:
         t0 = time.time()
         query_time = datetime.now(timezone.utc)
 
-        text_scorer = self._select_text_scorer(
-            rerank_enabled, rerank_backend, rerank_model
+        ranking = resolve_ranking_options(
+            default_profile=settings.ranking_profile,
+            default_threshold=settings.rerank_threshold,
+            default_threshold_mode=settings.rerank_threshold_mode,
+            ranking_profile=ranking_profile,
+            rerank_enabled=rerank_enabled,
+            fusion_enabled=fusion_enabled,
+            rerank_backend=rerank_backend or settings.rerank_backend,
+            rerank_threshold=rerank_threshold,
+            rerank_threshold_mode=rerank_threshold_mode,
         )
-        threshold = settings.rerank_threshold if rerank_threshold is None else rerank_threshold
-        web_reranker = WebReranker(text_scorer, threshold=threshold)
-        academic_reranker = AcademicReranker(text_scorer, threshold=threshold)
-        patent_reranker = PatentReranker(text_scorer, threshold=threshold)
+        default_text_scoring = settings.ranking_profile != "fast"
+        enabled_override = (
+            None
+            if ranking.text_scoring_enabled == default_text_scoring
+            else ranking.text_scoring_enabled
+        )
+        text_scorer = self._select_text_scorer(
+            enabled_override, rerank_backend, rerank_model
+        )
+        if not text_scorer.supports_text_scoring and ranking.threshold_mode != "off":
+            ranking = ranking.disable_threshold("THRESHOLD_SKIPPED_NO_SCORER")
+        reranker_options = {
+            "profile": ranking.profile,
+            "threshold": ranking.threshold,
+            "threshold_mode": ranking.threshold_mode,
+        }
+        web_reranker = WebReranker(text_scorer, **reranker_options)
+        academic_reranker = AcademicReranker(text_scorer, **reranker_options)
+        patent_reranker = PatentReranker(text_scorer, **reranker_options)
         # 查询改写开关:请求未指定则用全局默认
         rewrite = settings.rewrite_enabled if rewrite_enabled is None else rewrite_enabled
 
@@ -968,6 +994,10 @@ class SearchEngine:
             count=len(evidence),
             providers_used=used,
             reranker=text_scorer.name,
+            ranking_profile=ranking.profile,
+            rerank_threshold=ranking.threshold,
+            rerank_threshold_mode=ranking.threshold_mode,
+            ranking_warnings=list(ranking.warnings),
             elapsed_ms=int((time.time() - t0) * 1000),
         )
 
