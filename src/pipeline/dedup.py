@@ -4,7 +4,7 @@ from __future__ import annotations
 from typing import List, Tuple
 from urllib.parse import urlsplit, urlunsplit
 
-from src.models import SearchResult
+from src.domain.search import SearchResult
 
 # 常见跟踪参数(归一化时剔除)
 _TRACKING_PREFIXES = ("utm_", "spm", "wfr", "for")

@@ -6,18 +6,17 @@ import time
 from typing import Any, Dict, List, Optional, Sequence
 
 from src.application.ports.entailment import EntailmentClassifier
-from src.models import (
+from src.domain.evidence import Evidence, SearchBoundary
+from src.domain.failures import SearchFailure
+from src.domain.trust import (
     CandidateClaim,
     ClaimAssessment,
     ClaimEvidenceRelation,
     ConsistencyCheck,
-    Evidence,
-    SearchBoundary,
-    SearchFailure,
     TrustAssessment,
-    VerifyResponse,
 )
 from src.domain.errors import public_error_message
+from src.interfaces.responses import VerifyResponse
 from src.trust.annotate import annotate_evidence, build_search_boundary
 from src.trust.claims import decompose_claims
 from src.trust.entailment import (

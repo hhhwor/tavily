@@ -8,14 +8,9 @@ from src.application.ports.pdf_text import PdfTextGateway
 from src.application.search_service import SearchService
 from src.application.verify_service import VerifyService
 from src.config import Settings
-from src.models import (
-    CandidateClaim,
-    Evidence,
-    PdfTextResponse,
-    SearchBoundary,
-    SearchResponse,
-    VerifyResponse,
-)
+from src.domain.evidence import Evidence, SearchBoundary
+from src.domain.trust import CandidateClaim
+from src.interfaces.responses import PdfTextResponse, SearchResponse, VerifyResponse
 
 
 class SearchEngine:

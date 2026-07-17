@@ -10,7 +10,7 @@ from src.application.ports.cache import CacheBackend
 from src.domain.errors import ExternalServiceError
 from src.infrastructure.cache import InMemoryCache
 from src.infrastructure.http_errors import external_http_error
-from src.models import SearchFailure
+from src.domain.failures import SearchFailure
 
 _REWRITE_PROMPT = """你是一个搜索查询优化器。将用户查询改写为更适合搜索引擎的简洁关键词。
 

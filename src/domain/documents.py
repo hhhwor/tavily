@@ -5,7 +5,7 @@ from collections.abc import Iterator, Mapping
 from dataclasses import dataclass, field
 from typing import Any, Literal, Optional
 
-from src.models import AcademicResult, PatentResult, SearchResult
+from src.domain.search import AcademicResult, PatentResult, SearchResult
 
 DocumentKind = Literal["web", "academic", "patent"]
 ContentKind = Literal[

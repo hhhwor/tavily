@@ -8,7 +8,8 @@ from src.application.failures import search_failure
 from src.application.outcomes import PlannedQuery
 from src.application.ports.query_rewriter import QueryRewriter
 from src.l0 import plan_query
-from src.models import SearchFailure, SearchPlan
+from src.domain.failures import SearchFailure
+from src.domain.search import SearchPlan
 
 
 class QueryPlannerSettings(Protocol):

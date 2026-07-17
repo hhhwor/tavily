@@ -27,7 +27,7 @@ import requests
 
 from src.infrastructure.http_errors import external_http_error
 from src.application.ports.retrieval import RetrievalRequest, SourceDescriptor
-from src.models import PatentResult
+from src.domain.search import PatentResult
 from src.providers.base import SearchProvider
 
 _DEFAULT_INDEX = "epo_docdb_read"  # 读别名(蓝绿切换时本侧无需改);也可固定版本号 epo_docdb_v2_YYYYMMDD

@@ -4,7 +4,7 @@ from __future__ import annotations
 import math
 from typing import Any, Dict, List, Sequence, Tuple
 
-from src.models import PatentResult, SearchResult
+from src.domain.search import PatentResult, SearchResult
 from src.pipeline.ranking_options import parse_ranking_profile, parse_threshold_mode
 from src.ranking.core import (
     CITATIONS,

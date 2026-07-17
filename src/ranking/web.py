@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Sequence, Tuple
 
-from src.models import SearchResult
+from src.domain.search import SearchResult
 from src.pipeline.dedup import normalize_url
 from src.pipeline.fusion import rrf_prepare
 from src.pipeline.ranking_options import parse_ranking_profile, parse_threshold_mode

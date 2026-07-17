@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from src.models import SearchResponse
+from src.interfaces.responses import SearchResponse
 
 
 class McpSearchPresenter:

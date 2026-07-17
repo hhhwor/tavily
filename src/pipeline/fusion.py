@@ -13,7 +13,7 @@ from __future__ import annotations
 
 from typing import List, Optional
 
-from src.models import SearchResult
+from src.domain.search import SearchResult
 from src.pipeline.dedup import normalize_url
 
 

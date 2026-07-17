@@ -16,7 +16,7 @@ from src.domain.documents import (
     RetrievedDocument,
     SourceAttribution,
 )
-from src.models import AcademicResult, PatentResult, SearchResult
+from src.domain.search import AcademicResult, PatentResult, SearchResult
 from src.pipeline.dedup import normalize_url
 from src.pipeline.ranking_options import RankingOptions, resolve_ranking_options
 from src.ranking import (

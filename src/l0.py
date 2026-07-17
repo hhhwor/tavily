@@ -9,7 +9,8 @@ import re
 import unicodedata
 from typing import Any, List, Optional
 
-from src.models import SearchFailure, SearchPlan
+from src.domain.failures import SearchFailure
+from src.domain.search import SearchPlan
 
 MAX_QUERY_LEN = 512
 

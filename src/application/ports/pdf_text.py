@@ -7,7 +7,7 @@ from typing import Optional, Sequence
 from src.application.outcomes import PdfEnrichmentOutcome
 from src.application.ports.runtime import Deadline
 from src.domain.documents import RankedDocument
-from src.models import PdfTextResponse
+from src.interfaces.responses import PdfTextResponse
 
 
 class PdfTextGateway(ABC):

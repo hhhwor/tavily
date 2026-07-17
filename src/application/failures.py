@@ -4,7 +4,7 @@ from __future__ import annotations
 from typing import Optional
 
 from src.domain.errors import ExternalServiceError, public_error_message
-from src.models import SearchFailure
+from src.domain.failures import SearchFailure
 
 
 def search_failure(

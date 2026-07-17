@@ -11,7 +11,7 @@ from src.application.ranking_service import RankingService
 from src.application.recall import RecallCoordinator
 from src.application.source_registry import SourceRegistry
 from src.application.trust_annotator import TrustAnnotator
-from src.models import SearchResponse
+from src.interfaces.responses import SearchResponse
 
 
 class SearchService:

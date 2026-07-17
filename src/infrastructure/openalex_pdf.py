@@ -15,7 +15,9 @@ from src.application.ports.runtime import Deadline
 from src.config import Settings
 from src.domain.documents import EnrichedDocument, RankedDocument, RetrievedDocument
 from src.domain.errors import public_error_message
-from src.models import AcademicResult, PdfTextResponse, SearchFailure
+from src.domain.failures import SearchFailure
+from src.domain.search import AcademicResult
+from src.interfaces.responses import PdfTextResponse
 
 
 _ERROR_CODE = re.compile(r"^[A-Z][A-Z0-9_]{0,63}$")

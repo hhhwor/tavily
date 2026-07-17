@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Callable, Mapping, Sequence
 
-from src.models import Evidence, SearchBoundary
+from src.domain.evidence import Evidence, SearchBoundary
 from src.trust import annotate_evidence, build_search_boundary
 
 

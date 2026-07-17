@@ -22,7 +22,7 @@ import requests
 
 from src.infrastructure.http_errors import external_http_error
 from src.application.ports.retrieval import RetrievalRequest, SourceDescriptor
-from src.models import AcademicResult
+from src.domain.search import AcademicResult
 from src.providers.base import SearchProvider
 
 _DEFAULT_BASE = "http://localhost:9001"

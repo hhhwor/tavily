@@ -7,7 +7,8 @@ from typing import Any, List, Literal, Mapping, Optional
 from pydantic import BaseModel, Field, model_validator
 
 from src.application.commands import SearchCommand
-from src.models import CandidateClaim, Evidence, SearchBoundary
+from src.domain.evidence import Evidence, SearchBoundary
+from src.domain.trust import CandidateClaim
 from src.pipeline.ranking_options import resolve_ranking_options
 
 

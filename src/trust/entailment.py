@@ -9,7 +9,8 @@ from typing import Any, Dict, List, Sequence, Tuple
 import requests
 
 from src.infrastructure.http_errors import external_http_error
-from src.models import CandidateClaim, Evidence
+from src.domain.evidence import Evidence
+from src.domain.trust import CandidateClaim
 
 EntailmentPair = Tuple[str, CandidateClaim, Evidence]
 _LABELS = {"supports", "contradicts", "mentions", "unclear", "irrelevant"}

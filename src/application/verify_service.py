@@ -3,12 +3,9 @@ from __future__ import annotations
 
 from typing import Sequence
 
-from src.models import (
-    CandidateClaim,
-    Evidence,
-    SearchBoundary,
-    VerifyResponse,
-)
+from src.domain.evidence import Evidence, SearchBoundary
+from src.domain.trust import CandidateClaim
+from src.interfaces.responses import VerifyResponse
 from src.trust import ClaimVerifier
 
 

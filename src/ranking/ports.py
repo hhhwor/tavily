@@ -5,7 +5,7 @@ import math
 from abc import ABC, abstractmethod
 from typing import List, Optional, Protocol, Sequence
 
-from src.models import SearchResult
+from src.domain.search import SearchResult
 
 
 class TextScorer(Protocol):

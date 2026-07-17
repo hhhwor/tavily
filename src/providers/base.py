@@ -11,7 +11,7 @@ from src.application.ports.retrieval import (
     SourceDescriptor,
 )
 from src.domain.documents import FrozenMap, RetrievedDocument
-from src.models import SearchResult
+from src.domain.search import SearchResult
 
 
 class SearchProvider(ABC):

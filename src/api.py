@@ -11,7 +11,7 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, JSONResponse
 from src.bootstrap import Container, build_container
 from src.interfaces.schemas import SearchRequest, VerifyRequest
-from src.models import PdfTextResponse, SearchResponse, VerifyResponse
+from src.interfaces.responses import PdfTextResponse, SearchResponse, VerifyResponse
 
 _STATIC_DIR = os.path.join(os.path.dirname(__file__), "static")
 _PUBLIC_PATHS = {"/", "/health", "/docs", "/redoc", "/openapi.json", "/docs/oauth2-redirect"}

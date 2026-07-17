@@ -4,7 +4,7 @@ from __future__ import annotations
 import re
 from typing import List, Sequence
 
-from src.models import CandidateClaim
+from src.domain.trust import CandidateClaim
 
 _CLAIM_BREAK = re.compile(r"[；;\n]+|(?<=。)")
 _VALUE_UNIT = re.compile(

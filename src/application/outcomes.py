@@ -6,7 +6,8 @@ from typing import Sequence, Tuple, TypeVar
 
 from src.application.ports.retrieval import RetrievalBatch
 from src.domain.documents import EnrichedDocument, RankedDocument, RetrievedDocument
-from src.models import SearchFailure, SearchPlan
+from src.domain.failures import SearchFailure
+from src.domain.search import SearchPlan
 from src.pipeline.ranking_options import RankingOptions
 
 

@@ -4,7 +4,7 @@ from __future__ import annotations
 import threading
 from typing import List, Optional, Sequence
 
-from src.models import SearchResult
+from src.domain.search import SearchResult
 from src.pipeline.chunk import chunk_text
 from src.ranking.ports import Reranker, sigmoid_normalize
 

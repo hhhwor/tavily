@@ -14,7 +14,7 @@ import requests
 from src.domain.errors import ExternalServiceError
 from src.infrastructure.http_errors import external_http_error
 from src.application.ports.retrieval import RetrievalRequest, SourceDescriptor
-from src.models import SearchResult
+from src.domain.search import SearchResult
 from src.providers.base import SearchProvider
 
 _ENDPOINT = "https://qianfan.baidubce.com/v2/ai_search/web_search"

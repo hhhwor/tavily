@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from typing import Any, List, Optional, Sequence
 
-from src.models import SearchResult
+from src.domain.search import SearchResult
 from src.ranking.core import parse_date_days_ago
 from src.ranking.factory import build_text_scorer
 from src.ranking.ports import NoOpReranker, Reranker

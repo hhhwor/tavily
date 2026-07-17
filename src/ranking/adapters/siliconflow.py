@@ -6,7 +6,7 @@ from typing import Any, List, Sequence
 import requests
 
 from src.infrastructure.http_errors import external_http_error
-from src.models import SearchResult
+from src.domain.search import SearchResult
 from src.pipeline.chunk import chunk_text
 from src.ranking.ports import Reranker, clamp01
 

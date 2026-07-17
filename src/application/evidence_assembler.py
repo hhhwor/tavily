@@ -16,8 +16,7 @@ from src.domain.documents import (
     RankedDocument,
     RetrievedDocument,
 )
-from src.models import (
-    AcademicResult,
+from src.domain.evidence import (
     Evidence,
     EvidenceAccess,
     EvidenceCitation,
@@ -25,9 +24,8 @@ from src.models import (
     EvidencePassage,
     EvidencePatent,
     EvidenceScores,
-    PatentResult,
-    SearchResult,
 )
+from src.domain.search import AcademicResult, PatentResult, SearchResult
 
 DEFAULT_EVIDENCE_PASSAGE_MAX_CHARS = 1800
 

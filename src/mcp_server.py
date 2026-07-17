@@ -21,7 +21,8 @@ from src.config import Settings
 from src.engine import SearchEngine
 from src.interfaces.presenters import McpSearchPresenter
 from src.interfaces.schemas import search_command_from_mapping
-from src.models import CandidateClaim, Evidence, SearchBoundary
+from src.domain.evidence import Evidence, SearchBoundary
+from src.domain.trust import CandidateClaim
 
 
 def _transport_security(settings: Settings) -> Optional[TransportSecuritySettings]:

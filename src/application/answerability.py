@@ -3,12 +3,8 @@ from __future__ import annotations
 
 from typing import Sequence
 
-from src.models import (
-    Answerability,
-    AnswerabilityGap,
-    Evidence,
-    SearchFailure,
-)
+from src.domain.evidence import Answerability, AnswerabilityGap, Evidence
+from src.domain.failures import SearchFailure
 
 
 class AnswerabilityPolicy:

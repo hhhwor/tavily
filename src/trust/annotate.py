@@ -10,7 +10,7 @@ from datetime import datetime, timezone
 from typing import Iterable, List, Mapping, Optional, Sequence
 from urllib.parse import urlsplit
 
-from src.models import (
+from src.domain.evidence import (
     Evidence,
     EvidenceFieldProvenance,
     EvidenceLocator,

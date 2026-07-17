@@ -5,7 +5,7 @@ import math
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Sequence, Tuple
 
-from src.models import AcademicResult, SearchResult
+from src.domain.search import AcademicResult, SearchResult
 from src.pipeline.ranking_options import parse_ranking_profile, parse_threshold_mode
 from src.ranking.core import (
     CITATIONS,

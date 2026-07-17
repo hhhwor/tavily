@@ -7,7 +7,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Callable, Dict, Generic, List, Optional, Sequence, Tuple, TypeVar
 
-from src.models import SearchResult
+from src.domain.search import SearchResult
 from src.pipeline.ranking_options import RankingProfile, ThresholdMode
 from src.ranking.ports import TextScorer, clamp01
 
