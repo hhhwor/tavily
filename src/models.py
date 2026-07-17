@@ -53,6 +53,9 @@ class AcademicResult(SearchResult):
     pdf_pages: Optional[int] = None
     pdf_text_length: int = 0
     pdf_returned_chars: int = 0
+    pdf_chunk_index: Optional[int] = None
+    pdf_page_from: Optional[int] = None
+    pdf_page_to: Optional[int] = None
     pdf_next_cursor: Optional[str] = None
     pdf_error_code: Optional[str] = None
     pdf_error_message: Optional[str] = None
@@ -151,6 +154,81 @@ class EvidenceDiagnostics(BaseModel):
     failure_code: Optional[str] = None
 
 
+class SearchBoundary(BaseModel):
+    """本次检索实际运行的来源、时间、语言/辖区和预算边界。"""
+
+    source_snapshot: Dict[str, str] = Field(default_factory=dict)
+    query_time: str                              # UTC ISO-8601
+    languages: List[str] = Field(default_factory=list)
+    jurisdictions: List[str] = Field(default_factory=list)
+    license_scope: List[str] = Field(default_factory=list)
+    max_rounds: int = 1
+    max_candidates: int = 0
+    deadline_ms: Optional[int] = None
+    limitations: List[str] = Field(default_factory=list)
+
+
+class EvidenceFieldProvenance(BaseModel):
+    """单个结构化字段来自哪里、经历过什么转换。"""
+
+    source_field: Optional[str] = None
+    retrieved_via: str = ""
+    transformations: List[str] = Field(default_factory=list)
+
+
+class EvidenceProvenance(BaseModel):
+    """证据的发布者、版本、取得方式、许可与转换链。"""
+
+    canonical_url: str = ""
+    publisher_id: str = ""
+    publisher_name: str = ""
+    publisher_type: str = "unknown"
+    retrieved_via: str = ""
+    content_origin: str = "unknown"
+    document_id: str = ""
+    version_id: Optional[str] = None
+    source_record_id: Optional[str] = None
+    published_at: Optional[str] = None
+    updated_at: Optional[str] = None
+    retrieved_at: str                            # UTC ISO-8601
+    ownership_group: Optional[str] = None
+    syndication_group: Optional[str] = None
+    license: Optional[str] = None
+    original_language: Optional[str] = None
+    parser_version: Optional[str] = None
+    ocr_used: bool = False
+    translation_used: bool = False
+    field_provenance: Dict[str, EvidenceFieldProvenance] = Field(default_factory=dict)
+
+
+class EvidenceLocator(BaseModel):
+    """回到具体文档版本和原文单元所需的定位信息。"""
+
+    document_id: str
+    version_id: Optional[str] = None
+    section: Optional[str] = None
+    subsection: Optional[str] = None
+    paragraph_id: Optional[str] = None
+    page_from: Optional[int] = None
+    page_to: Optional[int] = None
+    char_start: Optional[int] = None
+    char_end: Optional[int] = None
+    table_id: Optional[str] = None
+    figure_id: Optional[str] = None
+    claim_number: Optional[str] = None
+    chunk_index: Optional[int] = None
+
+
+class EvidenceQuality(BaseModel):
+    """证据当前能否用于陈述校验；不是来源真实性概率。"""
+
+    level: str = "unavailable"  # citable / limited / discovery_only / unavailable
+    is_original: bool = False
+    has_stable_locator: bool = False
+    can_support_key_claim: bool = False
+    reasons: List[str] = Field(default_factory=list)
+
+
 class Evidence(BaseModel):
     """跨 web / academic / patent 的统一证据单元。"""
 
@@ -169,6 +247,83 @@ class Evidence(BaseModel):
     scores: EvidenceScores = Field(default_factory=EvidenceScores)
     access: EvidenceAccess = Field(default_factory=EvidenceAccess)
     diagnostics: EvidenceDiagnostics = Field(default_factory=EvidenceDiagnostics)
+    provenance: Optional[EvidenceProvenance] = None
+    locator: Optional[EvidenceLocator] = None
+    quality: Optional[EvidenceQuality] = None
+
+
+class CandidateClaim(BaseModel):
+    """等待原文证据校验的最小事实性陈述。"""
+
+    id: str
+    text: str
+    claim_type: str = "factual"
+    importance: str = "key"                  # key / supporting / context
+    subject: Optional[str] = None
+    predicate: Optional[str] = None
+    value: Optional[str] = None
+    unit: Optional[str] = None
+    time_scope: Optional[str] = None
+    jurisdiction: Optional[str] = None
+    source: str = "agent"                    # user / agent / extractor
+    parent_id: Optional[str] = None
+
+
+class ConsistencyCheck(BaseModel):
+    """陈述限定条件与证据原文的一项一致性检查。"""
+
+    name: str                                 # entity/date/number/unit/negation/version/jurisdiction
+    status: str = "unknown"                  # pass / fail / unknown
+    claim_value: Optional[str] = None
+    evidence_value: Optional[str] = None
+    reason: str = ""
+
+
+class ClaimEvidenceRelation(BaseModel):
+    """一条 EvidenceUnit 对某条 CandidateClaim 的作用。"""
+
+    evidence_id: str
+    relation: str                             # supports / contradicts / mentions / unclear / irrelevant
+    confidence: str = "none"                 # high / medium / low / none
+    reason: str = ""
+    quote: str = ""
+    locator: Optional[EvidenceLocator] = None
+    evidence_quality: str = "unavailable"
+    qualified: bool = False                   # 是否可计入最终支持/冲突
+    consistency_checks: List[ConsistencyCheck] = Field(default_factory=list)
+
+
+class ClaimAssessment(BaseModel):
+    """单条陈述的支持、冲突、证据不足及复核信息。"""
+
+    claim: CandidateClaim
+    status: str = "insufficient"             # supported/conflicted/insufficient/inference/needs_expert_review
+    confidence: str = "none"
+    relations: List[ClaimEvidenceRelation] = Field(default_factory=list)
+    support_refs: List[str] = Field(default_factory=list)
+    conflict_refs: List[str] = Field(default_factory=list)
+    mention_refs: List[str] = Field(default_factory=list)
+    independent_support_count: int = 0
+    primary_source_count: int = 0
+    counterevidence_searched: bool = False
+    gaps: List[str] = Field(default_factory=list)
+    followup_queries: List[str] = Field(default_factory=list)
+    review_required: bool = False
+
+
+class TrustAssessment(BaseModel):
+    """本批候选陈述的校验汇总；不是真实性总分。"""
+
+    status: str = "insufficient"             # supported / mixed / insufficient
+    claims_total: int = 0
+    supported_claims: int = 0
+    conflicted_claims: int = 0
+    insufficient_claims: int = 0
+    evidence_coverage_rate: float = 0.0
+    unsupported_statement_rate: float = 1.0
+    policy_version: str = "trust-phase1-v1"
+    model: str = "rules"
+    warnings: List[str] = Field(default_factory=list)
 
 
 class SearchFailure(BaseModel):
@@ -180,6 +335,18 @@ class SearchFailure(BaseModel):
     code: str = ""
     message: str = ""
     recoverable: bool = True
+
+
+class VerifyResponse(BaseModel):
+    """陈述级证据校验接口返回体。"""
+
+    query: str
+    profile: str = "general"
+    assessments: List[ClaimAssessment] = Field(default_factory=list)
+    trust_assessment: TrustAssessment = Field(default_factory=TrustAssessment)
+    search_boundary: Optional[SearchBoundary] = None
+    failures: List[SearchFailure] = Field(default_factory=list)
+    elapsed_ms: int = 0
 
 
 class AnswerabilityGap(BaseModel):
@@ -212,6 +379,8 @@ class SearchResponse(BaseModel):
     partial_failure: bool = False
     failures: List[SearchFailure] = Field(default_factory=list)
     answerability: Answerability = Field(default_factory=Answerability)
+    trust_mode: str = "off"
+    search_boundary: Optional[SearchBoundary] = None
     count: int
     providers_used: List[str]
     reranker: str

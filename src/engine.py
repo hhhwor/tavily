@@ -8,7 +8,8 @@ from __future__ import annotations
 import time
 import hashlib
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from typing import List, Optional
+from datetime import datetime, timezone
+from typing import List, Optional, Sequence
 from urllib.parse import quote
 
 import requests
@@ -20,6 +21,7 @@ from src.models import (
     AcademicResult,
     Answerability,
     AnswerabilityGap,
+    CandidateClaim,
     Evidence,
     EvidenceAccess,
     EvidenceCitation,
@@ -30,9 +32,11 @@ from src.models import (
     PatentResult,
     PdfTextResponse,
     SearchFailure,
+    SearchBoundary,
     SearchPlan,
     SearchResponse,
     SearchResult,
+    VerifyResponse,
 )
 from src.pipeline.rerank import (
     AcademicReranker,
@@ -42,6 +46,7 @@ from src.pipeline.rerank import (
     build_text_scorer,
 )
 from src.providers.base import SearchProvider
+from src.trust import annotate_evidence, build_claim_verifier, build_search_boundary
 
 _EVIDENCE_PASSAGE_MAX_CHARS = 1800
 
@@ -251,6 +256,19 @@ class SearchEngine:
             settings.rerank_enabled, settings.rerank_backend,
             settings.rerank_model,
         )
+        try:
+            self.claim_verifier = self._make_claim_verifier()
+        except Exception as exc:
+            print(f"[engine] 陈述校验模型不可用,降级到规则: {exc}")
+            self.claim_verifier = build_claim_verifier(
+                backend="rules",
+                api_key="",
+                base_url=settings.siliconflow_base_url,
+                model=settings.trust_verify_model,
+                timeout=settings.trust_verify_timeout,
+                max_claims=settings.trust_verify_max_claims,
+                max_evidence_per_claim=settings.trust_verify_max_evidence,
+            )
         if not self.providers and not self.academic_provider and not self.patent_provider:
             print("[engine] 警告:无可用搜索源,请检查 .env 凭证")
 
@@ -281,6 +299,40 @@ class SearchEngine:
             chunk_overlap=settings.chunk_overlap,
             siliconflow_api_key=settings.siliconflow_api_key,
             siliconflow_base_url=settings.siliconflow_base_url,
+        )
+
+    @staticmethod
+    def _make_claim_verifier():
+        return build_claim_verifier(
+            backend=settings.trust_verify_backend,
+            api_key=settings.siliconflow_api_key,
+            base_url=settings.siliconflow_base_url,
+            model=settings.trust_verify_model,
+            timeout=settings.trust_verify_timeout,
+            max_claims=settings.trust_verify_max_claims,
+            max_evidence_per_claim=settings.trust_verify_max_evidence,
+        )
+
+    def verify_claims(
+        self,
+        query: str,
+        claims: Sequence[CandidateClaim],
+        evidence: Sequence[Evidence],
+        *,
+        profile: str = "general",
+        search_boundary: Optional[SearchBoundary] = None,
+    ) -> VerifyResponse:
+        """基于客户端传入的 Phase 0 evidence 做陈述级校验；不自动补充检索。"""
+        verifier = getattr(self, "claim_verifier", None)
+        if verifier is None:
+            verifier = self._make_claim_verifier()
+            self.claim_verifier = verifier
+        return verifier.verify(
+            query=query,
+            claims=claims,
+            evidence=evidence,
+            profile=profile,
+            search_boundary=search_boundary,
         )
 
     def _select_text_scorer(
@@ -352,7 +404,8 @@ class SearchEngine:
             if not text:
                 continue
             snippet_type = "pdf_text" if p.pdf_text else "abstract"
-            evidence_id = f"{result_id}:pdf:0" if p.pdf_text else f"{result_id}:abstract"
+            chunk_index = p.pdf_chunk_index if p.pdf_chunk_index is not None else 0
+            evidence_id = f"{result_id}:pdf:{chunk_index}" if p.pdf_text else f"{result_id}:abstract"
             warnings: List[str] = []
             if clipped or p.pdf_next_cursor:
                 warnings.append("TRUNCATED_EVIDENCE")
@@ -374,7 +427,9 @@ class SearchEngine:
                     snippet_type=snippet_type,
                     char_start=0,
                     char_end=len(text),
-                    chunk_index=0 if p.pdf_text else None,
+                    page_from=p.pdf_page_from if p.pdf_text else None,
+                    page_to=p.pdf_page_to if p.pdf_text else None,
+                    chunk_index=chunk_index if p.pdf_text else None,
                 ),
                 citation=EvidenceCitation(
                     label=_citation_label(p.authors, p.year, p.title),
@@ -558,6 +613,9 @@ class SearchEngine:
             paper.pdf_pages = data.get("pages")
             paper.pdf_text_length = int(data.get("text_length") or 0)
             paper.pdf_returned_chars = len(paper.pdf_text)
+            paper.pdf_chunk_index = data.get("chunk_index")
+            paper.pdf_page_from = data.get("page_from")
+            paper.pdf_page_to = data.get("page_to")
             paper.pdf_next_cursor = data.get("next_cursor")
             paper.pdf_error_code = data.get("error_code")
             paper.pdf_error_message = data.get("error_message")
@@ -651,14 +709,19 @@ class SearchEngine:
         rerank_threshold: Optional[float] = None,
         fusion_enabled: Optional[bool] = None,
         rewrite_enabled: Optional[bool] = None,
+        trust_mode: str = "annotate",
         include_pdf_text: bool = False,
         pdf_text_mode: Optional[str] = None,
         pdf_max_results: Optional[int] = None,
         pdf_max_chars_per_result: Optional[int] = None,
         pdf_timeout_ms: Optional[int] = None,
     ) -> SearchResponse:
+        trust_mode = (trust_mode or "annotate").strip().lower()
+        if trust_mode not in {"off", "annotate"}:
+            raise ValueError("trust_mode 仅支持 off / annotate")
         top_k = top_k or settings.default_top_k
         t0 = time.time()
+        query_time = datetime.now(timezone.utc)
 
         text_scorer = self._select_text_scorer(
             rerank_enabled, rerank_backend, rerank_model
@@ -861,6 +924,26 @@ class SearchEngine:
                         message=paper.pdf_error_message or paper.pdf_status,
                     ))
         evidence = self._build_evidence(ranked, ranked_papers, ranked_patents)
+        search_boundary = None
+        if trust_mode == "annotate":
+            annotate_evidence(evidence)
+            planned_sources = [provider.name for _, provider, _ in tasks]
+            source_snapshot = {}
+            for name in planned_sources:
+                if name == "patent_es":
+                    source_snapshot[name] = f"index-alias:{settings.patent_es_index}"
+                elif name == "openalex_local":
+                    source_snapshot[name] = "service-index:unspecified"
+                else:
+                    source_snapshot[name] = "provider-managed"
+            search_boundary = build_search_boundary(
+                query=plan.normalized_query,
+                source_names=planned_sources,
+                evidence=evidence,
+                query_time=query_time,
+                source_snapshot=source_snapshot,
+                max_candidates=settings.per_provider_k * len(tasks),
+            )
         answerability = _build_answerability(
             evidence,
             failures,
@@ -880,6 +963,8 @@ class SearchEngine:
             partial_failure=bool(failures),
             failures=failures,
             answerability=answerability,
+            trust_mode=trust_mode,
+            search_boundary=search_boundary,
             count=len(evidence),
             providers_used=used,
             reranker=text_scorer.name,

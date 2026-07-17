@@ -56,6 +56,12 @@ class Settings:
         self.rewrite_enabled = os.getenv("REWRITE_ENABLED", "false").lower() == "true"
         self.rewrite_model = os.getenv("REWRITE_MODEL", "Qwen/Qwen2.5-7B-Instruct")
         self.rewrite_cache_size = int(os.getenv("REWRITE_CACHE_SIZE", "512"))
+        # Phase 1 陈述校验:auto=有 SiliconFlow key 时做模型蕴含判断,否则保守规则。
+        self.trust_verify_backend = os.getenv("TRUST_VERIFY_BACKEND", "auto").lower()
+        self.trust_verify_model = os.getenv("TRUST_VERIFY_MODEL", self.rewrite_model)
+        self.trust_verify_timeout = int(os.getenv("TRUST_VERIFY_TIMEOUT", "15"))
+        self.trust_verify_max_claims = int(os.getenv("TRUST_VERIFY_MAX_CLAIMS", "20"))
+        self.trust_verify_max_evidence = int(os.getenv("TRUST_VERIFY_MAX_EVIDENCE", "5"))
         # 辅助信号融合(评测证明对通用查询是负优化,默认关闭;时效场景可手动开)
         self.fusion_enabled = os.getenv("FUSION_ENABLED", "false").lower() == "true"
         self.fusion_alpha = float(os.getenv("FUSION_ALPHA", "0.7"))    # 文本相关性

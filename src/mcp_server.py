@@ -3,6 +3,7 @@
 传输:Streamable HTTP(stateless + JSON 响应),由 src/api.py 挂在主应用 `/mcp` 下。
 工具:
 - search —— query → 结构化 evidence[] 结果,正文截断、LLM-ready。
+- verify_claims —— 候选陈述 + search evidence → 支持/冲突/证据不足。
 - get_pdf_text —— 用 search 返回的 work_id + next_cursor 续读 PDF 正文。
 
 引擎 search() 是同步阻塞(内部 ThreadPoolExecutor + 网络 + 重排),故在异步工具里用
@@ -18,6 +19,7 @@ from mcp.server.fastmcp import FastMCP
 from mcp.server.transport_security import TransportSecuritySettings
 
 from src.engine import SearchEngine
+from src.models import CandidateClaim, Evidence, SearchBoundary
 
 
 def _transport_security() -> Optional[TransportSecuritySettings]:
@@ -69,7 +71,8 @@ def build_mcp(engine: SearchEngine) -> FastMCP:
             "(新闻、事实核查、技术细节、时效性问题)时调用,而不要凭记忆作答。"
             "学术与专利意图会自动识别;也可用 include_academic / include_patent 强制开关。"
             "返回按相关性混排的 evidence[],每条证据包含类型、来源、引用元数据、正文片段、"
-            "授权/PDF 状态和诊断信息。先检查 answerability.gaps 与 failures; "
+            "授权/PDF 状态和诊断信息。trust_mode=annotate 时还返回出处、原文定位、证据质量"
+            "和本次检索边界;这些字段不等同于陈述已被验证。先检查 answerability.gaps 与 failures; "
             "partial_failure=true 表示至少一路子任务失败但已有证据仍可使用。"
         ),
     )
@@ -83,12 +86,16 @@ def build_mcp(engine: SearchEngine) -> FastMCP:
         pdf_text_mode: Optional[str] = None,
         pdf_max_results: Optional[int] = None,
         pdf_max_chars_per_result: Optional[int] = None,
+        trust_mode: str = "annotate",
     ) -> dict[str, Any]:
         """query: 检索词。top_k: 返回条数(默认 10)。
         include_academic / include_patent: None=按查询意图自动判定,true=强制开,false=强制关。
         rerank: None=服务端默认,true=开 cross-encoder 重排(质量更高,慢数秒),false=走 RRF 快路径。
         include_pdf_text: true 时对重排后的前几篇学术结果同步补 PDF 正文。
-        pdf_text_mode: cached 只读缓存,sync 允许本次请求下载解析。"""
+        pdf_text_mode: cached 只读缓存,sync 允许本次请求下载解析。
+        trust_mode: annotate 补可信 Phase 0 标注;off 返回旧 evidence 结构。"""
+        if trust_mode not in {"off", "annotate"}:
+            raise ValueError("trust_mode 仅支持 off / annotate")
         resp = await anyio.to_thread.run_sync(
             lambda: engine.search(
                 query, top_k, include_academic, include_patent,
@@ -97,6 +104,7 @@ def build_mcp(engine: SearchEngine) -> FastMCP:
                 pdf_text_mode=pdf_text_mode,
                 pdf_max_results=pdf_max_results,
                 pdf_max_chars_per_result=pdf_max_chars_per_result,
+                trust_mode=trust_mode,
             )
         )
 
@@ -106,7 +114,11 @@ def build_mcp(engine: SearchEngine) -> FastMCP:
             "partial_failure": resp.partial_failure,
             "failures": [f.model_dump() for f in resp.failures],
             "answerability": resp.answerability.model_dump(),
-            "evidence": [e.model_dump() for e in resp.evidence],
+            "trust_mode": resp.trust_mode,
+            "search_boundary": (
+                resp.search_boundary.model_dump(mode="json") if resp.search_boundary else None
+            ),
+            "evidence": [e.model_dump(mode="json") for e in resp.evidence],
             "meta": {
                 "providers_used": resp.providers_used,
                 "reranker": resp.reranker,
@@ -114,6 +126,39 @@ def build_mcp(engine: SearchEngine) -> FastMCP:
                 "counts": _evidence_counts(resp.evidence),
             },
         }
+
+    @mcp.tool(
+        name="verify_claims",
+        description=(
+            "校验候选事实陈述是否被 search evidence 的可定位原文支持。返回每条陈述的"
+            "supported/conflicted/insufficient 状态、支持/冲突引用、一致性检查、缺口和后续"
+            "检索词。Phase 1 不自动补充检索;摘要、snippet 或无稳定 locator 的证据不能形成"
+            "合格支持。"
+        ),
+    )
+    async def verify_claims(
+        query: str,
+        claims: list[dict[str, Any]],
+        evidence: list[dict[str, Any]],
+        profile: str = "general",
+        search_boundary: Optional[dict[str, Any]] = None,
+    ) -> dict[str, Any]:
+        """claims: CandidateClaim 对象列表。evidence: search 返回的 evidence[]。"""
+        claim_models = [CandidateClaim.model_validate(item) for item in claims]
+        evidence_models = [Evidence.model_validate(item) for item in evidence]
+        boundary_model = (
+            SearchBoundary.model_validate(search_boundary) if search_boundary else None
+        )
+        response = await anyio.to_thread.run_sync(
+            lambda: engine.verify_claims(
+                query,
+                claim_models,
+                evidence_models,
+                profile=profile,
+                search_boundary=boundary_model,
+            )
+        )
+        return response.model_dump(mode="json")
 
     @mcp.tool(
         name="get_pdf_text",

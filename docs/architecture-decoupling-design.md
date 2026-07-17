@@ -1,0 +1,379 @@
+# Agent 搜索引擎架构审阅与解耦设计
+
+> 状态：建议稿，尚未实施重构
+>
+> 审阅基线：2026-07-17，`main@390482c` 加当前工作树中尚未提交的 Trust Phase 0/1 改动
+>
+> 审阅范围：`src/`、`tests/`、`eval/`、`scripts/`、`deploy/` 与直接运行依赖
+>
+> 验证基线：当前工作树 43 个测试全部通过；其中 16 个 Trust 测试尚未被 Git 跟踪
+>
+> 关联文档：[当前技术路线](tech-route-summary.md)、[Trust Layer 设计](agent-search-trust-layer-design.md)、[评测方法](eval-methodology.md)
+
+## 1. 结论
+
+仓库当前是一个可运行的模块化单体：它聚合 Web、学术和专利搜索源，经查询规划、召回、重排、PDF 富化与可信标注后，向 REST 和 MCP 输出统一 Evidence。Provider、Cache、统一 Evidence 以及 Trust 子包已经提供了不错的演进基础。
+
+主要问题不是“模块数量少”，而是模块之间通过全局配置、可变共享对象、字符串约定和手工字段映射形成了隐式耦合。`SearchEngine` 与 `rerank.py` 已成为主要变更热点，REST、MCP 和评测代码也开始出现契约漂移。
+
+建议采用以下方向：
+
+1. 保持单进程、单部署单元，不在本轮引入微服务。
+2. 以 `application use case + ports/adapters + composition root` 重整依赖方向。
+3. 保留 `SearchEngine` 兼容门面，使用渐进式迁移，避免大爆炸重写。
+4. 将 Provider 结果、排序结果和 Evidence 设为不同阶段模型，禁止跨阶段原地修改。
+5. REST、MCP、CLI 和评测统一消费同一个 `SearchCommand` 与公开用例接口。
+6. 在移动代码前先修正公开配置与真实行为不一致的问题，并建立行为刻画测试。
+
+本设计只定义目标边界和迁移顺序，不改变现有 API 字段、不拆独立服务，也不重新设计 Trust 的业务规则；Trust 规则仍以专门设计文档为准。
+
+## 2. 当前架构
+
+### 2.1 模块职责
+
+| 模块 | 当前职责 | 状态判断 |
+|---|---|---|
+| `src/api.py` | FastAPI、鉴权、REST DTO、健康检查、静态页面、MCP 挂载 | 传输与装配混合 |
+| `src/mcp_server.py` | MCP 工具定义、参数映射、响应投影 | 与 REST 重复维护契约 |
+| `src/engine.py` | 装配、缓存、召回、重排、PDF、Evidence、Trust、Answerability | 999 行的核心热点 |
+| `src/l0.py` | 规范化、意图识别、时效判断、LLM 改写 | 纯规则与外部 I/O 混合 |
+| `src/providers/` | 五类外部检索适配器 | 已有基础 Port，但能力表达不足 |
+| `src/pipeline/` | 分块、去重、RRF、文本与领域重排 | `rerank.py` 同时含策略与基础设施 |
+| `src/trust/` | Provenance、Locator、Quality、Claim Verification | 子域较清晰，仍依赖共享模型和 URL 工具 |
+| `src/models.py` | Provider、Pipeline、Evidence、Trust、API 的所有 Pydantic 模型 | 共享模型巨石 |
+| `src/cache.py` | 线程安全的内存 LRU+TTL | 接口清晰，策略仍在 Engine |
+| `eval/` | IR、E2E、Agent 与 MCP 评测 | 部分复制生产逻辑并依赖私有函数 |
+
+### 2.2 当前依赖与调用方向
+
+```mermaid
+flowchart TD
+    UI[Web UI] --> API[FastAPI / REST]
+    API --> ENGINE[SearchEngine]
+    API --> MCP[MCP tools]
+    MCP --> ENGINE
+    ENGINE --> SETTINGS[global settings]
+    ENGINE --> L0[query planning]
+    ENGINE --> CACHE[cache]
+    ENGINE --> PROVIDERS[providers]
+    ENGINE --> RANK[ranking pipeline]
+    ENGINE --> PDF[OpenAlex PDF HTTP]
+    ENGINE --> TRUST[trust]
+    L0 --> SF1[SiliconFlow HTTP]
+    RANK --> SF2[SiliconFlow / local models]
+    TRUST --> SF3[SiliconFlow entailment]
+    PROVIDERS --> EXT[external search services]
+    ENGINE --> MODELS[shared models.py]
+    L0 --> MODELS
+    PROVIDERS --> MODELS
+    RANK --> MODELS
+    TRUST --> MODELS
+    EVAL[eval] --> ENGINE
+    EVAL --> RANK
+    EVAL --> PROVIDERS
+```
+
+当前搜索主链路是：
+
+1. `POST /search` 或 MCP `search` 将参数逐项传给 `SearchEngine.search`。
+2. `plan_query` 规范化查询、判断时效和垂直领域，并可调用 LLM 改写。
+3. Engine 建立 `(kind, provider, query)` 元组，在线程池并发召回并应用缓存。
+4. Web、Academic、Patent 三路并发执行各自领域重排，失败时局部降级。
+5. 学术结果可继续调用 OpenAlex PDF 服务做正文富化。
+6. Engine 将三种结果映射为 Evidence，执行 Trust 标注与 Answerability 计算。
+7. REST 直接返回 `SearchResponse`；MCP 再手工重组一份响应。
+
+陈述校验主链路已经相对独立：`ClaimVerifier` 依次执行陈述拆分、证据匹配、蕴含分类、一致性检查、独立来源策略和汇总；模型失败时回退到规则分类器。
+
+## 3. 代码审阅发现
+
+### 3.1 已有优势
+
+- `SearchProvider` 和 `CacheBackend` 已建立替换接口，是最适合向 Ports 扩展的起点。
+- 三类来源先归一化再进入管线，避免 API 层直接暴露供应商格式。
+- `DomainConfig + rerank_domain` 已把领域特征与通用打分框架部分分开。
+- Provider、重排和 PDF 失败会进入结构化 `failures[]`，系统具备局部降级能力。
+- Trust 已作为独立包存在，并明确区分 relevance、evidence quality 和 claim support。
+- 当前测试对领域排序、Evidence、PDF 和 Trust 的核心规则已有较好的行为保护。
+
+### 3.2 P0：重构前必须处理
+
+#### F-01 公开排序配置与执行行为不一致
+
+`fusion_enabled` 在 [API 请求模型](../src/api.py#L124)、UI、全局配置和 [Engine 方法签名](../src/engine.py#L702) 中均存在，但 `SearchEngine.search` 没有读取该值；真正包含 `FusionReranker` 的 [build_reranker](../src/pipeline/rerank.py#L1156) 也不在生产调用链上。
+
+`rerank_threshold` 的 API 描述声称“低于此分丢弃”，但 [rerank_domain](../src/pipeline/rerank.py#L421) 只记录是否过阈值并附加 bonus，不会剔除低分项；现有学术测试还要求候选回填。这已经不是内部实现细节，而是公开契约偏差。
+
+处理建议：
+
+- 先增加两组行为刻画测试，明确当前真实结果。
+- 决定阈值语义是“硬过滤”还是“软门槛+回填”，使字段名、文档和实现一致。
+- 将多个布尔开关收敛为服务端允许的 `RankingProfile`，例如 `fast / quality / off`。
+- 所有公开配置都必须有“改变输入后可观察到行为变化”的契约测试；无效配置应删除或明确废弃。
+
+#### F-02 组合根位于模块导入阶段
+
+全局 `settings` 在 [config.py](../src/config.py#L136) 导入时创建，`api.py` 又在导入时立刻构造 [SearchEngine 单例](../src/api.py#L32) 和 MCP。Engine 构造函数继续创建具体 Provider、模型、Cache 和 Verifier。Provider 内部还会再次直接读取环境变量。
+
+启用语义也因此不够明确：`OPENALEX_API_URL` 默认非空，使 `OPENALEX_ENABLED=false` 仍不能关闭学术 Provider；反过来，`PATENT_ES_ENABLED=true` 即使 URL 为空也能构造一个只会返回空结果的 Provider。环境变量中的数值一旦格式错误，还会在模块导入阶段直接终止启动。
+
+这使配置、资源生命周期和业务逻辑绑定在一起；测试不得不使用 `object.__new__(SearchEngine)` 绕过构造函数，或 monkeypatch 模块级 `requests`。
+
+处理建议：新增唯一的 `bootstrap.py`，由 `Settings.from_env()` 生成不可变配置并装配 Container；提供 `create_app(container)`，在 lifespan 中创建和关闭模型、HTTP session 与共享执行器。除 composition root 外，不允许读取环境变量或构造具体适配器。
+
+#### F-03 `SearchEngine` 职责过载
+
+[engine.py](../src/engine.py) 同时负责 Provider 工厂、Scorer/Verifier 生命周期、缓存策略、两轮并发、PDF HTTP、三类 Evidence 映射、Trust 接入、Answerability 和错误降级。新增一种领域或富化步骤需要在同一文件修改多个分支。
+
+处理建议：保留同名门面，但内部依次委托给 `QueryPlanner`、`RecallCoordinator`、`RankingService`、`PdfTextGateway`、`EvidenceAssembler`、`TrustAnnotator` 和 `AnswerabilityPolicy`。门面只负责兼容旧调用签名。
+
+#### F-04 可变对象把缓存、排序和可信判断耦合在一起
+
+`SearchResult` 同时携带供应商数据和 `provider_rank/rerank_score/raw` 等管线状态。Engine 写入 `provider_rank`，重排器写入 `rerank_score`，RRF 又把 `_rrf_*` 临时字段写入 `raw` 并可能拼接 `source`。缓存因此必须进行深复制，[代码注释](../src/engine.py#L275) 已明确承认污染风险；PDF 与 Trust 也继续原地修改对象。
+
+SerpAPI 将 snippet 同时写入 `content`，Evidence 映射会把它看成正文，Trust 只能通过 `source == "serpapi"` 再做特判。这说明内容来源不应靠字段是否非空或 Provider 名猜测。
+
+处理建议：
+
+- Provider 返回不可变 `RetrievedDocument`，显式包含 `content_kind`、`source_attributions`、`source_record_id`、`snapshot` 和实际过滤条件。
+- 排序返回新的 `RankedDocument(document, score, features)`，不修改输入。
+- PDF 返回 `EnrichedDocument` 或独立 enrichment 数据，不写回 Provider DTO。
+- EvidenceAssembler 使用纯函数生成 Evidence；Trust 只消费结构化 provenance。
+- `raw` 只可作为只读诊断载荷，管线不得向其中写工作字段。
+
+#### F-05 外部错误可能暴露凭证，模型覆盖缺少约束
+
+SerpAPI 把 key 放在 URL 查询参数中，[requests 调用](../src/providers/serpapi.py#L47) 产生的异常可能携带完整 URL；Engine 当前把第三方异常字符串写入 `failures[]` 并打印日志。另一个边界是 REST 允许客户端任意指定 `rerank_backend` 和 `rerank_model`，Engine 会构造并缓存最多 16 个 Scorer；本地后端可能下载或加载任意模型。
+
+处理建议：定义不包含 URL/header/body 的 `ExternalServiceError(code, provider, recoverable)`，由适配器保留原始异常供受控日志使用，并在统一错误边界做 secret redaction。对外只暴露 allowlist 中的 Ranking Profile，不接受任意模型标识。
+
+### 3.3 P1：建立清晰模块边界
+
+#### F-06 Provider Port 没有表达能力和实际检索边界
+
+当前接口只有 `search(query, top_k, recency)`。Engine 另用 `"web" / "academic" / "patent"`、具体 Provider 名和 `isinstance` 分派；不同适配器对同一个 recency 的解释也不同，SearchBoundary 却由 Engine 按名称推测快照。
+
+建议引入：
+
+- `SourceDescriptor`：`id`、`kind`、能力、快照能力和数据许可。
+- `RetrievalRequest`：明确的时间区间、语言、辖区和候选预算。
+- `RetrievalBatch`：候选、实际查询、实际过滤、快照、限制、耗时和诊断。
+- `SourceRegistry`：按 descriptor 注册适配器，Engine 不再识别具体 Provider 名。
+
+#### F-07 `rerank.py` 混合算法、策略、模型适配与旧路径
+
+[rerank.py](../src/pipeline/rerank.py) 共 1237 行，包含三个模型后端、通用领域算法、三套领域特征、旧 Fusion/Threshold 包装器和工厂。`AcademicReranker` 与 `WebReranker` 还保留一套未被当前公开重排路径调用的旧辅助实现，RRF 也存在两份近似逻辑。
+
+建议拆为 `ranking/ports.py`、`ranking/core.py`、`ranking/web.py`、`ranking/academic.py`、`ranking/patent.py` 和 `adapters/ranking/{siliconflow,bge,flashrank}.py`。只保留一条构建路径和一份 RRF 语义。
+
+#### F-08 网络、缓存、时钟和执行器散落在业务模块
+
+查询改写、Provider、云重排、PDF 和模型蕴含都直接调用 `requests`；`l0.py` 的模块级 rewrite cache 与 Engine 的 Scorer cache 没有并发保护。单次请求还可能分别为召回、重排和 PDF 创建线程池，且没有统一 deadline/cancellation。
+
+建议为 `QueryRewriter`、`TextScorer`、`PdfTextGateway`、`EntailmentClassifier` 和 `Cache` 定义 Port。适配器注入共享 HTTP transport、Clock 和有界 Executor；重试、超时、熔断、指标、脱敏和全局 Deadline 在基础设施边界统一实现。
+
+#### F-09 REST、MCP 与评测存在契约漂移
+
+REST 在 [api.py](../src/api.py#L94) 定义请求模型并直接返回 `SearchResponse`；MCP 在 [mcp_server.py](../src/mcp_server.py#L79) 重复参数，再手工挑选响应字段。Tool Agent 评测还需要在 [run_tool_agent_eval.py](../eval/run_tool_agent_eval.py#L137) 把 MCP JSON 重新拼成 `SearchResponse`。新增字段必须同步修改多处，当前 MCP 投影已经省略部分 REST 字段。
+
+建议共享 `SearchCommand/SearchOptions` 和版本化 Response DTO。REST/MCP 只负责传输校验与映射；若 MCP 确实需要紧凑投影，应由一个显式 `McpSearchPresenter` 完成并用 golden contract test 固定，而不是在工具函数中临时组字典。
+
+#### F-10 `models.py` 是全系统 shared kernel
+
+[models.py](../src/models.py) 同时包含 Provider 内部结果、排序工作字段、Evidence、Trust、SearchPlan、错误和 API 响应。几乎所有模块都依赖它，普通字符串状态又允许无效组合在层间流动。
+
+建议按变化原因拆成 `domain/search.py`、`domain/evidence.py`、`domain/trust.py`、`application/commands.py` 和 `interfaces/schemas.py`。内部领域类型可继续使用 Pydantic，但应冻结或只读；传输 DTO 通过 Mapper 与领域类型隔离，并逐步将 kind/status/code 改成 Enum 或 discriminated union。
+
+### 3.4 P2：工程与评测解耦
+
+- `eval/run_agent_scenario_compare.py` 直接导入 `_build_answerability`，多个 Runner 还自行构造 Provider、Ranking 和 `SearchResponse`。评测应依赖 `SearchUseCase` 或版本化 HTTP/MCP Client，实验性单组件评测则依赖公开的 Ranking Port。
+- 当前 `requirements.txt` 只有六个未锁版本，未声明直接使用的 MCP 依赖、测试依赖和可选 BGE 依赖；MCP 导入失败会静默变成 REST-only。建议迁移到 `pyproject.toml`，拆分 `service`、`mcp`、`local-ranking`、`eval`、`dev` extras 并提交锁定方案。
+- 当前没有 CI、coverage、lint/type 配置。版本库中仅有 27 个已跟踪测试；Trust 的 16 个测试仍在当前未跟踪文件中，合并前必须纳入版本控制。
+- `/health` 只展示对象与配置状态，不能证明上游可用。建议拆分 `/livez` 与 `/readyz`，后者读取适配器/circuit 状态，不在每次探活中触发付费搜索。
+- 现有评测缓存 key 没有完整包含代码、模型、rubric、配置和数据版本。报告应记录 git SHA、Settings 指纹、数据集 hash、模型与 rubric 版本，避免旧缓存伪装成新结果。
+
+## 4. 目标架构
+
+### 4.1 依赖规则
+
+```mermaid
+flowchart LR
+    REST[REST adapter] --> APP[Application use cases]
+    MCP[MCP adapter] --> APP
+    CLI[CLI / Eval client] --> APP
+    APP --> DOMAIN[Domain models and policies]
+    APP --> PORTS[Outbound ports]
+    ADAPTERS[Providers / LLM / PDF / Cache adapters] -. implement .-> PORTS
+    BOOT[Composition root] --> REST
+    BOOT --> MCP
+    BOOT --> APP
+    BOOT --> ADAPTERS
+```
+
+强制依赖规则如下：
+
+- `domain` 不导入 FastAPI、MCP、`requests`、环境变量或具体 Provider/模型。
+- `application` 只依赖 domain 与 Port，不导入具体 adapter 和全局 settings。
+- `interfaces` 依赖 application 的用例接口与传输 DTO，不窥探用例内部对象。
+- `infrastructure/adapters` 依赖 Port 和 domain，实现外部 I/O。
+- `bootstrap` 是唯一允许同时认识接口、应用和基础设施的模块。
+- `eval` 不导入下划线私有函数，也不自行复制生产编排。
+
+### 4.2 建议目录
+
+```text
+src/
+  bootstrap.py
+  domain/
+    search.py
+    evidence.py
+    trust.py
+    errors.py
+    url_identity.py
+    ranking/
+      core.py
+      web.py
+      academic.py
+      patent.py
+  application/
+    commands.py
+    outcomes.py
+    search_service.py
+    verify_service.py
+    pdf_service.py
+    recall.py
+    evidence_assembler.py
+    answerability.py
+    ports/
+      retrieval.py
+      ranking.py
+      rewrite.py
+      enrichment.py
+      entailment.py
+      cache.py
+  infrastructure/
+    config.py
+    http.py
+    providers/
+    ranking/
+    llm/
+    openalex_pdf.py
+    cache/
+  interfaces/
+    rest/
+      app.py
+      schemas.py
+    mcp/
+      server.py
+      presenters.py
+```
+
+这是目标职责图，不要求一次性移动全部文件。迁移期允许旧路径作为 re-export 或兼容门面。
+
+### 4.3 核心 Port
+
+```python
+class SearchProviderPort(Protocol):
+    descriptor: SourceDescriptor
+    def retrieve(self, request: RetrievalRequest) -> RetrievalBatch: ...
+
+class TextScorerPort(Protocol):
+    name: str
+    def score(self, query: str, texts: Sequence[str]) -> Sequence[float]: ...
+
+class PdfTextPort(Protocol):
+    def enrich(self, request: PdfEnrichmentRequest) -> PdfEnrichmentOutcome: ...
+    def read_page(self, request: PdfPageRequest) -> PdfPageOutcome: ...
+
+class SearchUseCase(Protocol):
+    def execute(self, command: SearchCommand) -> SearchResponse: ...
+```
+
+所有批处理结果都使用 `Outcome(items, failures, diagnostics)` 表达部分成功；不以第三方异常字符串作为跨层协议。同步 Port 可以先保留，避免在解耦同时改写异步模型；并发、共享执行器与全局 Deadline 由 Application 的 Coordinator 统一控制。
+
+### 4.4 领域扩展方式
+
+新增 Provider 时只应完成三件事：实现 `SearchProviderPort`、声明 `SourceDescriptor`、在 composition root 注册。新增领域时再注册一个 `DomainHandler(kind, rank_policy, evidence_mapper)`。`SearchService`、REST、MCP、Trust 和现有领域实现不应因新增普通 Provider 而修改。
+
+## 5. 渐进式重构计划
+
+### Phase 0：冻结行为与修正契约
+
+- 为 `fusion_enabled`、threshold 语义、REST/MCP 输出差异、缓存不污染和输入对象不变补测试。
+- 修复无效开关，限制模型选择，增加统一错误脱敏。
+- 把当前未跟踪的 Trust 测试纳入版本控制。
+- 记录一份固定语料的排序和 Evidence golden baseline。
+
+退出条件：所有公开配置均被消费或明确废弃；第三方异常不会向响应和普通日志泄露凭证。
+
+### Phase 1：建立 composition root 与可注入入口
+
+- 引入分组、不可变、启动时一次校验的 Settings。
+- 提供 `create_container(settings)`、`create_app(container)` 和 MCP factory。
+- Provider、Scorer、Verifier、Cache、Clock、HTTP transport、Executor 全部显式注入。
+- 保留 `src.api:app` 和 `SearchEngine.search(...)` 兼容入口。
+
+退出条件：核心测试不再使用 `object.__new__` 绕构造器；导入 domain/application 不会读取 `.env`、加载模型或创建外部客户端。
+
+### Phase 2：拆分 Engine 用例
+
+- 依次抽出 `EvidenceAssembler`、`AnswerabilityPolicy`、`PdfTextGateway`。
+- 抽出 `RecallCoordinator` 与 `RankingService`，统一 Stage Outcome 和 Deadline。
+- 将 Claim Verification 从 Engine 门面移到 `VerifyService`。
+
+退出条件：`SearchEngine` 只做兼容委托；每个服务可用 Fake Port 独立测试；部分失败与降级行为保持不变。
+
+### Phase 3：消除可变阶段模型并拆分 Ranking
+
+- 引入 `RetrievedDocument -> RankedDocument -> EnrichedDocument -> Evidence` 单向转换。
+- Provider 显式提供 provenance、实际过滤和 snapshot，不再靠名称推断。
+- 拆分 `rerank.py`，删除旧辅助路径和重复 RRF。
+- 将 Ranking Profile 与领域策略统一到一条生产构建路径。
+
+退出条件：排序与富化不修改输入；缓存无需为防管线污染而深复制；新增 Web Provider 不改 Engine/Trust。
+
+### Phase 4：统一入口契约与评测边界
+
+- REST/MCP 共享 Command、Response 和 Mapper。
+- 对有意不同的 MCP 紧凑输出建立版本化 Presenter 与 golden test。
+- Eval 只调用公开 Use Case/Client；组件实验通过公开 Port 注入策略。
+- 将运行依赖、可选 extras、CI、类型检查和覆盖率门槛纳入标准构建。
+
+退出条件：新增请求/响应字段只有一个权威定义；评测不导入生产私有函数；全新 Python 3.11 环境可复现 REST+MCP 服务。
+
+### Phase 5：运行时治理
+
+- 引入全局 Deadline、共享有界 Executor、连接池、重试/退避、熔断与速率限制。
+- 增加 request id、阶段耗时、Provider outcome、cache hit 和降级原因等结构化指标。
+- 建立 `/livez`、`/readyz` 与真实 Provider canary；外部 LLM 增加数据分级、脱敏与 egress policy。
+
+退出条件：并发、超时和部分失败有明确预算；健康检查、日志和指标不泄露 query 正文、Evidence 或凭证。
+
+## 6. 测试与发布门槛
+
+每个重构阶段至少需要以下保护：
+
+- **纯领域测试**：QueryPlanner、领域排序策略、EvidenceAssembler、Answerability、Trust Policy 使用固定 Clock 和不可变输入。
+- **Port 契约测试**：每个 Provider 覆盖 success、empty、401/429、5xx、timeout、坏 JSON、字段漂移，并断言错误中不含 token。
+- **Application 集成测试**：Fake Provider/Scorer/PDF 下覆盖乱序完成、部分失败、全失败、重排降级、Deadline 和缓存隔离。
+- **接口契约测试**：FastAPI 鉴权与 422/错误映射；MCP initialize、tools/list、三类 tool call、Host/Origin 与鉴权。
+- **并发测试**：并发 20–50 个请求时，Scorer/rewrite cache、Executor 和内存使用受限且结果稳定。
+- **质量回归**：固定 corpus 的 NDCG/Recall/路由覆盖不得越过事先定义的下降阈值，报告携带完整版本指纹。
+- **部署 Smoke**：全新环境安装、服务启动、`/livez`、`/readyz`、授权搜索、MCP 调用和 SIGTERM 优雅退出。
+
+建议首轮门槛为：所有测试通过；新增/拆分模块分支覆盖率不低于 90%；固定排序基线无非预期变化；secret leak 为 0；必需来源路由覆盖为 100%；NDCG@10 相对基线下降不超过 0.02。具体延迟预算应在有代表性的部署环境测量后固定。
+
+## 7. 完成定义
+
+解耦完成不以“文件变多”为标准，而以以下可验证结果为准：
+
+1. 新增普通 Provider 只新增 Adapter 和注册配置。
+2. Application/Domain 不导入 `requests`、FastAPI、MCP、环境变量或具体供应商 SDK。
+3. REST、MCP 和 Eval 共享一个权威命令/响应契约。
+4. `SearchEngine` 不再构造依赖、不执行 PDF HTTP、不映射三类 Evidence。
+5. Provider 候选在缓存、重排、富化和 Trust 阶段保持不可变。
+6. 所有公开配置均有可观察的行为测试，不存在“接受但不生效”的开关。
+7. 外部错误经过类型化、脱敏和稳定映射，客户端不会看到凭证或供应商原始异常。
+8. 新鲜环境可安装并启动完整 REST+MCP 服务，CI 能执行单元、契约、集成和部署 Smoke。
+
+达到这些条件后，模块才真正实现了按变化原因解耦；是否将某个 Adapter 独立部署，可以在容量、故障域或合规需求出现后再决定。

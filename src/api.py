@@ -10,7 +10,7 @@ from __future__ import annotations
 import hmac
 import os
 from contextlib import asynccontextmanager
-from typing import Optional
+from typing import List, Literal, Optional
 
 from fastapi import FastAPI, Request
 from fastapi.responses import FileResponse, JSONResponse
@@ -18,7 +18,14 @@ from pydantic import BaseModel, Field
 
 from src.config import settings
 from src.engine import SearchEngine
-from src.models import PdfTextResponse, SearchResponse
+from src.models import (
+    CandidateClaim,
+    Evidence,
+    PdfTextResponse,
+    SearchBoundary,
+    SearchResponse,
+    VerifyResponse,
+)
 
 _STATIC_DIR = os.path.join(os.path.dirname(__file__), "static")
 
@@ -116,6 +123,20 @@ class SearchRequest(BaseModel):
     )
     fusion_enabled: Optional[bool] = Field(None, description="是否启用辅助信号融合(新鲜度/权威度)")
     rewrite_enabled: Optional[bool] = Field(None, description="是否启用 L0 LLM 查询改写")
+    trust_mode: Literal["off", "annotate"] = Field(
+        "annotate",
+        description="可信证据 Phase 0:off=保持旧 evidence;annotate=补 provenance/locator/quality/边界",
+    )
+
+
+class VerifyRequest(BaseModel):
+    query: str = Field(..., min_length=1, description="产生这些候选陈述的原始问题")
+    claims: List[CandidateClaim] = Field(..., min_length=1, max_length=20)
+    evidence: List[Evidence] = Field(..., max_length=100)
+    profile: Literal[
+        "general", "news", "scientific", "patent", "legal", "financial", "product"
+    ] = "general"
+    search_boundary: Optional[SearchBoundary] = None
 
 
 @app.get("/health")
@@ -126,6 +147,7 @@ def health() -> dict:
         "academic": engine.academic_provider is not None,
         "patent": engine.patent_provider is not None,
         "reranker": engine.text_scorer.name,
+        "claim_verifier": engine.claim_verifier.classifier.name,
         "auth": settings.auth_enabled,
         "mcp": _mcp_app is not None,
         "cache": engine.cache.stats() if engine.cache else {"enabled": False},
@@ -136,6 +158,7 @@ def health() -> dict:
             "rerank_threshold": settings.rerank_threshold,
             "fusion_enabled": settings.fusion_enabled,
             "rewrite_enabled": settings.rewrite_enabled,
+            "trust_mode": "annotate",
             "top_k": settings.default_top_k,
         },
     }
@@ -154,11 +177,24 @@ def search(req: SearchRequest) -> SearchResponse:
         rerank_threshold=req.rerank_threshold,
         fusion_enabled=req.fusion_enabled,
         rewrite_enabled=req.rewrite_enabled,
+        trust_mode=req.trust_mode,
         include_pdf_text=req.include_pdf_text,
         pdf_text_mode=req.pdf_text_mode,
         pdf_max_results=req.pdf_max_results,
         pdf_max_chars_per_result=req.pdf_max_chars_per_result,
         pdf_timeout_ms=req.pdf_timeout_ms,
+    )
+
+
+@app.post("/verify", response_model=VerifyResponse)
+def verify(req: VerifyRequest) -> VerifyResponse:
+    """基于 search 返回的 evidence 校验候选陈述；Phase 1 不自动补充检索。"""
+    return engine.verify_claims(
+        req.query,
+        req.claims,
+        req.evidence,
+        profile=req.profile,
+        search_boundary=req.search_boundary,
     )
 
 

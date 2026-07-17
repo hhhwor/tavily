@@ -16,6 +16,9 @@ class _Resp:
         return {
             "status": "ready",
             "pages": 3,
+            "chunk_index": 0,
+            "page_from": 1,
+            "page_to": 2,
             "text_length": 1200,
             "text": "full text from pdf",
             "next_cursor": "cursor1",
@@ -75,6 +78,9 @@ def test_pdf_enrichment_attaches_pdf_fields(monkeypatch):
     assert paper.pdf_status == "ready"
     assert paper.pdf_text == "full text from pdf"
     assert paper.pdf_pages == 3
+    assert paper.pdf_chunk_index == 0
+    assert paper.pdf_page_from == 1
+    assert paper.pdf_page_to == 2
     assert paper.pdf_next_cursor == "cursor1"
 
 
