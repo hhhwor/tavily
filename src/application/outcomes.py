@@ -4,6 +4,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Sequence, Tuple, TypeVar
 
+from src.application.ports.retrieval import RetrievalBatch
 from src.domain.documents import EnrichedDocument, RankedDocument, RetrievedDocument
 from src.models import SearchFailure, SearchPlan
 from src.pipeline.ranking_options import RankingOptions
@@ -43,6 +44,7 @@ class RecallOutcome:
     web: Tuple[RetrievedDocument, ...] = ()
     academic: Tuple[RetrievedDocument, ...] = ()
     patent: Tuple[RetrievedDocument, ...] = ()
+    batches: Tuple[RetrievalBatch, ...] = ()
     providers_used: Tuple[str, ...] = ()
     planned_sources: Tuple[str, ...] = ()
     candidate_budget: int = 0
@@ -53,6 +55,7 @@ class RecallOutcome:
             "web",
             "academic",
             "patent",
+            "batches",
             "providers_used",
             "planned_sources",
             "failures",

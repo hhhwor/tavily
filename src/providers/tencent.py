@@ -17,6 +17,7 @@ import requests
 
 from src.domain.errors import ExternalServiceError
 from src.infrastructure.http_errors import external_http_error
+from src.application.ports.retrieval import RetrievalRequest, SourceDescriptor
 from src.models import SearchResult
 from src.providers.base import SearchProvider
 
@@ -69,6 +70,15 @@ def _sign_v3(secret_id: str, secret_key: str, payload: str) -> Dict[str, str]:
 
 class TencentSearchProvider(SearchProvider):
     name = "tencent"
+    descriptor = SourceDescriptor(
+        id=name,
+        kind="web",
+        capabilities=frozenset({"recency_filter", "time_range_filter", "full_content"}),
+        data_license="tencent-cloud-terms",
+        default_language="zh",
+        jurisdictions=("CN",),
+        count_empty_as_used=True,
+    )
 
     def __init__(
         self,
@@ -84,10 +94,37 @@ class TencentSearchProvider(SearchProvider):
         if not self.secret_id or not self.secret_key:
             raise ValueError("缺少腾讯云凭证: TENCENT_SECRET_ID / TENCENT_SECRET_KEY")
 
+    def actual_filters(self, request: RetrievalRequest) -> Dict[str, Any]:
+        filters: Dict[str, Any] = {}
+        if request.recency and request.time_from and request.time_to:
+            filters["FromTime"] = int(request.time_from.timestamp())
+            filters["ToTime"] = int(request.time_to.timestamp())
+        return filters
+
     def search(self, query: str, top_k: int = 10, recency: Optional[str] = None) -> List[SearchResult]:
+        return self._search(query, top_k, recency, request=None)
+
+    def search_request(self, request: RetrievalRequest) -> List[SearchResult]:
+        return self._search(
+            request.query,
+            request.candidate_budget,
+            request.recency,
+            request=request,
+        )
+
+    def _search(
+        self,
+        query: str,
+        top_k: int,
+        recency: Optional[str],
+        *,
+        request: Optional[RetrievalRequest],
+    ) -> List[SearchResult]:
         body: Dict[str, Any] = {"Query": query, "Mode": 0}
         # 时效过滤:recency bucket → FromTime/ToTime(Unix 时间戳)
-        if recency:
+        if request is not None:
+            body.update(self.actual_filters(request))
+        elif recency:
             delta = {"day": 86400, "week": 7 * 86400, "month": 30 * 86400,
                      "year": 365 * 86400}.get(recency)
             if delta:

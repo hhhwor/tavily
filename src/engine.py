@@ -34,12 +34,14 @@ class SearchEngine:
         cache: Any = None,
         text_scorer: Any = None,
         ranking_service: Any = None,
+        source_registry: Any = None,
     ) -> None:
         self.settings = settings
         self._search_service = search_service
         self._verify_service = verify_service
         self._pdf_gateway = pdf_gateway
         self._ranking_service = ranking_service
+        self.source_registry = source_registry
 
         # 兼容健康检查与既有运维读取；搜索编排不再依赖这些属性。
         self.providers = list(providers)

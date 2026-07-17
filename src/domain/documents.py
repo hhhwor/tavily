@@ -159,6 +159,7 @@ class RetrievedDocument:
         snapshot: Optional[str] = None,
         actual_filters: Optional[Mapping[str, Any]] = None,
         content_kind: Optional[ContentKind] = None,
+        provider: Optional[str] = None,
     ) -> "RetrievedDocument":
         payload = result.model_dump(mode="python")
         raw = dict(payload.pop("raw", {}) or {})
@@ -166,7 +167,7 @@ class RetrievedDocument:
         raw = {key: value for key, value in raw.items() if not key.startswith("_rrf_")}
         metadata = {key: value for key, value in payload.items() if key not in _BASE_FIELDS}
         attribution = SourceAttribution(
-            provider=result.source,
+            provider=provider or result.source,
             provider_rank=(
                 result.provider_rank if provider_rank is None else provider_rank
             ),
@@ -182,7 +183,7 @@ class RetrievedDocument:
             content=result.content,
             published_date=result.date,
             site=result.site,
-            source=result.source,
+            source=provider or result.source,
             source_score=result.score,
             content_kind=content_kind or _content_kind(result, kind),
             attributions=attributions or (attribution,),

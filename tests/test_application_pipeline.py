@@ -17,12 +17,15 @@ from src.application.outcomes import (
 from src.application.ranking_service import RankingService
 from src.application.recall import RecallCoordinator
 from src.application.search_service import SearchService
+from src.application.source_registry import SourceRegistry
 from src.application.trust_annotator import TrustOutcome
+from src.application.ports.retrieval import SourceDescriptor
 from src.cache import InMemoryCache
 from src.config import Settings
 from src.models import Answerability, SearchFailure, SearchPlan, SearchResult
 from src.pipeline.ranking_options import resolve_ranking_options
 from src.pipeline.rerank import NoOpReranker
+from src.providers.base import SearchProvider
 
 
 class _InlineExecutor:
@@ -35,9 +38,14 @@ class _InlineExecutor:
         return future
 
 
-class _Provider:
+class _Provider(SearchProvider):
     def __init__(self, name="web", *, failure=None):
         self.name = name
+        self.descriptor = SourceDescriptor(
+            id=name,
+            kind="web",
+            count_empty_as_used=True,
+        )
         self.failure = failure
         self.calls = []
 
@@ -80,9 +88,7 @@ def test_recall_cache_isolated_from_pipeline_mutation_and_time_sensitive_bypass(
     provider = _Provider()
     coordinator = RecallCoordinator(
         _settings(),
-        [provider],
-        None,
-        None,
+        SourceRegistry([provider]),
         InMemoryCache(),
         _InlineExecutor(),
     )
@@ -107,9 +113,7 @@ def test_recall_converts_provider_exception_to_stage_failure():
     provider = _Provider(failure=RuntimeError("unavailable"))
     outcome = RecallCoordinator(
         _settings(cache_enabled=False),
-        [provider],
-        None,
-        None,
+        SourceRegistry([provider]),
         None,
         _InlineExecutor(),
     ).recall(_planned())
@@ -232,9 +236,7 @@ def test_search_service_owns_stage_order_and_failure_order():
         evidence_assembler=Evidence(),
         trust_annotator=Trust(),
         answerability=Policy(),
-        provider_names=(),
-        academic_available=False,
-        patent_available=False,
+        source_registry=SourceRegistry(),
     )
     response = service.execute(SearchCommand("q", trust_mode="off"))
 

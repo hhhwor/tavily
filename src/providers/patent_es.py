@@ -18,6 +18,7 @@
 """
 from __future__ import annotations
 
+from dataclasses import replace
 import re
 from datetime import date, timedelta
 from typing import Any, Dict, List, Optional
@@ -25,6 +26,7 @@ from typing import Any, Dict, List, Optional
 import requests
 
 from src.infrastructure.http_errors import external_http_error
+from src.application.ports.retrieval import RetrievalRequest, SourceDescriptor
 from src.models import PatentResult
 from src.providers.base import SearchProvider
 
@@ -79,6 +81,15 @@ def _extract_names(value: Any) -> List[str]:
 
 class PatentEsProvider(SearchProvider):
     name = "patent_es"
+    descriptor = SourceDescriptor(
+        id=name,
+        kind="patent",
+        capabilities=frozenset({"recency_filter", "time_range_filter"}),
+        snapshot_capability="index_alias",
+        default_snapshot="index-alias:unspecified",
+        data_license="EPO-DOCDB",
+        max_candidates=100,
+    )
 
     def __init__(
         self,
@@ -95,9 +106,41 @@ class PatentEsProvider(SearchProvider):
         self.verify_tls = verify_tls
         self.per_page = max(1, min(per_page, 100))
         self._http = http_session or requests
+        self.descriptor = replace(
+            self.descriptor,
+            default_snapshot=f"index-alias:{self.index}",
+            max_candidates=self.per_page,
+        )
+
+    def actual_filters(self, request: RetrievalRequest) -> Dict[str, Any]:
+        filters: Dict[str, Any] = {
+            "index": self.index,
+            "size": min(request.candidate_budget, self.per_page),
+        }
+        if request.recency and request.time_from:
+            filters["application_date_gte"] = request.time_from.date().isoformat()
+        return filters
 
     def search(
         self, query: str, top_k: int = 10, recency: Optional[str] = None
+    ) -> List[PatentResult]:
+        return self._search(query, top_k, recency, request=None)
+
+    def search_request(self, request: RetrievalRequest) -> List[PatentResult]:
+        return self._search(
+            request.query,
+            request.candidate_budget,
+            request.recency,
+            request=request,
+        )
+
+    def _search(
+        self,
+        query: str,
+        top_k: int,
+        recency: Optional[str],
+        *,
+        request: Optional[RetrievalRequest],
     ) -> List[PatentResult]:
         query = (query or "").strip()
         if not query or not self.base_url:
@@ -110,7 +153,13 @@ class PatentEsProvider(SearchProvider):
         body: Dict[str, Any] = {
             "size": size,
             "_source": _SOURCE,
-            "query": {"bool": {"must": must, "filter": self._recency_filter(recency)}},
+            "query": {"bool": {
+                "must": must,
+                "filter": self._recency_filter(
+                    recency,
+                    request.time_from if request is not None else None,
+                ),
+            }},
             # highlight 给摘要片段当 snippet(去标签后用)
             "highlight": {"fields": {"abstract": {"fragment_size": 160, "number_of_fragments": 1}}},
         }
@@ -127,11 +176,19 @@ class PatentEsProvider(SearchProvider):
 
         return self._normalize(hits)[:size]
 
-    def _recency_filter(self, recency: Optional[str]) -> List[Dict[str, Any]]:
+    def _recency_filter(
+        self,
+        recency: Optional[str],
+        time_from=None,
+    ) -> List[Dict[str, Any]]:
         days = _RECENCY_DAYS.get(recency or "")
         if not days:
             return []
-        since = (date.today() - timedelta(days=days)).isoformat()
+        since = (
+            time_from.date().isoformat()
+            if time_from is not None
+            else (date.today() - timedelta(days=days)).isoformat()
+        )
         return [{"range": {"application_date": {"gte": since}}}]
 
     def _normalize(self, hits: List[Dict[str, Any]]) -> List[PatentResult]:

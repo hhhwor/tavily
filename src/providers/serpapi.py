@@ -14,6 +14,7 @@ import requests
 
 from src.domain.errors import ExternalServiceError
 from src.infrastructure.http_errors import external_http_error
+from src.application.ports.retrieval import RetrievalRequest, SourceDescriptor
 from src.models import SearchResult
 from src.providers.base import SearchProvider
 
@@ -30,6 +31,14 @@ _RECENCY_TBS = {
 
 class SerpApiProvider(SearchProvider):
     name = "serpapi"
+    descriptor = SourceDescriptor(
+        id=name,
+        kind="web",
+        capabilities=frozenset({"recency_filter", "language_filter", "jurisdiction_filter", "snippet"}),
+        data_license="serpapi-terms",
+        max_candidates=100,
+        count_empty_as_used=True,
+    )
 
     def __init__(
         self,
@@ -46,6 +55,17 @@ class SerpApiProvider(SearchProvider):
         self._http = http_session or requests
         if not self.api_key:
             raise ValueError("缺少 SerpAPI 凭证: SERPAPI_API_KEY")
+
+    def actual_filters(self, request: RetrievalRequest) -> Dict[str, Any]:
+        filters: Dict[str, Any] = {
+            "engine": "google",
+            "num": min(max(request.candidate_budget, 1), 100),
+            "gl": self.gl,
+            "hl": self.hl,
+        }
+        if request.recency in _RECENCY_TBS:
+            filters["tbs"] = _RECENCY_TBS[request.recency]
+        return filters
 
     def search(self, query: str, top_k: int = 10, recency: Optional[str] = None) -> List[SearchResult]:
         params: Dict[str, Any] = {

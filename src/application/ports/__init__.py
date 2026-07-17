@@ -1,5 +1,4 @@
-"""应用层外部依赖端口。"""
+"""应用层外部依赖端口。
 
-from src.application.ports.pdf_text import PdfTextGateway
-
-__all__ = ["PdfTextGateway"]
+端口从各自模块显式导入；包初始化不得急切加载相互引用的应用契约。
+"""

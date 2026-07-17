@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import time
 from datetime import datetime, timezone
-from typing import Sequence
 
 from src.application.answerability import AnswerabilityPolicy
 from src.application.commands import SearchCommand
@@ -12,6 +11,7 @@ from src.application.ports.pdf_text import PdfTextGateway
 from src.application.query_planner import QueryPlanner
 from src.application.ranking_service import RankingService
 from src.application.recall import RecallCoordinator
+from src.application.source_registry import SourceRegistry
 from src.application.trust_annotator import TrustAnnotator
 from src.models import SearchResponse
 
@@ -29,9 +29,7 @@ class SearchService:
         evidence_assembler: EvidenceAssembler,
         trust_annotator: TrustAnnotator,
         answerability: AnswerabilityPolicy,
-        provider_names: Sequence[str],
-        academic_available: bool,
-        patent_available: bool,
+        source_registry: SourceRegistry,
     ) -> None:
         self._query_planner = query_planner
         self._recall = recall
@@ -40,9 +38,7 @@ class SearchService:
         self._evidence_assembler = evidence_assembler
         self._trust_annotator = trust_annotator
         self._answerability = answerability
-        self._provider_names = tuple(provider_names)
-        self._academic_available = academic_available
-        self._patent_available = patent_available
+        self._source_registry = source_registry
 
     def execute(self, command: SearchCommand) -> SearchResponse:
         trust_mode = (command.trust_mode or "annotate").strip().lower()
@@ -55,9 +51,9 @@ class SearchService:
         query_time = datetime.now(timezone.utc)
         planned = self._query_planner.plan(
             command,
-            self._provider_names,
-            academic_available=self._academic_available,
-            patent_available=self._patent_available,
+            self._source_registry.ids("web"),
+            academic_available=self._source_registry.has_kind("academic"),
+            patent_available=self._source_registry.has_kind("patent"),
         )
         recalled = self._recall.recall(planned)
         ranked = self._ranking.rank(
@@ -93,6 +89,9 @@ class SearchService:
             evidence=evidence,
             query_time=query_time,
             candidate_budget=recalled.candidate_budget,
+            source_snapshots={
+                batch.source.id: batch.snapshot for batch in recalled.batches
+            },
         )
         answerability = self._answerability.evaluate(
             trust.evidence,

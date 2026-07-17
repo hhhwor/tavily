@@ -1,12 +1,12 @@
 # Agent 搜索引擎架构审阅与解耦设计
 
-> 状态：渐进式重构进行中；F-01、F-02、F-03、F-04、F-05 已实施
+> 状态：渐进式重构进行中；F-01 至 F-06 已实施
 >
-> 审阅基线：2026-07-17，`7a85de8` 加当前 F-05 工作树
+> 审阅基线：2026-07-17，`24f0778` 加当前 F-06 工作树
 >
 > 审阅范围：`src/`、`tests/`、`eval/`、`scripts/`、`deploy/` 与直接运行依赖
 >
-> 验证基线：当前工作树 120 个测试全部通过
+> 验证基线：当前工作树 125 个测试全部通过
 >
 > 关联文档：[当前技术路线](tech-route-summary.md)、[Trust Layer 设计](agent-search-trust-layer-design.md)、[评测方法](eval-methodology.md)
 
@@ -145,7 +145,7 @@ flowchart TD
 `RetrievedDocument → RankedDocument → EnrichedDocument → Evidence` 单向转换：
 
 - Provider 的兼容 `SearchResult` 在召回边界立即规范化为冻结的 `RetrievedDocument`；`content_kind`、来源归因、源内排名、源记录 ID、snapshot 与实际查询过滤均成为显式字段。
-- `FrozenMap` 递归冻结 metadata、原始载荷、过滤条件与排序特征。召回缓存直接保存不可变 tuple，命中时可安全共享对象，不再用深复制补偿后续污染。
+- `FrozenMap` 递归冻结 metadata、原始载荷、过滤条件与排序特征。召回缓存直接保存不可变 `RetrievalBatch`，命中时可安全共享对象，不再用深复制补偿后续污染。
 - Ranking 只把不可变输入物化为本次调用的兼容 DTO，领域重排器也先复制候选；排序输出新的 `RankedDocument(document, score, features)`。跨源归并保留全部 attribution，RRF `_rrf_*` 工作字段只转入只读 features，不进入 raw payload。
 - OpenAlex PDF 在适配器内部处理临时副本，并返回独立 `EnrichedDocument`；EvidenceAssembler 不修改阶段输入，内容来源由 `content_kind` 映射，不再由 Provider 名猜测。
 - Trust 标注与 Claim Verification 改为 copy-on-write，返回新的 Evidence；调用方传入的 Evidence 保持不变。
@@ -166,16 +166,18 @@ flowchart TD
 
 ### 3.3 P1：建立清晰模块边界
 
-#### F-06 Provider Port 没有表达能力和实际检索边界
+#### F-06 Provider Port 没有表达能力和实际检索边界（已解决）
 
-当前接口只有 `search(query, top_k, recency)`。Engine 另用 `"web" / "academic" / "patent"`、具体 Provider 名和 `isinstance` 分派；不同适配器对同一个 recency 的解释也不同，SearchBoundary 却由 Engine 按名称推测快照。
+2026-07-17 已在 [application/ports/retrieval.py](../src/application/ports/retrieval.py)
+建立来源无关的检索契约：
 
-建议引入：
+- 冻结的 `SourceDescriptor` 声明稳定 id、`web/academic/patent` kind、过滤/内容能力、snapshot 能力、数据许可、语言/辖区、候选上限和空结果统计策略。
+- `RetrievalRequest` 显式携带查询、候选预算、recency、UTC `time_from/time_to`、语言与辖区；`RecallCoordinator` 从查询计划生成一次确定的边界并注入 Clock。
+- `RetrievalBatch` 返回不可变文档、实际查询、实际过滤、snapshot、限制、耗时和诊断。腾讯、百度、SerpAPI、OpenAlex 与 Patent ES 分别报告自己的原生过滤语义；显式时间边界直接进入腾讯时间戳、OpenAlex 年份和 Patent ES range 请求。
+- 现有 Provider 保留 `search()` 供评测兼容，基类 `retrieve()` 将其适配为新 Port 并在适配器边界生成 `RetrievedDocument`。新增 Provider 必须声明 descriptor，无需让应用层识别具体类。
+- [source_registry.py](../src/application/source_registry.py) 在 composition root 中按 descriptor 注册来源并拒绝重复 id。`SearchService` 与 `RecallCoordinator` 只按 Registry 和 descriptor.kind 规划、路由、统计、缓存及构造 Trust snapshot，不再持有 academic/patent 专用槽位或按 Provider 名推测能力。
 
-- `SourceDescriptor`：`id`、`kind`、能力、快照能力和数据许可。
-- `RetrievalRequest`：明确的时间区间、语言、辖区和候选预算。
-- `RetrievalBatch`：候选、实际查询、实际过滤、快照、限制、耗时和诊断。
-- `SourceRegistry`：按 descriptor 注册适配器，Engine 不再识别具体 Provider 名。
+任意 source id 的三领域路由、重复注册、真实过滤映射、显式时间边界下传以及应用层无具体 Provider 分派均有契约测试。
 
 #### F-07 `rerank.py` 混合算法、策略、模型适配与旧路径
 
@@ -349,7 +351,7 @@ class SearchUseCase(Protocol):
 ### Phase 3：消除可变阶段模型并拆分 Ranking
 
 - [x] 引入 `RetrievedDocument -> RankedDocument -> EnrichedDocument -> Evidence` 单向转换。
-- [x] 在 Provider 适配器边界生成 provenance、实际过滤和 snapshot，不再由下游阶段猜测。
+- [x] F-06：引入 `SourceDescriptor/RetrievalRequest/RetrievalBatch/SourceRegistry`，在 Provider 适配器边界生成 provenance、实际过滤和 snapshot。
 - 拆分 `rerank.py`，删除旧辅助路径和重复 RRF。
 - [x] 将 Ranking Profile 与领域策略统一到一条生产构建路径。
 

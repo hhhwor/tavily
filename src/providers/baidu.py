@@ -13,6 +13,7 @@ import requests
 
 from src.domain.errors import ExternalServiceError
 from src.infrastructure.http_errors import external_http_error
+from src.application.ports.retrieval import RetrievalRequest, SourceDescriptor
 from src.models import SearchResult
 from src.providers.base import SearchProvider
 
@@ -57,6 +58,16 @@ def trim_query(query: str, limit: int = _QUERY_LIMIT) -> str:
 
 class BaiduSearchProvider(SearchProvider):
     name = "baidu"
+    descriptor = SourceDescriptor(
+        id=name,
+        kind="web",
+        capabilities=frozenset({"recency_filter", "full_content"}),
+        data_license="baidu-qianfan-terms",
+        default_language="zh",
+        jurisdictions=("CN",),
+        max_candidates=50,
+        count_empty_as_used=True,
+    )
 
     def __init__(
         self,
@@ -69,6 +80,23 @@ class BaiduSearchProvider(SearchProvider):
         self._http = http_session or requests
         if not self.api_key:
             raise ValueError("缺少百度千帆凭证: QIANFAN_API_KEY")
+
+    def actual_query(self, request: RetrievalRequest) -> str:
+        return trim_query(request.query)
+
+    def actual_filters(self, request: RetrievalRequest) -> Dict[str, Any]:
+        filters: Dict[str, Any] = {
+            "resource_type": "web",
+            "top_k": min(request.candidate_budget, 50),
+        }
+        if request.recency:
+            filters["search_recency_filter"] = {
+                "day": "week",
+                "week": "week",
+                "month": "month",
+                "year": "year",
+            }.get(request.recency, "month")
+        return filters
 
     def search(self, query: str, top_k: int = 10, recency: Optional[str] = None) -> List[SearchResult]:
         body: Dict[str, Any] = {

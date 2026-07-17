@@ -3,7 +3,7 @@
 > 对象:本项目(面向 AI Agent / LLM 的通用 Web 搜索引擎,Tavily 路线)**当前已落地的真实实现**。
 > 一句话:**元搜索聚合**——包装现成搜索源 + 跨源去重/融合 + cross-encoder 段落级重排,以结构化 JSON 返回 LLM-ready 内容,**不自建全网爬虫与倒排索引**。另接入 **OpenAlex 学术检索(经本地 Chukonu 检索系统)** 与 **专利检索(houdutech 只读 ES)** 作为两条独立能力支线(学术论文 / 专利结果各自单独成块)。
 > 代码:[src/](../src/) ｜ 调研与选型对比:[agent-search-engine-tech-research.md](./agent-search-engine-tech-research.md) ｜ 学术引擎可行性:[academic-search-engine-feasibility.md](./academic-search-engine-feasibility.md) ｜ 评测体系:[eval-methodology.md](./eval-methodology.md)
-> 编写日期:2026-06-10 ｜ 更新:2026-06-11(接入 OpenAlex 学术检索 + provider 召回缓存)｜ 2026-06-16(接入专利检索 ES 支线)｜ 2026-06-17(专利源切换到 epo_docdb_v2 多语种索引;引擎升级 Python 3.11 + FastAPI 进程内挂载 MCP server `/mcp`)｜ 2026-06-21(专利索引切到读别名 `epo_docdb_read`→`epo_docdb_v2_20260620`)｜ 2026-07-17(统一 Ranking Profile、建立 composition root、拆分应用服务与不可变文档管线、收口外部错误与模型选择边界)
+> 编写日期:2026-06-10 ｜ 更新:2026-06-11(接入 OpenAlex 学术检索 + provider 召回缓存)｜ 2026-06-16(接入专利检索 ES 支线)｜ 2026-06-17(专利源切换到 epo_docdb_v2 多语种索引;引擎升级 Python 3.11 + FastAPI 进程内挂载 MCP server `/mcp`)｜ 2026-06-21(专利索引切到读别名 `epo_docdb_read`→`epo_docdb_v2_20260620`)｜ 2026-07-17(统一 Ranking Profile、composition root、应用服务、不可变文档管线、外部错误边界与 Source Registry)
 
 本篇只讲**现在到底怎么做的**:分层、选型、默认开关、评测结论、运行方式。选型「为什么这么选 / 和谁对比过」见调研文档;评测「指标怎么算」见评测文档。
 
@@ -32,13 +32,14 @@ POST /search {query, top_k, ranking_profile?, rerank_threshold_mode?, ...}
       │  产出 SearchPlan{normalized_query, rewritten_query, recency, time_sensitive, academic, patent, providers}
       ▼
  L1 多源并发检索(ThreadPoolExecutor) ── web 源 + (命中学术意图时)OpenAlex + (命中专利意图时)专利 ES 同池并发
+      │   SourceRegistry 按 descriptor.kind 选源;RetrievalRequest 明确时间区间/语言/辖区/预算
       │   ★ 召回缓存:命中则跳过该源 API 调用(时效查询 time_sensitive 不缓存)
       │   web: 腾讯 SearchPro · 百度千帆 · SerpAPI(按 .env 凭证自动启用)
       │   学术: OpenAlex /works(自带 relevance_score;摘要倒排索引重建为正文)
       │   专利: houdutech 只读 ES /{index}/_search(multi_match patent_name^3/abstract^2/title_zh^2/abstract_zh;中英文皆可)
       │   时效下传各源原生过滤(腾讯 FromTime/ToTime · 百度 search_recency_filter
       │        · SerpAPI tbs · OpenAlex from_publication_date · 专利 ES range(application_date))
-      │   转为不可变 RetrievedDocument(显式记录 source attribution/provider rank/snapshot/实际过滤)
+      │   返回不可变 RetrievalBatch + RetrievedDocument(实际查询/过滤/snapshot/限制/诊断)
       ▼
  L2 正文抓取  ── 省略(腾讯/百度直接返回正文;SerpAPI 用 snippet 充当;OpenAlex 用摘要;专利用摘要)
       │
@@ -77,7 +78,7 @@ POST /search {query, top_k, ranking_profile?, rerank_threshold_mode?, ...}
 | **组合根/生命周期** | 冻结 `Settings.from_env()` + `Container`;lifespan 统一创建/关闭 Engine、HTTP Session、Executor、MCP | [bootstrap.py](../src/bootstrap.py) · [config.py](../src/config.py) | ✅ |
 | **应用用例** | `SearchCommand` + `SearchService`;规划、召回、排序、PDF、Evidence、Trust、Answerability 通过不可变阶段 Outcome 协作 | [application/](../src/application/) · [domain/documents.py](../src/domain/documents.py) · [engine.py](../src/engine.py) | ✅ |
 | **L0 查询理解** | 规则版(NFKC 规范化 + 时效识别 + 学术意图识别 + 专利意图识别 + 输入校验)+ 可选 LLM 改写(SiliconFlow Qwen2.5-7B,LRU+TTL 缓存) | [l0.py](../src/l0.py) | ✅ 规则;LLM 改写默认关 |
-| **L1 搜索源** | 腾讯 SearchPro + 百度千帆 + SerpAPI,凭证驱动自动启用,并发检索 | [providers/](../src/providers/) · [application/recall.py](../src/application/recall.py) | ✅ |
+| **L1 搜索源** | `SourceDescriptor + RetrievalRequest/Batch + SourceRegistry`;腾讯 SearchPro + 百度千帆 + SerpAPI,凭证驱动自动注册,并发检索 | [application/ports/retrieval.py](../src/application/ports/retrieval.py) · [application/source_registry.py](../src/application/source_registry.py) · [providers/](../src/providers/) | ✅ |
 | **L1′ 学术源** | OpenAlex `/works`(独立能力支线;摘要倒排索引重建;凭证驱动启用) | [providers/openalex.py](../src/providers/openalex.py) | ✅ 需 `OPENALEX_API_KEY` |
 | **L1″ 专利源** | houdutech 只读 ES `/{index}/_search`(独立能力支线;multi_match 中文检索;URL 驱动启用) | [providers/patent_es.py](../src/providers/patent_es.py) | ✅ 需 `PATENT_ES_URL` |
 | **L2 抓取** | 省略(源自带正文) | — | ⏸ 不需要 |
@@ -101,7 +102,7 @@ POST /search {query, top_k, ranking_profile?, rerank_threshold_mode?, ...}
 
 ### L1 — 搜索源([providers/](../src/providers/))
 
-统一接口 `SearchProvider.search(query, top_k, recency) -> List[SearchResult]`,各源把时效 bucket 映射到自己的原生过滤参数:
+生产接口为 `RetrievalSource.retrieve(RetrievalRequest) -> RetrievalBatch`。每个来源通过 `SourceDescriptor` 声明 kind、能力、snapshot、许可与候选上限，并返回实际查询/过滤/限制；旧 `SearchProvider.search(...)` 仅作为 Provider 与评测兼容入口。各源把同一时间边界映射到自己的原生过滤参数:
 
 | 源 | 鉴权 | 正文 | 时效参数 | 关键约束 |
 |----|------|------|---------|---------|
@@ -109,7 +110,7 @@ POST /search {query, top_k, ranking_profile?, rerank_threshold_mode?, ...}
 | **百度千帆** | Bearer(单 key) | ✅ `content` | `search_recency_filter`(week/month/year 枚举) | 查询限 **72 字符**(汉字算 2),`trim_query()` 先剥口语前缀再硬截断 |
 | **SerpAPI** | api_key 查询参数 | ❌ 仅 snippet(用 snippet 充当 content) | Google `tbs`(qdr:d/w/m/y) | 100 次/月免费;补英文/全球覆盖 |
 
-启用逻辑(`settings.enabled_providers`):**有哪家凭证就启用哪家**,无需改代码。`RecallCoordinator` 使用组合根注入的共享 Executor 并发查询,每条结果记 `provider_rank`(源内 0-based 排名)。
+启用逻辑(`settings.enabled_providers`):**有哪家凭证就由 composition root 注册哪家**。`RecallCoordinator` 只依赖 `SourceRegistry`，按 descriptor.kind 使用共享 Executor 并发查询；结果在 Provider 边界即转为不可变文档并显式记录 source attribution、源内排名、实际过滤和 snapshot。
 
 ### L3 — 去重 + 分块
 
@@ -156,12 +157,12 @@ POST /search {query, top_k, ranking_profile?, rerank_threshold_mode?, ...}
 
 ### 缓存 — provider 召回级([cache.py](../src/cache.py))
 
-目的:**避免重复调用搜索源 API**(腾讯/百度/SerpAPI/OpenAlex)。缓存的是每个 provider 的原始召回结果(`provider.search` 的返回),不是整体响应。
+目的:**避免重复调用搜索源 API**(腾讯/百度/SerpAPI/OpenAlex)。缓存的是每个 source 的不可变 `RetrievalBatch`，不是整体响应。
 
-- **粒度**:provider 召回级。key = `provider|per_provider_k|recency|query`。**改 `top_k` / 重排参数仍命中**召回缓存(只省搜索源 API,重排仍每次走);provider 自身配置(如 OpenAlex `topic_filter`)进程内不变,故不入 key。
+- **粒度**:source 召回级。key 包含 `source_id|candidate_budget|recency|language|jurisdiction|query`。**改最终 `top_k` / 重排参数仍命中**召回缓存(只省搜索源 API,重排仍每次走);source 自身配置进程内不变,故不入 key。
 - **后端**:`CacheBackend` 抽象接口 + 进程内 `InMemoryCache`(`OrderedDict` LRU + 按 key TTL,带 `threading.Lock` 线程安全,记录命中率)。**接口化预留 Redis**:将来新增 `RedisCache(CacheBackend)` 并在 `build_cache` 加分支即可,engine 无感。单进程 uvicorn 进程内已足够;重启即清空。
 - **时效查询不缓存**:`time_sensitive=true`(「最新/今天/2026」等)完全跳过缓存(不读不写),保证新鲜度。
-- **不可变缓存值**:`RecallCoordinator` 在 Provider 边界把兼容 DTO 转为递归冻结的 `RetrievedDocument`，缓存保存 tuple 并可在命中时直接共享；排序、PDF 与 Trust 均返回新阶段对象，因此无需在缓存存取时深复制。
+- **不可变缓存值**:`RetrievalBatch`、其中的 `RetrievedDocument` 及 filters/limits/diagnostics 均递归冻结，命中时可直接共享；排序、PDF 与 Trust 均返回新阶段对象，因此无需在缓存存取时深复制。
 - **TTL**:非时效结果默认 `CACHE_TTL=21600`(6h)。
 - **效果**:同一非时效查询第二次命中,实测省掉 ~2s 搜索源 API(4700ms → 2666ms;剩余为重排耗时,因召回缓存不省重排)。`/health` 暴露 `cache` 统计(size/hits/misses/hit_rate)。
 - **未覆盖**:重排 API(SiliconFlow)调用不省 —— 若要让完全相同的查询连重排也省(命中降到毫秒级),需再叠加一层"整体响应缓存",可与召回缓存共存。
@@ -368,7 +369,7 @@ curl -s -X POST localhost:8000/search -H "Authorization: Bearer $TOKEN" \
 
 ## 8. 现状与待办
 
-**已落地(相对调研文档的新增)**:L0 LLM 查询改写、SerpAPI 第三源，以及统一的 `quality/semantic/fast` 排序 Profile 和 `off/prefer/strict` 阈值策略。旧 `FusionReranker` 仅保留历史评测兼容。**OpenAlex 学术检索**(L0 学术意图识别 + 内部独立重排 + 对外 `type=academic` evidence)已实现并通过端到端验证。**专利检索(houdutech 只读 ES)**(L0 专利意图识别 + 内部独立重排 + 对外 `type=patent` evidence + multi_match 中文检索)作为第二条垂直支线已实现并通过端到端验证。**provider 召回级缓存**(进程内 LRU+TTL,接口化预留 Redis;时效查询不缓存)已落地,避免重复调用搜索源 API。
+**已落地(相对调研文档的新增)**:L0 LLM 查询改写、SerpAPI 第三源，以及统一的 `quality/semantic/fast` 排序 Profile 和 `off/prefer/strict` 阈值策略。旧 `FusionReranker` 仅保留历史评测兼容。**OpenAlex 学术检索**与**专利检索(houdutech 只读 ES)**已作为 descriptor 驱动的垂直来源注册并通过端到端验证；应用层不再为两者保留镜像式专用召回槽位。**source 召回级缓存**保存不可变 `RetrievalBatch`，避免重复调用搜索源 API。
 
 **与调研的关键差异**:
 
@@ -392,7 +393,6 @@ curl -s -X POST localhost:8000/search -H "Authorization: Bearer $TOKEN" \
 - [ ] 🟡 横切能力:**MCP 接入已落地**(进程内 Streamable HTTP `/mcp`,工具 `search`)+ **API token 鉴权已落地**(`/search` 与 `/mcp` 共用 `API_AUTH_TOKEN`);仍待:安全 firewall(提示注入/PII)、生产级 TLS/反代/速率限制、多租户/OAuth。
 - [ ] 🟢 扩评测集到 50–100 条 + 端到端 RAG 评测(faithfulness / context precision)。
 - [ ] 🟢 重排提速(ONNX+int8 / fp16)、分数缓存、超时降级。
-- [ ] 🟢 垂直支线编排抽象:学术 + 专利已是两条平行支线,后续支线变多时把「垂直源」抽象成统一编排(`List[VerticalSource]`),替代当前镜像式 codepath。
 
 ---
 

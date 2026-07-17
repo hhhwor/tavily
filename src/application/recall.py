@@ -2,13 +2,19 @@
 from __future__ import annotations
 
 from concurrent.futures import Executor, as_completed
-from typing import Callable, Optional, Protocol, Sequence
+from datetime import datetime, timedelta, timezone
+from typing import Callable, Optional, Protocol
 
 from src.application.failures import search_failure
 from src.application.outcomes import PlannedQuery, RecallOutcome
+from src.application.ports.retrieval import (
+    RetrievalBatch,
+    RetrievalRequest,
+    RetrievalSource,
+)
+from src.application.source_registry import SourceRegistry
 from src.cache import CacheBackend
-from src.domain.documents import DocumentKind, RetrievedDocument
-from src.providers.base import SearchProvider
+from src.domain.documents import RetrievedDocument
 
 
 class RecallSettings(Protocol):
@@ -23,78 +29,93 @@ class RecallCoordinator:
     def __init__(
         self,
         settings: RecallSettings,
-        providers: Sequence[SearchProvider],
-        academic_provider: Optional[SearchProvider],
-        patent_provider: Optional[SearchProvider],
+        registry: SourceRegistry,
         cache: Optional[CacheBackend],
         executor: Executor,
-        snapshot_resolver: Optional[Callable[[str], str]] = None,
+        *,
+        clock: Callable[[], datetime] = lambda: datetime.now(timezone.utc),
     ) -> None:
         self._settings = settings
-        self._providers = tuple(providers)
-        self._academic_provider = academic_provider
-        self._patent_provider = patent_provider
+        self._registry = registry
         self._cache = cache
         self._executor = executor
-        self._snapshot_resolver = snapshot_resolver or (lambda _source: "unspecified")
+        self._clock = clock
 
-    def _cached_search(
+    def _cached_retrieve(
         self,
-        provider: SearchProvider,
-        kind: DocumentKind,
-        query: str,
-        k: int,
-        recency: Optional[str],
+        source: RetrievalSource,
+        request: RetrievalRequest,
         use_cache: bool,
-    ) -> tuple[RetrievedDocument, ...]:
+    ) -> RetrievalBatch:
         if not use_cache or self._cache is None:
-            results = provider.search(query, k, recency)
-            return tuple(
-                item
-                if isinstance(item, RetrievedDocument)
-                else RetrievedDocument.from_result(
-                    item,
-                    kind,
-                    provider_rank=rank,
-                    snapshot=self._snapshot_resolver(provider.name),
-                    actual_filters={"query": query, "recency": recency},
-                )
-                for rank, item in enumerate(results)
-            )
-        key = f"{provider.name}|{k}|{recency or ''}|{query}"
+            return source.retrieve(request)
+        key = "|".join((
+            source.descriptor.id,
+            str(request.candidate_budget),
+            request.recency or "",
+            request.language or "",
+            request.jurisdiction or "",
+            request.query,
+        ))
         cached = self._cache.get(key)
         if cached is not None:
-            return tuple(cached)
-        results = provider.search(query, k, recency)
-        items = tuple(
-            item
-            if isinstance(item, RetrievedDocument)
-            else RetrievedDocument.from_result(
-                item,
-                kind,
-                provider_rank=rank,
-                snapshot=self._snapshot_resolver(provider.name),
-                actual_filters={"query": query, "recency": recency},
-            )
-            for rank, item in enumerate(results)
+            if not isinstance(cached, RetrievalBatch):
+                raise TypeError("retrieval cache value must be RetrievalBatch")
+            return cached
+        batch = source.retrieve(request)
+        self._cache.set(key, batch, self._settings.cache_ttl)
+        return batch
+
+    @staticmethod
+    def _language(query: str) -> str | None:
+        if any("\u4e00" <= char <= "\u9fff" for char in query):
+            return "zh"
+        if any(char.isascii() and char.isalpha() for char in query):
+            return "en"
+        return None
+
+    def _request(self, query: str, recency: str | None) -> RetrievalRequest:
+        now = self._clock()
+        delta = {
+            "day": timedelta(days=1),
+            "week": timedelta(days=7),
+            "month": timedelta(days=30),
+            "year": timedelta(days=365),
+        }.get(recency or "")
+        return RetrievalRequest(
+            query=query,
+            candidate_budget=self._settings.per_provider_k,
+            recency=recency,
+            time_from=now - delta if delta else None,
+            time_to=now if delta else None,
+            language=self._language(query),
+            jurisdiction=None,
         )
-        self._cache.set(key, items, self._settings.cache_ttl)
-        return items
 
     def recall(self, planned: PlannedQuery) -> RecallOutcome:
         active_names = set(planned.active_provider_names)
-        active = [provider for provider in self._providers if provider.name in active_names]
-        tasks: list[tuple[DocumentKind, SearchProvider, str]] = [
-            ("web", provider, planned.search_query) for provider in active
-        ]
-        if planned.do_academic and self._academic_provider is not None:
-            tasks.append(("academic", self._academic_provider, planned.academic_query))
-        if planned.do_patent and self._patent_provider is not None:
-            tasks.append(("patent", self._patent_provider, planned.search_query))
+        tasks: list[tuple[RetrievalSource, RetrievalRequest]] = []
+        for source in self._registry.sources("web"):
+            if source.descriptor.id in active_names:
+                tasks.append((
+                    source,
+                    self._request(planned.search_query, planned.plan.recency),
+                ))
+        if planned.do_academic:
+            tasks.extend(
+                (source, self._request(planned.academic_query, planned.plan.recency))
+                for source in self._registry.sources("academic")
+            )
+        if planned.do_patent:
+            tasks.extend(
+                (source, self._request(planned.search_query, planned.plan.recency))
+                for source in self._registry.sources("patent")
+            )
 
         web: list[RetrievedDocument] = []
         academic: list[RetrievedDocument] = []
         patent: list[RetrievedDocument] = []
+        batches: list[RetrievalBatch] = []
         providers_used: list[str] = []
         failures = []
         use_cache = (
@@ -105,37 +126,32 @@ class RecallCoordinator:
 
         futures = {
             self._executor.submit(
-                self._cached_search,
-                provider,
-                kind,
-                query,
-                self._settings.per_provider_k,
-                planned.plan.recency,
+                self._cached_retrieve,
+                source,
+                request,
                 use_cache,
-            ): (kind, provider.name)
-            for kind, provider, query in tasks
+            ): source.descriptor
+            for source, request in tasks
         }
         for future in as_completed(futures):
-            kind, name = futures[future]
+            descriptor = futures[future]
             try:
-                items = future.result()
-                if kind == "academic":
+                batch = future.result()
+                batches.append(batch)
+                items = batch.documents
+                if descriptor.kind == "academic":
                     academic.extend(items)
-                    if items:
-                        providers_used.append(name)
-                elif kind == "patent":
+                elif descriptor.kind == "patent":
                     patent.extend(items)
-                    if items:
-                        providers_used.append(name)
                 else:
                     web.extend(items)
-                    # 保持旧契约：Web provider 即使返回空结果也记为已调用。
-                    providers_used.append(name)
+                if items or descriptor.count_empty_as_used:
+                    providers_used.append(descriptor.id)
             except Exception as exc:
                 failures.append(search_failure(
                     stage="provider_search",
-                    source=name,
-                    source_type=kind,
+                    source=descriptor.id,
+                    source_type=descriptor.kind,
                     code="PROVIDER_SEARCH_FAILED",
                     message=exc,
                 ))
@@ -144,8 +160,13 @@ class RecallCoordinator:
             web=tuple(web),
             academic=tuple(academic),
             patent=tuple(patent),
+            batches=tuple(batches),
             providers_used=tuple(providers_used),
-            planned_sources=tuple(provider.name for _, provider, _ in tasks),
-            candidate_budget=self._settings.per_provider_k * len(tasks),
+            planned_sources=tuple(
+                source.descriptor.id for source, _ in tasks
+            ),
+            candidate_budget=sum(
+                request.candidate_budget for _, request in tasks
+            ),
             failures=tuple(failures),
         )
