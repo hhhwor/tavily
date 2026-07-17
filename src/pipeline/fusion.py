@@ -17,32 +17,53 @@ from src.models import SearchResult
 from src.pipeline.dedup import normalize_url
 
 
+def rrf_prepare(
+    results: List[SearchResult], k_rrf: int = 60
+) -> List[SearchResult]:
+    """Build stable RRF candidates and retain the prior as pipeline metadata."""
+    candidates = [result.model_copy(deep=True) for result in results]
+    groups: dict[str, list] = {}
+    order: List[str] = []
+    for index, result in enumerate(candidates):
+        key = normalize_url(result.url) or result.url or f"web:{index}"
+        rank = result.provider_rank if result.provider_rank is not None else 0
+        contrib = 1.0 / (k_rrf + rank + 1)  # rank 0-based,故 +1
+        if key in groups:
+            representative, score, first_index = groups[key]
+            # 保留正文更全的代表,合并来源标记
+            keep, other = (
+                (representative, result)
+                if len(representative.content) >= len(result.content)
+                else (result, representative)
+            )
+            if other.source and other.source not in keep.source:
+                keep.source = f"{keep.source}+{other.source}" if keep.source else other.source
+            groups[key] = [keep, score + contrib, first_index]
+        else:
+            groups[key] = [result, contrib, index]
+            order.append(key)
+
+    prepared: List[SearchResult] = []
+    for key in order:
+        representative, score, first_index = groups[key]
+        representative.raw["_rrf_prior"] = score
+        representative.raw["_rrf_first_idx"] = first_index
+        prepared.append(representative)
+    prepared.sort(
+        key=lambda result: (
+            -float(result.raw.get("_rrf_prior", 0.0)),
+            result.provider_rank if result.provider_rank is not None else 10**9,
+            result.url,
+        )
+    )
+    return prepared
+
+
 def rrf_fuse(
     results: List[SearchResult], k_rrf: int = 60, top_k: Optional[int] = None
 ) -> List[SearchResult]:
     """对带 provider_rank 的多源结果做 RRF 融合 + 去重。"""
-    results = [result.model_copy(deep=True) for result in results]
-    groups: dict[str, list] = {}   # key -> [代表结果, 累计RRF分]
-    order: List[str] = []
-    for r in results:
-        key = normalize_url(r.url) or r.url
-        rank = r.provider_rank if r.provider_rank is not None else 0
-        contrib = 1.0 / (k_rrf + rank + 1)  # rank 0-based,故 +1
-        if key in groups:
-            rep, sc = groups[key]
-            # 保留正文更全的代表,合并来源标记
-            keep, other = (rep, r) if len(rep.content) >= len(r.content) else (r, rep)
-            if other.source and other.source not in keep.source:
-                keep.source = f"{keep.source}+{other.source}"
-            groups[key] = [keep, sc + contrib]
-        else:
-            groups[key] = [r, contrib]
-            order.append(key)
-
-    fused = []
-    for key in order:
-        rep, sc = groups[key]
-        rep.rerank_score = sc
-        fused.append(rep)
-    fused.sort(key=lambda x: x.rerank_score or 0.0, reverse=True)
+    fused = rrf_prepare(results, k_rrf=k_rrf)
+    for result in fused:
+        result.rerank_score = float(result.raw["_rrf_prior"])
     return fused[:top_k] if top_k else fused

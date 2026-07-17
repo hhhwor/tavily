@@ -1,12 +1,12 @@
 # Agent 搜索引擎架构审阅与解耦设计
 
-> 状态：渐进式重构进行中；F-01 至 F-06 已实施
+> 状态：渐进式重构进行中；F-01 至 F-07 已实施
 >
-> 审阅基线：2026-07-17，`24f0778` 加当前 F-06 工作树
+> 审阅基线：2026-07-17，`1d2c3cf` 加当前 F-07 工作树
 >
 > 审阅范围：`src/`、`tests/`、`eval/`、`scripts/`、`deploy/` 与直接运行依赖
 >
-> 验证基线：当前工作树 125 个测试全部通过
+> 验证基线：当前工作树 128 个测试全部通过
 >
 > 关联文档：[当前技术路线](tech-route-summary.md)、[Trust Layer 设计](agent-search-trust-layer-design.md)、[评测方法](eval-methodology.md)
 
@@ -179,11 +179,18 @@ flowchart TD
 
 任意 source id 的三领域路由、重复注册、真实过滤映射、显式时间边界下传以及应用层无具体 Provider 分派均有契约测试。
 
-#### F-07 `rerank.py` 混合算法、策略、模型适配与旧路径
+#### F-07 `rerank.py` 混合算法、策略、模型适配与旧路径（已解决）
 
-[rerank.py](../src/pipeline/rerank.py) 共 1237 行，包含三个模型后端、通用领域算法、三套领域特征、旧 Fusion/Threshold 包装器和工厂。`AcademicReranker` 与 `WebReranker` 还保留一套未被当前公开重排路径调用的旧辅助实现，RRF 也存在两份近似逻辑。
+2026-07-17 已把排序模块按变化原因拆分，并保留旧导入路径作为短期兼容层：
 
-建议拆为 `ranking/ports.py`、`ranking/core.py`、`ranking/web.py`、`ranking/academic.py`、`ranking/patent.py` 和 `adapters/ranking/{siliconflow,bge,flashrank}.py`。只保留一条构建路径和一份 RRF 语义。
+- [ranking/ports.py](../src/ranking/ports.py) 只定义 `Reranker` 稳定接口、NoOp 与分数归一化；[ranking/core.py](../src/ranking/core.py) 承载唯一的领域融合算法和不可变请求上下文。
+- Web、Academic、Patent 特征和权重分别位于 [ranking/web.py](../src/ranking/web.py)、[ranking/academic.py](../src/ranking/academic.py) 与 [ranking/patent.py](../src/ranking/patent.py)，不再共享供应商 SDK 或 HTTP 细节。
+- FlashRank、BGE 与 SiliconFlow 移到 `ranking/adapters/`；[ranking/factory.py](../src/ranking/factory.py) 是生产组合根使用的唯一文本 scorer 构建路径。
+- [fusion.py](../src/pipeline/fusion.py) 的 `rrf_prepare` 成为候选准备和公开 `rrf_fuse` 共用的唯一 RRF 实现；两者共享分数、去重、来源合并和稳定 tie-break 语义。
+- 删除 Academic/Web 类中未被生产路径调用的旧压缩、归一化和二次融合辅助实现。旧 `FusionReranker`、`ThresholdReranker` 与 `build_reranker` 隔离在 `ranking/legacy.py`，仅供历史评测迁移。
+- [pipeline/rerank.py](../src/pipeline/rerank.py) 已从 1400 余行收敛为无算法的 re-export 门面；`bootstrap` 和 `RankingService` 均直接依赖新模块。
+
+排序行为、输入不可变性与兼容导入由现有领域测试保护；新增架构测试固定薄门面、生产依赖方向和单一 RRF 语义。
 
 #### F-08 网络、缓存、时钟和执行器散落在业务模块
 
@@ -352,7 +359,7 @@ class SearchUseCase(Protocol):
 
 - [x] 引入 `RetrievedDocument -> RankedDocument -> EnrichedDocument -> Evidence` 单向转换。
 - [x] F-06：引入 `SourceDescriptor/RetrievalRequest/RetrievalBatch/SourceRegistry`，在 Provider 适配器边界生成 provenance、实际过滤和 snapshot。
-- 拆分 `rerank.py`，删除旧辅助路径和重复 RRF。
+- [x] F-07：拆分 `rerank.py` 的算法、领域策略与模型适配器，删除旧辅助路径和重复 RRF。
 - [x] 将 Ranking Profile 与领域策略统一到一条生产构建路径。
 
 退出条件：排序与富化不修改输入；缓存无需为防管线污染而深复制；新增 Web Provider 不改 Engine/Trust。

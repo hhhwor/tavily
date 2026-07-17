@@ -26,7 +26,7 @@ def test_short_docs_send_all_documents_in_one_call():
     docs = [SearchResult(url=f"u{i}", title=f"doc {i}", content="x" * 50) for i in range(30)]
     rr = SiliconFlowReranker(api_key="k", chunk_max_chars=400, chunk_overlap=50)
     calls = {"n": 0, "sizes": []}
-    with patch("src.pipeline.rerank._requests.post", side_effect=_make_fake_post(calls)):
+    with patch("src.ranking.adapters.siliconflow.requests.post", side_effect=_make_fake_post(calls)):
         out = rr.rerank("q", docs, top_k=10)
     assert calls["n"] == 1, calls
     assert calls["sizes"] == [30], calls
@@ -39,7 +39,7 @@ def test_multichunk_docs_single_call_without_local_cap():
     longdocs = [SearchResult(url=f"L{i}", title=f"L{i}", content="句子。" * 500) for i in range(12)]
     rr = SiliconFlowReranker(api_key="k", chunk_max_chars=120, chunk_overlap=20)
     calls = {"n": 0, "sizes": []}
-    with patch("src.pipeline.rerank._requests.post", side_effect=_make_fake_post(calls)):
+    with patch("src.ranking.adapters.siliconflow.requests.post", side_effect=_make_fake_post(calls)):
         rr.rerank("q", longdocs, top_k=5)
     assert calls["n"] == 1, calls
     assert calls["sizes"][0] > 25, calls

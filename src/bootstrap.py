@@ -21,8 +21,9 @@ from src.cache import build_cache
 from src.config import Settings
 from src.engine import SearchEngine
 from src.infrastructure.openalex_pdf import OpenAlexPdfGateway
-from src.pipeline.rerank import Reranker, build_text_scorer
 from src.providers.base import SearchProvider
+from src.ranking.factory import build_text_scorer
+from src.ranking.ports import Reranker
 from src.trust import build_claim_verifier
 
 
