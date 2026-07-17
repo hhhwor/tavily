@@ -166,11 +166,12 @@ class FlashRankReranker(Reranker):
         if not results:
             return []
 
-        normed = self.score(query, [r.text_for_rerank() for r in results])
-        for r, s in zip(results, normed):
+        ranked_results = [result.model_copy(deep=True) for result in results]
+        normed = self.score(query, [r.text_for_rerank() for r in ranked_results])
+        for r, s in zip(ranked_results, normed):
             r.rerank_score = s
 
-        ranked = sorted(results, key=lambda r: r.rerank_score or 0.0, reverse=True)
+        ranked = sorted(ranked_results, key=lambda r: r.rerank_score or 0.0, reverse=True)
         return ranked[:top_k]
 
 
@@ -227,11 +228,12 @@ class BGEReranker(Reranker):
         if not results:
             return []
 
-        normed = self.score(query, [r.text_for_rerank() for r in results])
-        for r, s in zip(results, normed):
+        ranked_results = [result.model_copy(deep=True) for result in results]
+        normed = self.score(query, [r.text_for_rerank() for r in ranked_results])
+        for r, s in zip(ranked_results, normed):
             r.rerank_score = s
 
-        ranked = sorted(results, key=lambda r: r.rerank_score or 0.0, reverse=True)
+        ranked = sorted(ranked_results, key=lambda r: r.rerank_score or 0.0, reverse=True)
         return ranked[:top_k]
 
 
@@ -307,11 +309,12 @@ class SiliconFlowReranker(Reranker):
         if not results:
             return []
 
-        scores = self.score(query, [r.text_for_rerank() for r in results])
-        for i, r in enumerate(results):
+        ranked_results = [result.model_copy(deep=True) for result in results]
+        scores = self.score(query, [r.text_for_rerank() for r in ranked_results])
+        for i, r in enumerate(ranked_results):
             r.rerank_score = scores[i] if i < len(scores) else 0.0
 
-        ranked = sorted(results, key=lambda r: r.rerank_score or 0.0, reverse=True)
+        ranked = sorted(ranked_results, key=lambda r: r.rerank_score or 0.0, reverse=True)
         return ranked[:top_k]
 
 
@@ -445,7 +448,8 @@ def rerank_domain(
     if not candidates:
         return []
 
-    prepared = config.prepare_fn(list(candidates)) if config.prepare_fn else list(candidates)
+    working = [candidate.model_copy(deep=True) for candidate in candidates]
+    prepared = config.prepare_fn(working) if config.prepare_fn else working
     pool = prepared[: config.max_docs] if config.max_docs else prepared
     if not pool:
         return []
@@ -989,7 +993,10 @@ class FusionReranker(Reranker):
         return max(0.0, 1.0 - days_ago / 365.0)  # 非时效:线性衰减到0(1年)
 
     def rerank(self, query: str, results: List[SearchResult], top_k: int) -> List[SearchResult]:
-        ranked = self._inner.rerank(query, results, top_k)
+        ranked = [
+            result.model_copy(deep=True)
+            for result in self._inner.rerank(query, results, top_k)
+        ]
         if not ranked:
             return ranked
 

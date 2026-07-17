@@ -119,17 +119,19 @@ def test_enrich_returns_copies_and_preserves_http_contract():
     assert outcome.failures == ()
     assert len(outcome.academic) == 1
     enriched = outcome.academic[0]
+    enriched_result = enriched.to_result()
+    assert isinstance(enriched_result, AcademicResult)
     assert enriched is not original
     assert original.pdf_status == "not_requested"
     assert original.pdf_text == ""
-    assert enriched.content == "abstract"
-    assert enriched.pdf_status == "ready"
-    assert enriched.pdf_text == "full text from pdf"
-    assert enriched.pdf_pages == 3
-    assert enriched.pdf_chunk_index == 0
-    assert enriched.pdf_page_from == 1
-    assert enriched.pdf_page_to == 2
-    assert enriched.pdf_next_cursor == "cursor1"
+    assert enriched_result.content == "abstract"
+    assert enriched_result.pdf_status == "ready"
+    assert enriched_result.pdf_text == "full text from pdf"
+    assert enriched_result.pdf_pages == 3
+    assert enriched_result.pdf_chunk_index == 0
+    assert enriched_result.pdf_page_from == 1
+    assert enriched_result.pdf_page_to == 2
+    assert enriched_result.pdf_next_cursor == "cursor1"
 
     assert len(http.post_calls) == 1
     url, body, headers, timeout = http.post_calls[0]
@@ -157,7 +159,7 @@ def test_enrich_reports_missing_identity_and_pdf_url_without_http():
     outcome = _gateway(http).enrich(papers, include_pdf_text=True)
 
     assert http.post_calls == []
-    assert [paper.pdf_status for paper in outcome.academic] == [
+    assert [paper.to_result().pdf_status for paper in outcome.academic] == [
         "failed",
         "no_pdf_url",
     ]
@@ -173,8 +175,9 @@ def test_enrich_maps_download_timeout_to_structured_failure():
 
     outcome = _gateway(http).enrich([_paper()], include_pdf_text=True)
 
-    assert outcome.academic[0].pdf_status == "timeout"
-    assert outcome.academic[0].pdf_error_code == "DOWNLOAD_TIMEOUT"
+    enriched = outcome.academic[0].to_result()
+    assert enriched.pdf_status == "timeout"
+    assert enriched.pdf_error_code == "DOWNLOAD_TIMEOUT"
     assert outcome.failures[0].stage == "pdf_enrichment"
     assert outcome.failures[0].source == "W123"
     assert outcome.failures[0].type == "academic"
@@ -190,7 +193,7 @@ def test_enrich_stops_before_http_when_total_budget_is_exhausted():
     )
 
     assert http.post_calls == []
-    assert outcome.academic[0].pdf_status == "timeout"
+    assert outcome.academic[0].to_result().pdf_status == "timeout"
     assert outcome.failures[0].code == "PDF_TOTAL_BUDGET_EXCEEDED"
 
 
@@ -203,8 +206,9 @@ def test_enrich_maps_post_processing_errors_to_worker_failure():
 
     outcome = _gateway(http).enrich([_paper()], include_pdf_text=True)
 
-    assert outcome.academic[0].pdf_status == "failed"
-    assert outcome.academic[0].pdf_error_code == "PDF_ENRICH_WORKER_FAILED"
+    enriched = outcome.academic[0].to_result()
+    assert enriched.pdf_status == "failed"
+    assert enriched.pdf_error_code == "PDF_ENRICH_WORKER_FAILED"
     assert outcome.failures[0].code == "PDF_ENRICH_WORKER_FAILED"
     assert "invalid literal" in outcome.failures[0].message
 
@@ -217,7 +221,7 @@ def test_enrich_disabled_returns_explicit_copies_without_failures():
 
     assert outcome.failures == ()
     assert outcome.academic[0] is not original
-    assert outcome.academic[0] == original
+    assert outcome.academic[0].to_result() == original
     assert http.post_calls == []
 
 

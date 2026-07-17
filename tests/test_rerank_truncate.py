@@ -31,7 +31,8 @@ def test_short_docs_send_all_documents_in_one_call():
     assert calls["n"] == 1, calls
     assert calls["sizes"] == [30], calls
     assert len(out) == 10
-    assert all((d.rerank_score or 0) > 0 for d in docs)
+    assert all((d.rerank_score or 0) > 0 for d in out)
+    assert all(d.rerank_score is None for d in docs)
 
 
 def test_multichunk_docs_single_call_without_local_cap():

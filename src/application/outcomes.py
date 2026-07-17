@@ -4,13 +4,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Sequence, Tuple, TypeVar
 
-from src.models import (
-    AcademicResult,
-    PatentResult,
-    SearchFailure,
-    SearchPlan,
-    SearchResult,
-)
+from src.domain.documents import EnrichedDocument, RankedDocument, RetrievedDocument
+from src.models import SearchFailure, SearchPlan
 from src.pipeline.ranking_options import RankingOptions
 
 
@@ -45,9 +40,9 @@ class PlannedQuery:
 class RecallOutcome:
     """多来源召回阶段结果。"""
 
-    web: Tuple[SearchResult, ...] = ()
-    academic: Tuple[AcademicResult, ...] = ()
-    patent: Tuple[PatentResult, ...] = ()
+    web: Tuple[RetrievedDocument, ...] = ()
+    academic: Tuple[RetrievedDocument, ...] = ()
+    patent: Tuple[RetrievedDocument, ...] = ()
     providers_used: Tuple[str, ...] = ()
     planned_sources: Tuple[str, ...] = ()
     candidate_budget: int = 0
@@ -71,9 +66,9 @@ class RankingOutcome:
 
     options: RankingOptions
     reranker: str
-    web: Tuple[SearchResult, ...] = ()
-    academic: Tuple[AcademicResult, ...] = ()
-    patent: Tuple[PatentResult, ...] = ()
+    web: Tuple[RankedDocument, ...] = ()
+    academic: Tuple[RankedDocument, ...] = ()
+    patent: Tuple[RankedDocument, ...] = ()
     failures: Tuple[SearchFailure, ...] = ()
 
     def __post_init__(self) -> None:
@@ -85,7 +80,7 @@ class RankingOutcome:
 class PdfEnrichmentOutcome:
     """PDF 正文富化后的学术候选及结构化失败。"""
 
-    academic: Tuple[AcademicResult, ...] = ()
+    academic: Tuple[EnrichedDocument, ...] = ()
     failures: Tuple[SearchFailure, ...] = ()
 
     def __post_init__(self) -> None:

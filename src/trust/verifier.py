@@ -220,13 +220,10 @@ class ClaimVerifier:
         if profile not in _PROFILES:
             raise ValueError(f"不支持的 verification profile: {profile}")
         atomic_claims = decompose_claims(claims, max_claims=self.max_claims)
-        evidence_items = list(evidence)
-        missing_annotations = [
-            item for item in evidence_items
-            if item.provenance is None or item.locator is None or item.quality is None
-        ]
-        if missing_annotations:
-            annotate_evidence(missing_annotations)
+        evidence_items = [item.model_copy(deep=True) for item in evidence]
+        for index, item in enumerate(evidence_items):
+            if item.provenance is None or item.locator is None or item.quality is None:
+                evidence_items[index] = annotate_evidence([item])[0]
 
         if search_boundary is None:
             sources = [item.source for item in evidence_items]

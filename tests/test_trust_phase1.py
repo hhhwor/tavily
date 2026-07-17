@@ -34,8 +34,7 @@ def _academic_evidence(
         rerank_score=0.9,
     )
     evidence = EvidenceAssembler().assemble([], [paper], [])
-    annotate_evidence(evidence)
-    return evidence[0]
+    return annotate_evidence(evidence)[0]
 
 
 def _verifier(classifier=None) -> ClaimVerifier:

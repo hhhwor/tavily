@@ -5,7 +5,8 @@ from abc import ABC, abstractmethod
 from typing import Optional, Sequence
 
 from src.application.outcomes import PdfEnrichmentOutcome
-from src.models import AcademicResult, PdfTextResponse
+from src.domain.documents import RankedDocument
+from src.models import PdfTextResponse
 
 
 class PdfTextGateway(ABC):
@@ -14,7 +15,7 @@ class PdfTextGateway(ABC):
     @abstractmethod
     def enrich(
         self,
-        papers: Sequence[AcademicResult],
+        papers: Sequence[RankedDocument],
         *,
         include_pdf_text: bool,
         pdf_text_mode: Optional[str] = None,
@@ -22,7 +23,7 @@ class PdfTextGateway(ABC):
         pdf_max_chars_per_result: Optional[int] = None,
         pdf_timeout_ms: Optional[int] = None,
     ) -> PdfEnrichmentOutcome:
-        """返回富化后的论文序列及逐篇失败；不得要求调用方依赖输入副作用。"""
+        """返回不可变富化文档及逐篇失败；不得修改排序阶段输入。"""
         raise NotImplementedError
 
     @abstractmethod

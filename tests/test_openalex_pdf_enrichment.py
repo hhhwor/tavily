@@ -89,19 +89,20 @@ def test_pdf_enrichment_attaches_pdf_fields(monkeypatch):
         pdf_timeout_ms=3000,
     )
     enriched = outcome.academic[0]
+    enriched_result = enriched.to_result()
 
     assert calls
     assert calls[0][1]["work_id"] == "W123"
     assert calls[0][1]["mode"] == "cached"
     assert paper.content == "abstract"
     assert paper.pdf_status == "not_requested"
-    assert enriched.pdf_status == "ready"
-    assert enriched.pdf_text == "full text from pdf"
-    assert enriched.pdf_pages == 3
-    assert enriched.pdf_chunk_index == 0
-    assert enriched.pdf_page_from == 1
-    assert enriched.pdf_page_to == 2
-    assert enriched.pdf_next_cursor == "cursor1"
+    assert enriched_result.pdf_status == "ready"
+    assert enriched_result.pdf_text == "full text from pdf"
+    assert enriched_result.pdf_pages == 3
+    assert enriched_result.pdf_chunk_index == 0
+    assert enriched_result.pdf_page_from == 1
+    assert enriched_result.pdf_page_to == 2
+    assert enriched_result.pdf_next_cursor == "cursor1"
 
 
 def test_pdf_enrichment_marks_missing_pdf_url():
@@ -123,8 +124,9 @@ def test_pdf_enrichment_marks_missing_pdf_url():
     )
 
     assert paper.pdf_status == "not_requested"
-    assert outcome.academic[0].pdf_status == "no_pdf_url"
-    assert outcome.academic[0].pdf_error_code == "PDF_URL_MISSING"
+    enriched = outcome.academic[0].to_result()
+    assert enriched.pdf_status == "no_pdf_url"
+    assert enriched.pdf_error_code == "PDF_URL_MISSING"
 
 
 def test_get_pdf_text_reads_next_page(monkeypatch):

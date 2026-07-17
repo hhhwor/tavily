@@ -48,7 +48,8 @@ def dedup(results: List[SearchResult]) -> List[SearchResult]:
     """按归一化 URL 去重,保留首次出现顺序。"""
     index: dict[str, int] = {}
     out: List[SearchResult] = []
-    for r in results:
+    for original in results:
+        r = original.model_copy(deep=True)
         key = normalize_url(r.url)
         if not key:
             out.append(r)

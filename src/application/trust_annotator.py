@@ -29,13 +29,13 @@ class TrustAnnotator:
         query_time: datetime,
         candidate_budget: int,
     ) -> TrustOutcome:
-        items = list(evidence)
+        items = [item.model_copy(deep=True) for item in evidence]
         if mode == "off":
             return TrustOutcome(tuple(items), None)
         if mode != "annotate":
             raise ValueError("trust_mode 仅支持 off / annotate")
 
-        annotate_evidence(items)
+        items = annotate_evidence(items)
         source_snapshot = {
             source: self._snapshot_resolver(source) for source in planned_sources
         }

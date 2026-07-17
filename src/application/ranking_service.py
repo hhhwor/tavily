@@ -7,7 +7,14 @@ from typing import Callable, Protocol
 from src.application.commands import SearchCommand
 from src.application.failures import search_failure
 from src.application.outcomes import PlannedQuery, RankingOutcome, RecallOutcome
+from src.domain.documents import (
+    DocumentKind,
+    RankedDocument,
+    RetrievedDocument,
+    SourceAttribution,
+)
 from src.models import AcademicResult, PatentResult, SearchResult
+from src.pipeline.dedup import normalize_url
 from src.pipeline.ranking_options import RankingOptions, resolve_ranking_options
 from src.pipeline.rerank import (
     AcademicReranker,
@@ -130,9 +137,35 @@ class RankingService:
             time_sensitive=planned.plan.time_sensitive,
         )
         top_k = planned.plan.top_k
-        web = list(recalled.web)
-        academic = list(recalled.academic)
-        patent = list(recalled.patent)
+        retrieved_web = [
+            document
+            if isinstance(document, RetrievedDocument)
+            else RetrievedDocument.from_result(document, "web")
+            for document in recalled.web
+        ]
+        retrieved_academic = [
+            document
+            if isinstance(document, RetrievedDocument)
+            else RetrievedDocument.from_result(document, "academic")
+            for document in recalled.academic
+        ]
+        retrieved_patent = [
+            document
+            if isinstance(document, RetrievedDocument)
+            else RetrievedDocument.from_result(document, "patent")
+            for document in recalled.patent
+        ]
+        web = [document.to_result() for document in retrieved_web]
+        academic = [
+            result
+            for result in (document.to_result() for document in retrieved_academic)
+            if isinstance(result, AcademicResult)
+        ]
+        patent = [
+            result
+            for result in (document.to_result() for document in retrieved_patent)
+            if isinstance(result, PatentResult)
+        ]
 
         def rank_web() -> list[SearchResult]:
             return web_reranker.rerank_with_context(
@@ -157,30 +190,88 @@ class RankingService:
         if patent:
             jobs.append(("patent", rank_patent))
 
-        ranked_web: list[SearchResult] = []
-        ranked_academic: list[AcademicResult] = []
-        ranked_patent: list[PatentResult] = []
+        ranked_web: list[RankedDocument] = []
+        ranked_academic: list[RankedDocument] = []
+        ranked_patent: list[RankedDocument] = []
         failures = []
 
-        def fallback(kind: str):
+        def source_documents(kind: DocumentKind) -> list[RetrievedDocument]:
             if kind == "academic":
-                return academic[:top_k]
+                return retrieved_academic
             if kind == "patent":
-                return patent[:top_k]
-            return web[:top_k]
+                return retrieved_patent
+            return retrieved_web
 
-        def assign(kind: str, items) -> None:
+        def key_for(document: RetrievedDocument | SearchResult) -> str:
+            url = document.url
+            return normalize_url(url) or url or f"{document.title}|{document.source}"
+
+        def attributions_for(
+            result: SearchResult,
+            kind: DocumentKind,
+        ) -> tuple[tuple[SourceAttribution, ...], str]:
+            matches = [
+                document
+                for document in source_documents(kind)
+                if key_for(document) == key_for(result)
+            ]
+            if not matches:
+                fallback = RetrievedDocument.from_result(result, kind)
+                return fallback.attributions, fallback.content_kind
+            representative = next(
+                (
+                    document
+                    for document in matches
+                    if document.content == result.content
+                    and document.title == result.title
+                ),
+                matches[0],
+            )
+            unique: list[SourceAttribution] = []
+            seen: set[tuple[str, str | None]] = set()
+            for document in matches:
+                for attribution in document.attributions:
+                    identity = (attribution.provider, attribution.source_record_id)
+                    if identity not in seen:
+                        seen.add(identity)
+                        unique.append(attribution)
+            return tuple(unique), representative.content_kind
+
+        def immutable_ranked(
+            kind: DocumentKind,
+            items,
+        ) -> list[RankedDocument]:
+            ranked_documents = []
+            for result in items:
+                attributions, content_kind = attributions_for(result, kind)
+                ranked_documents.append(RankedDocument.from_result(
+                    result,
+                    kind,
+                    ranking_profile=options.profile,
+                    attributions=attributions,
+                    content_kind=content_kind,
+                ))
+            return ranked_documents
+
+        def fallback(kind: DocumentKind) -> list[RankedDocument]:
+            return [
+                RankedDocument(
+                    document=document,
+                    score=None,
+                    ranking_profile=options.profile,
+                )
+                for document in source_documents(kind)[:top_k]
+            ]
+
+        def assign(kind: DocumentKind, items, *, already_immutable: bool = False) -> None:
             nonlocal ranked_web, ranked_academic, ranked_patent
+            documents = items if already_immutable else immutable_ranked(kind, items)
             if kind == "academic":
-                ranked_academic = [
-                    item for item in items if isinstance(item, AcademicResult)
-                ]
+                ranked_academic = list(documents)
             elif kind == "patent":
-                ranked_patent = [
-                    item for item in items if isinstance(item, PatentResult)
-                ]
+                ranked_patent = list(documents)
             else:
-                ranked_web = [item for item in items if isinstance(item, SearchResult)]
+                ranked_web = list(documents)
 
         if len(jobs) > 1:
             futures = {self._executor.submit(function): kind for kind, function in jobs}
@@ -196,7 +287,7 @@ class RankingService:
                         code="RERANK_FAILED",
                         message=exc,
                     ))
-                    assign(kind, fallback(kind))
+                    assign(kind, fallback(kind), already_immutable=True)
         else:
             for kind, function in jobs:
                 try:
@@ -209,7 +300,7 @@ class RankingService:
                         code="RERANK_FAILED",
                         message=exc,
                     ))
-                    assign(kind, fallback(kind))
+                    assign(kind, fallback(kind), already_immutable=True)
 
         return RankingOutcome(
             web=tuple(ranked_web),

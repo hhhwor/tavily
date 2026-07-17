@@ -10,6 +10,12 @@ from __future__ import annotations
 import hashlib
 from typing import Optional, Sequence
 
+from src.domain.documents import (
+    DocumentKind,
+    EnrichedDocument,
+    RankedDocument,
+    RetrievedDocument,
+)
 from src.models import (
     AcademicResult,
     Evidence,
@@ -67,16 +73,37 @@ class EvidenceAssembler:
             True,
         )
 
+    @staticmethod
+    def _ranked(value, kind: DocumentKind) -> RankedDocument:
+        """迁移期兼容旧 DTO；生产 SearchService 只传不可变阶段模型。"""
+        if isinstance(value, RankedDocument):
+            return value
+        retrieved = RetrievedDocument.from_result(value, kind)
+        return RankedDocument(
+            document=retrieved,
+            score=value.rerank_score,
+            ranking_profile="quality",
+        )
+
+    @classmethod
+    def _enriched(cls, value) -> EnrichedDocument:
+        if isinstance(value, EnrichedDocument):
+            return value
+        ranked = cls._ranked(value, "academic")
+        return EnrichedDocument.from_result(ranked, value)
+
     def assemble(
         self,
-        ranked: Sequence[SearchResult],
-        ranked_papers: Sequence[AcademicResult],
-        ranked_patents: Sequence[PatentResult],
+        ranked: Sequence[RankedDocument],
+        ranked_papers: Sequence[EnrichedDocument],
+        ranked_patents: Sequence[RankedDocument],
     ) -> list[Evidence]:
         """Build and cross-domain sort Evidence without modifying inputs."""
         evidence: list[Evidence] = []
 
-        for rank, result in enumerate(ranked):
+        for rank, value in enumerate(ranked):
+            ranked_document = self._ranked(value, "web")
+            result = ranked_document.to_result()
             text, clipped = self._clip_text(
                 result.content or result.snippet or result.title
             )
@@ -97,9 +124,7 @@ class EvidenceAssembler:
                 published_date=result.date,
                 passage=EvidencePassage(
                     text=text,
-                    snippet_type=(
-                        "web_content" if result.content else "web_snippet"
-                    ),
+                    snippet_type=ranked_document.document.content_kind,
                     char_start=0,
                     char_end=len(text),
                 ),
@@ -120,7 +145,11 @@ class EvidenceAssembler:
                 ),
             ))
 
-        for rank, paper in enumerate(ranked_papers):
+        for rank, value in enumerate(ranked_papers):
+            enriched_document = self._enriched(value)
+            paper = enriched_document.to_result()
+            if not isinstance(paper, AcademicResult):
+                continue
             result_id = (
                 f"academic:{paper.work_id}"
                 if paper.work_id
@@ -212,7 +241,11 @@ class EvidenceAssembler:
                 ),
             ))
 
-        for rank, patent in enumerate(ranked_patents):
+        for rank, value in enumerate(ranked_patents):
+            ranked_document = self._ranked(value, "patent")
+            patent = ranked_document.to_result()
+            if not isinstance(patent, PatentResult):
+                continue
             publication = (
                 patent.publication_number
                 or patent.application_number

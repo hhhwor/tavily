@@ -2,7 +2,10 @@
 from __future__ import annotations
 
 from concurrent.futures import Future
+from dataclasses import FrozenInstanceError
 from pathlib import Path
+
+import pytest
 
 from src.application.commands import SearchCommand
 from src.application.outcomes import (
@@ -85,12 +88,14 @@ def test_recall_cache_isolated_from_pipeline_mutation_and_time_sensitive_bypass(
     )
 
     first = coordinator.recall(_planned())
-    first.web[0].title = "mutated"
+    with pytest.raises(FrozenInstanceError):
+        first.web[0].title = "mutated"  # type: ignore[misc]
     second = coordinator.recall(_planned())
 
     assert len(provider.calls) == 1
     assert second.web[0].title == "original"
-    assert second.web[0].provider_rank == 0
+    assert second.web[0] is first.web[0]
+    assert second.web[0].primary_provider_rank == 0
     assert second.providers_used == ("web",)
 
     coordinator.recall(_planned(time_sensitive=True))
@@ -155,7 +160,7 @@ def test_ranking_failure_falls_back_per_domain(monkeypatch):
         _InlineExecutor(),
     ).rank(SearchCommand("query"), _planned(), RecallOutcome(web=(original,)))
 
-    assert outcome.web == (original,)
+    assert outcome.web[0].to_result() == original
     assert outcome.failures[0].stage == "rerank"
     assert outcome.failures[0].source == "web_reranker"
 

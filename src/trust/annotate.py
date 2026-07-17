@@ -72,10 +72,6 @@ def _document_identity(evidence: Evidence, canonical_url: str) -> tuple[str, Opt
 
 
 def _content_origin(evidence: Evidence) -> str:
-    # SerpAPI provider 把 organic snippet 兼容性地同时写入 SearchResult.content；
-    # 不能因此把它误标成 provider 正文抽取。
-    if evidence.type == "web" and evidence.source == "serpapi":
-        return "snippet"
     return {
         "pdf_text": "fulltext",
         "abstract": "metadata",
@@ -195,9 +191,9 @@ def annotate_evidence(
     *,
     retrieved_at: Optional[datetime] = None,
 ) -> List[Evidence]:
-    """原地补充 Phase 0 字段并返回同顺序 list。"""
+    """在深拷贝上补充 Phase 0 字段，不修改调用方 Evidence。"""
     timestamp = _utc_iso(retrieved_at or datetime.now(timezone.utc))
-    annotated = list(evidence)
+    annotated = [item.model_copy(deep=True) for item in evidence]
     for item in annotated:
         canonical_url = _canonical_url(item.url)
         publisher_id, publisher_name, publisher_type = _publisher(item, canonical_url)

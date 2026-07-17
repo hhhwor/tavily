@@ -28,7 +28,10 @@ def test_academic_duplicate_or_empty_keys_do_not_drop_candidates():
     ]
     out = AcademicReranker(_FlatScorer()).rerank("same paper", papers, top_k=3)
     assert len(out) == 3
-    assert {id(p) for p in out} == {id(p) for p in papers}
+    assert {p.citations for p in out} == {1, 2, 3}
+    assert {id(p) for p in out}.isdisjoint({id(p) for p in papers})
+    assert all(p.rerank_score is None for p in papers)
+    assert all(p.rerank_score is not None for p in out)
 
 
 def test_patent_duplicate_or_empty_keys_do_not_drop_candidates():
@@ -39,7 +42,10 @@ def test_patent_duplicate_or_empty_keys_do_not_drop_candidates():
     ]
     out = PatentReranker(_FlatScorer()).rerank("same patent", patents, top_k=3)
     assert len(out) == 3
-    assert {id(p) for p in out} == {id(p) for p in patents}
+    assert len({id(p) for p in out}) == 3
+    assert {id(p) for p in out}.isdisjoint({id(p) for p in patents})
+    assert all(p.rerank_score is None for p in patents)
+    assert all(p.rerank_score is not None for p in out)
 
 
 if __name__ == "__main__":

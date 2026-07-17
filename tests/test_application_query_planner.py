@@ -11,6 +11,7 @@ from src.application.commands import SearchCommand
 from src.application.outcomes import PdfEnrichmentOutcome, RecallOutcome
 from src.application.query_planner import QueryPlanner
 from src.config import Settings
+from src.domain.documents import EnrichedDocument, RankedDocument, RetrievedDocument
 from src.engine import SearchEngine
 from src.models import AcademicResult, SearchFailure, SearchPlan
 
@@ -214,14 +215,17 @@ def test_planner_combines_plan_and_academic_rewrite_failures():
 
 def test_outcomes_accept_sequences_but_freeze_them_as_tuples():
     paper = AcademicResult(url="https://example.test/paper", title="paper")
+    retrieved = RetrievedDocument.from_result(paper, "academic")
+    ranked = RankedDocument(retrieved, None, "fast")
+    enriched = EnrichedDocument.from_result(ranked, paper)
     failure = SearchFailure(stage="pdf_enrichment", code="FAILED")
 
-    pdf = PdfEnrichmentOutcome(academic=[paper], failures=[failure])  # type: ignore[arg-type]
-    recall = RecallOutcome(academic=[paper], providers_used=["openalex_local"])  # type: ignore[arg-type]
+    pdf = PdfEnrichmentOutcome(academic=[enriched], failures=[failure])  # type: ignore[arg-type]
+    recall = RecallOutcome(academic=[retrieved], providers_used=["openalex_local"])  # type: ignore[arg-type]
 
-    assert pdf.academic == (paper,)
+    assert pdf.academic == (enriched,)
     assert pdf.failures == (failure,)
-    assert recall.academic == (paper,)
+    assert recall.academic == (retrieved,)
     assert recall.providers_used == ("openalex_local",)
     with pytest.raises(FrozenInstanceError):
         pdf.academic = ()  # type: ignore[misc]

@@ -2,12 +2,12 @@
 from __future__ import annotations
 
 from concurrent.futures import Executor, as_completed
-from typing import Optional, Protocol, Sequence
+from typing import Callable, Optional, Protocol, Sequence
 
 from src.application.failures import search_failure
 from src.application.outcomes import PlannedQuery, RecallOutcome
 from src.cache import CacheBackend
-from src.models import AcademicResult, PatentResult, SearchResult
+from src.domain.documents import DocumentKind, RetrievedDocument
 from src.providers.base import SearchProvider
 
 
@@ -28,6 +28,7 @@ class RecallCoordinator:
         patent_provider: Optional[SearchProvider],
         cache: Optional[CacheBackend],
         executor: Executor,
+        snapshot_resolver: Optional[Callable[[str], str]] = None,
     ) -> None:
         self._settings = settings
         self._providers = tuple(providers)
@@ -35,33 +36,55 @@ class RecallCoordinator:
         self._patent_provider = patent_provider
         self._cache = cache
         self._executor = executor
+        self._snapshot_resolver = snapshot_resolver or (lambda _source: "unspecified")
 
     def _cached_search(
         self,
         provider: SearchProvider,
+        kind: DocumentKind,
         query: str,
         k: int,
         recency: Optional[str],
         use_cache: bool,
-    ) -> list[SearchResult]:
+    ) -> tuple[RetrievedDocument, ...]:
         if not use_cache or self._cache is None:
-            return provider.search(query, k, recency)
+            results = provider.search(query, k, recency)
+            return tuple(
+                item
+                if isinstance(item, RetrievedDocument)
+                else RetrievedDocument.from_result(
+                    item,
+                    kind,
+                    provider_rank=rank,
+                    snapshot=self._snapshot_resolver(provider.name),
+                    actual_filters={"query": query, "recency": recency},
+                )
+                for rank, item in enumerate(results)
+            )
         key = f"{provider.name}|{k}|{recency or ''}|{query}"
         cached = self._cache.get(key)
         if cached is not None:
-            return [item.model_copy(deep=True) for item in cached]
-        items = provider.search(query, k, recency)
-        self._cache.set(
-            key,
-            [item.model_copy(deep=True) for item in items],
-            self._settings.cache_ttl,
+            return tuple(cached)
+        results = provider.search(query, k, recency)
+        items = tuple(
+            item
+            if isinstance(item, RetrievedDocument)
+            else RetrievedDocument.from_result(
+                item,
+                kind,
+                provider_rank=rank,
+                snapshot=self._snapshot_resolver(provider.name),
+                actual_filters={"query": query, "recency": recency},
+            )
+            for rank, item in enumerate(results)
         )
+        self._cache.set(key, items, self._settings.cache_ttl)
         return items
 
     def recall(self, planned: PlannedQuery) -> RecallOutcome:
         active_names = set(planned.active_provider_names)
         active = [provider for provider in self._providers if provider.name in active_names]
-        tasks: list[tuple[str, SearchProvider, str]] = [
+        tasks: list[tuple[DocumentKind, SearchProvider, str]] = [
             ("web", provider, planned.search_query) for provider in active
         ]
         if planned.do_academic and self._academic_provider is not None:
@@ -69,9 +92,9 @@ class RecallCoordinator:
         if planned.do_patent and self._patent_provider is not None:
             tasks.append(("patent", self._patent_provider, planned.search_query))
 
-        web: list[SearchResult] = []
-        academic: list[AcademicResult] = []
-        patent: list[PatentResult] = []
+        web: list[RetrievedDocument] = []
+        academic: list[RetrievedDocument] = []
+        patent: list[RetrievedDocument] = []
         providers_used: list[str] = []
         failures = []
         use_cache = (
@@ -84,6 +107,7 @@ class RecallCoordinator:
             self._executor.submit(
                 self._cached_search,
                 provider,
+                kind,
                 query,
                 self._settings.per_provider_k,
                 planned.plan.recency,
@@ -96,16 +120,14 @@ class RecallCoordinator:
             try:
                 items = future.result()
                 if kind == "academic":
-                    academic.extend(items)  # type: ignore[arg-type]
+                    academic.extend(items)
                     if items:
                         providers_used.append(name)
                 elif kind == "patent":
-                    patent.extend(items)  # type: ignore[arg-type]
+                    patent.extend(items)
                     if items:
                         providers_used.append(name)
                 else:
-                    for provider_rank, item in enumerate(items):
-                        item.provider_rank = provider_rank
                     web.extend(items)
                     # 保持旧契约：Web provider 即使返回空结果也记为已调用。
                     providers_used.append(name)

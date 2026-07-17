@@ -130,7 +130,7 @@ def test_pdf_evidence_is_citable_only_with_stable_page_locator():
     )
 
     evidence = EvidenceAssembler().assemble([], [with_pages, without_pages], [])
-    annotate_evidence(evidence)
+    evidence = annotate_evidence(evidence)
     by_result = {item.result_id: item for item in evidence}
 
     located = by_result["academic:W-pages"]
@@ -161,7 +161,7 @@ def test_serpapi_snippet_is_discovery_only():
     )
 
     evidence = EvidenceAssembler().assemble([result], [], [])
-    annotate_evidence(evidence)
+    evidence = annotate_evidence(evidence)
 
     assert evidence[0].provenance is not None
     assert evidence[0].provenance.content_origin == "snippet"
@@ -182,7 +182,7 @@ def test_search_boundary_exposes_limits_and_serializes_to_json():
         rerank_score=0.8,
     )
     evidence = EvidenceAssembler().assemble([], [paper], [])
-    annotate_evidence(evidence)
+    evidence = annotate_evidence(evidence)
 
     boundary = build_search_boundary(
         query="钠电池 battery paper",

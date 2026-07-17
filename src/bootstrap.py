@@ -233,6 +233,7 @@ def build_container(
                 patent_provider,
                 cache,
                 executor,
+                snapshot_resolver=lambda source: _source_snapshot(config, source),
             ),
             ranking=ranking_service,
             pdf_gateway=pdf_gateway,

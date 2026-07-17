@@ -11,6 +11,7 @@ import requests
 from src.application.outcomes import PdfEnrichmentOutcome
 from src.application.ports.pdf_text import PdfTextGateway
 from src.config import Settings
+from src.domain.documents import EnrichedDocument, RankedDocument, RetrievedDocument
 from src.models import AcademicResult, PdfTextResponse, SearchFailure
 
 
@@ -43,7 +44,7 @@ class OpenAlexPdfGateway(PdfTextGateway):
 
     def enrich(
         self,
-        papers: Sequence[AcademicResult],
+        papers: Sequence[RankedDocument],
         *,
         include_pdf_text: bool,
         pdf_text_mode: Optional[str] = None,
@@ -51,10 +52,35 @@ class OpenAlexPdfGateway(PdfTextGateway):
         pdf_max_chars_per_result: Optional[int] = None,
         pdf_timeout_ms: Optional[int] = None,
     ) -> PdfEnrichmentOutcome:
-        """在副本上富化论文并显式返回结果与逐篇失败。"""
-        enriched = tuple(paper.model_copy(deep=True) for paper in papers)
-        if not include_pdf_text or not enriched:
-            return PdfEnrichmentOutcome(academic=enriched)
+        """在临时适配器 DTO 上执行 I/O，返回不可变 EnrichedDocument。"""
+        ranked = tuple(
+            document
+            if isinstance(document, RankedDocument)
+            else RankedDocument(
+                document=RetrievedDocument.from_result(document, "academic"),
+                score=document.rerank_score,
+                ranking_profile="quality",
+            )
+            for document in papers
+        )
+        materialized: list[AcademicResult] = []
+        for document in ranked:
+            result = document.to_result()
+            if not isinstance(result, AcademicResult):
+                raise TypeError("OpenAlexPdfGateway 只接受 academic RankedDocument")
+            materialized.append(result)
+
+        def outcome(failures=()) -> PdfEnrichmentOutcome:
+            return PdfEnrichmentOutcome(
+                academic=tuple(
+                    EnrichedDocument.from_result(document, result)
+                    for document, result in zip(ranked, materialized)
+                ),
+                failures=tuple(failures),
+            )
+
+        if not include_pdf_text or not ranked:
+            return outcome()
 
         mode = (
             pdf_text_mode or self._settings.openalex_pdf_text_mode or "sync"
@@ -81,10 +107,10 @@ class OpenAlexPdfGateway(PdfTextGateway):
         )
         timeout_ms = max(1000, min(timeout_ms, 60000))
         if max_results <= 0:
-            return PdfEnrichmentOutcome(academic=enriched)
+            return outcome()
 
         candidates: list[AcademicResult] = []
-        for paper in enriched:
+        for paper in materialized:
             if not paper.work_id:
                 paper.pdf_status = "failed"
                 paper.pdf_error_code = "WORK_ID_MISSING"
@@ -163,9 +189,9 @@ class OpenAlexPdfGateway(PdfTextGateway):
                 paper.pdf_error_message = str(exc)[:300]
 
         failures = tuple(
-            self._failure(paper) for paper in enriched if paper.pdf_error_code
+            self._failure(paper) for paper in materialized if paper.pdf_error_code
         )
-        return PdfEnrichmentOutcome(academic=enriched, failures=failures)
+        return outcome(failures)
 
     def read_page(
         self,

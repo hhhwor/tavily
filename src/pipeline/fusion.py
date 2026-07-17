@@ -21,6 +21,7 @@ def rrf_fuse(
     results: List[SearchResult], k_rrf: int = 60, top_k: Optional[int] = None
 ) -> List[SearchResult]:
     """对带 provider_rank 的多源结果做 RRF 融合 + 去重。"""
+    results = [result.model_copy(deep=True) for result in results]
     groups: dict[str, list] = {}   # key -> [代表结果, 累计RRF分]
     order: List[str] = []
     for r in results:

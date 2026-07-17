@@ -1,12 +1,12 @@
 # Agent 搜索引擎架构审阅与解耦设计
 
-> 状态：渐进式重构进行中；F-01、F-02、F-03 已实施
+> 状态：渐进式重构进行中；F-01、F-02、F-03、F-04 已实施
 >
-> 审阅基线：2026-07-17，`feebcf6` 加当前 F-02 工作树
+> 审阅基线：2026-07-17，`49de85e` 加当前 F-04 工作树
 >
 > 审阅范围：`src/`、`tests/`、`eval/`、`scripts/`、`deploy/` 与直接运行依赖
 >
-> 验证基线：当前工作树 112 个测试全部通过
+> 验证基线：当前工作树 115 个测试全部通过
 >
 > 关联文档：[当前技术路线](tech-route-summary.md)、[Trust Layer 设计](agent-search-trust-layer-design.md)、[评测方法](eval-methodology.md)
 
@@ -139,19 +139,18 @@ flowchart TD
 - 组合根负责装配全部应用服务。Engine 不再导入 `requests`、线程池、具体 Provider、查询规划函数或领域 reranker。
 - 旧测试和评测入口不再依赖 `_build_evidence`、`_build_answerability`、`_enrich_academic_pdf_text` 等 Engine 私有函数。
 
-#### F-04 可变对象把缓存、排序和可信判断耦合在一起
+#### F-04 可变对象把缓存、排序和可信判断耦合在一起（已解决）
 
-`SearchResult` 同时携带供应商数据和 `provider_rank/rerank_score/raw` 等管线状态。Engine 写入 `provider_rank`，重排器写入 `rerank_score`，RRF 又把 `_rrf_*` 临时字段写入 `raw` 并可能拼接 `source`。缓存因此必须进行深复制，[代码注释](../src/engine.py#L275) 已明确承认污染风险；PDF 与 Trust 也继续原地修改对象。
+2026-07-17 已引入 [domain/documents.py](../src/domain/documents.py)，生产主链改为
+`RetrievedDocument → RankedDocument → EnrichedDocument → Evidence` 单向转换：
 
-SerpAPI 将 snippet 同时写入 `content`，Evidence 映射会把它看成正文，Trust 只能通过 `source == "serpapi"` 再做特判。这说明内容来源不应靠字段是否非空或 Provider 名猜测。
+- Provider 的兼容 `SearchResult` 在召回边界立即规范化为冻结的 `RetrievedDocument`；`content_kind`、来源归因、源内排名、源记录 ID、snapshot 与实际查询过滤均成为显式字段。
+- `FrozenMap` 递归冻结 metadata、原始载荷、过滤条件与排序特征。召回缓存直接保存不可变 tuple，命中时可安全共享对象，不再用深复制补偿后续污染。
+- Ranking 只把不可变输入物化为本次调用的兼容 DTO，领域重排器也先复制候选；排序输出新的 `RankedDocument(document, score, features)`。跨源归并保留全部 attribution，RRF `_rrf_*` 工作字段只转入只读 features，不进入 raw payload。
+- OpenAlex PDF 在适配器内部处理临时副本，并返回独立 `EnrichedDocument`；EvidenceAssembler 不修改阶段输入，内容来源由 `content_kind` 映射，不再由 Provider 名猜测。
+- Trust 标注与 Claim Verification 改为 copy-on-write，返回新的 Evidence；调用方传入的 Evidence 保持不变。
 
-处理建议：
-
-- Provider 返回不可变 `RetrievedDocument`，显式包含 `content_kind`、`source_attributions`、`source_record_id`、`snapshot` 和实际过滤条件。
-- 排序返回新的 `RankedDocument(document, score, features)`，不修改输入。
-- PDF 返回 `EnrichedDocument` 或独立 enrichment 数据，不写回 Provider DTO。
-- EvidenceAssembler 使用纯函数生成 Evidence；Trust 只消费结构化 provenance。
-- `raw` 只可作为只读诊断载荷，管线不得向其中写工作字段。
+旧 `SearchResult.provider_rank/rerank_score/raw` 暂时保留给 Provider、评测与兼容算法，但不再作为生产阶段之间的共享状态。不可变载荷、缓存无污染、RRF 隔离、排序输入不变以及 Trust 输入不变均有契约测试保护。
 
 #### F-05 外部错误可能暴露凭证，模型覆盖缺少约束
 
@@ -309,12 +308,13 @@ class SearchUseCase(Protocol):
 
 ## 5. 渐进式重构计划
 
-### Phase 0：冻结行为与修正契约（进行中；F-01/F-02/F-03 已完成）
+### Phase 0：冻结行为与修正契约（进行中；F-01/F-02/F-03/F-04 已完成）
 
 - [x] F-01：统一 Ranking Profile 与 threshold 语义，并补参数解析、排序行为和兼容性测试。
 - [x] F-02：引入不可变 Settings、唯一 composition root、惰性应用工厂和受管资源生命周期。
 - [x] F-03：拆分搜索应用服务并将 SearchEngine 收敛为兼容门面。
-- [ ] 为 REST/MCP 输出差异、缓存不污染和输入对象不变补测试。
+- [x] F-04：引入不可变阶段文档，移除缓存、排序、PDF 与 Trust 的跨阶段对象污染。
+- [ ] 为 REST/MCP 输出差异补测试。
 - 修复无效开关，限制模型选择，增加统一错误脱敏。
 - 把当前未跟踪的 Trust 测试纳入版本控制。
 - 记录一份固定语料的排序和 Evidence golden baseline。
@@ -341,10 +341,10 @@ class SearchUseCase(Protocol):
 
 ### Phase 3：消除可变阶段模型并拆分 Ranking
 
-- 引入 `RetrievedDocument -> RankedDocument -> EnrichedDocument -> Evidence` 单向转换。
-- Provider 显式提供 provenance、实际过滤和 snapshot，不再靠名称推断。
+- [x] 引入 `RetrievedDocument -> RankedDocument -> EnrichedDocument -> Evidence` 单向转换。
+- [x] 在 Provider 适配器边界生成 provenance、实际过滤和 snapshot，不再由下游阶段猜测。
 - 拆分 `rerank.py`，删除旧辅助路径和重复 RRF。
-- 将 Ranking Profile 与领域策略统一到一条生产构建路径。
+- [x] 将 Ranking Profile 与领域策略统一到一条生产构建路径。
 
 退出条件：排序与富化不修改输入；缓存无需为防管线污染而深复制；新增 Web Provider 不改 Engine/Trust。
 
