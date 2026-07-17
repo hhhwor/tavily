@@ -71,7 +71,7 @@ class SearchEngine:
         pdf_max_chars_per_result: Optional[int] = None,
         pdf_timeout_ms: Optional[int] = None,
     ) -> SearchResponse:
-        return self._search_service.execute(SearchCommand(
+        return self.execute(SearchCommand(
             query=query,
             top_k=top_k,
             include_academic=include_academic,
@@ -91,6 +91,10 @@ class SearchEngine:
             pdf_max_chars_per_result=pdf_max_chars_per_result,
             pdf_timeout_ms=pdf_timeout_ms,
         ))
+
+    def execute(self, command: SearchCommand) -> SearchResponse:
+        """Public use-case entry shared by REST, MCP and in-process clients."""
+        return self._search_service.execute(command)
 
     def verify_claims(
         self,

@@ -19,6 +19,8 @@ from mcp.server.transport_security import TransportSecuritySettings
 
 from src.config import Settings
 from src.engine import SearchEngine
+from src.interfaces.presenters import McpSearchPresenter
+from src.interfaces.schemas import search_command_from_mapping
 from src.models import CandidateClaim, Evidence, SearchBoundary
 
 
@@ -40,14 +42,6 @@ def _transport_security(settings: Settings) -> Optional[TransportSecuritySetting
             allowed_origins=origins,
         )
     return None
-
-
-def _evidence_counts(evidence: list[Any]) -> dict[str, int]:
-    counts = {"web": 0, "academic": 0, "patent": 0}
-    for item in evidence:
-        if item.type in counts:
-            counts[item.type] += 1
-    return counts
 
 
 def build_mcp(engine: SearchEngine, settings: Optional[Settings] = None) -> FastMCP:
@@ -79,67 +73,39 @@ def build_mcp(engine: SearchEngine, settings: Optional[Settings] = None) -> Fast
     )
     async def search(
         query: str,
-        top_k: int = 10,
+        top_k: int = 0,
         include_academic: Optional[bool] = None,
         include_patent: Optional[bool] = None,
         ranking_profile: Optional[Literal["fast", "semantic", "quality"]] = None,
         rerank_threshold: Optional[float] = None,
         rerank_threshold_mode: Optional[Literal["off", "prefer", "strict"]] = None,
         rerank: Optional[bool] = None,
+        fusion_enabled: Optional[bool] = None,
         include_pdf_text: bool = False,
-        pdf_text_mode: Optional[str] = None,
+        pdf_text_mode: Optional[Literal["cached", "sync"]] = None,
         pdf_max_results: Optional[int] = None,
         pdf_max_chars_per_result: Optional[int] = None,
-        trust_mode: str = "annotate",
+        pdf_timeout_ms: Optional[int] = None,
+        rewrite_enabled: Optional[bool] = None,
+        trust_mode: Literal["off", "annotate"] = "annotate",
     ) -> dict[str, Any]:
-        """query: 检索词。top_k: 返回条数(默认 10)。
+        """query: 检索词。top_k: 返回条数(0 使用服务端默认)。
         include_academic / include_patent: None=按查询意图自动判定,true=强制开,false=强制关。
         ranking_profile: fast=快速先验排序,semantic=纯语义重排,quality=语义+领域信号。
         rerank_threshold: 0-1 的语义相关性阈值。0 等同关闭阈值。
         rerank_threshold_mode: off=不使用,prefer=达标项优先并回填,strict=删除未达标项。
         rerank: 已废弃的兼容别名;None=服务端默认,true=启用,false=fast。
+        fusion_enabled: 已废弃的兼容别名;true=quality,false=semantic。
         include_pdf_text: true 时对重排后的前几篇学术结果同步补 PDF 正文。
         pdf_text_mode: cached 只读缓存,sync 允许本次请求下载解析。
         trust_mode: annotate 补可信 Phase 0 标注;off 返回旧 evidence 结构。"""
-        if trust_mode not in {"off", "annotate"}:
-            raise ValueError("trust_mode 仅支持 off / annotate")
-        resp = await anyio.to_thread.run_sync(
-            lambda: engine.search(
-                query, top_k, include_academic, include_patent,
-                ranking_profile=ranking_profile,
-                rerank_enabled=rerank,
-                rerank_threshold=rerank_threshold,
-                rerank_threshold_mode=rerank_threshold_mode,
-                include_pdf_text=include_pdf_text,
-                pdf_text_mode=pdf_text_mode,
-                pdf_max_results=pdf_max_results,
-                pdf_max_chars_per_result=pdf_max_chars_per_result,
-                trust_mode=trust_mode,
-            )
+        command = search_command_from_mapping(
+            locals(), aliases={"rerank": "rerank_enabled"}
         )
-
-        return {
-            "query": resp.query,
-            "recency": resp.recency,
-            "partial_failure": resp.partial_failure,
-            "failures": [f.model_dump() for f in resp.failures],
-            "answerability": resp.answerability.model_dump(),
-            "trust_mode": resp.trust_mode,
-            "search_boundary": (
-                resp.search_boundary.model_dump(mode="json") if resp.search_boundary else None
-            ),
-            "evidence": [e.model_dump(mode="json") for e in resp.evidence],
-            "meta": {
-                "providers_used": resp.providers_used,
-                "reranker": resp.reranker,
-                "ranking_profile": resp.ranking_profile,
-                "rerank_threshold": resp.rerank_threshold,
-                "rerank_threshold_mode": resp.rerank_threshold_mode,
-                "ranking_warnings": resp.ranking_warnings,
-                "elapsed_ms": resp.elapsed_ms,
-                "counts": _evidence_counts(resp.evidence),
-            },
-        }
+        resp = await anyio.to_thread.run_sync(
+            lambda: engine.execute(command)
+        )
+        return McpSearchPresenter.present(resp)
 
     @mcp.tool(
         name="verify_claims",

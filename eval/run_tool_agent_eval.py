@@ -13,6 +13,7 @@ import anyio
 from eval.agent_answer_eval import AnswerPairJudge, EvidenceAnswerAgent, answer_support_audit
 from eval.e2e_judge import compact_response, evidence_type_counts
 from src.config import Settings
+from src.interfaces.presenters import McpSearchPresenter
 from src.models import SearchResponse
 
 _REPORT_PATH = "eval/tool_agent_report.md"
@@ -137,22 +138,7 @@ def _mcp_result_json(result: Any) -> dict:
 
 
 def _search_response_from_mcp(data: dict) -> SearchResponse:
-    meta = data.get("meta") or {}
-    return SearchResponse(
-        query=data.get("query", ""),
-        normalized_query=data.get("normalized_query", data.get("query", "")),
-        rewritten_query=data.get("rewritten_query"),
-        recency=data.get("recency"),
-        time_sensitive=bool(data.get("time_sensitive")),
-        evidence=data.get("evidence", []),
-        partial_failure=bool(data.get("partial_failure")),
-        failures=data.get("failures", []),
-        answerability=data.get("answerability", {}),
-        count=len(data.get("evidence", [])),
-        providers_used=meta.get("providers_used", []),
-        reranker=meta.get("reranker", ""),
-        elapsed_ms=int(meta.get("elapsed_ms") or 0),
-    )
+    return McpSearchPresenter.restore(data)
 
 
 def _merge_responses(task: str, responses: List[SearchResponse]) -> SearchResponse:
