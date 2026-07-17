@@ -24,6 +24,7 @@ from typing import Any, Dict, List, Optional
 
 import requests
 
+from src.infrastructure.http_errors import external_http_error
 from src.models import PatentResult
 from src.providers.base import SearchProvider
 
@@ -121,8 +122,8 @@ class PatentEsProvider(SearchProvider):
             )
             resp.raise_for_status()
             hits = resp.json().get("hits", {}).get("hits", [])
-        except Exception as e:
-            raise RuntimeError(f"Patent ES 检索失败: {e}") from e
+        except Exception as exc:
+            raise external_http_error(self.name, "search", exc) from exc
 
         return self._normalize(hits)[:size]
 
@@ -140,8 +141,8 @@ class PatentEsProvider(SearchProvider):
                 continue
             try:
                 results.append(self._to_result(h))
-            except Exception as e:  # 单条异常不影响整体
-                print(f"[patent_es] 跳过一条解析失败的结果: {e}")
+            except Exception:  # 单条异常不影响整体，也不记录不可信 payload
+                continue
         return results
 
     def _to_result(self, hit: Dict[str, Any]) -> PatentResult:

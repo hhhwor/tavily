@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from typing import Optional
 
+from src.domain.errors import ExternalServiceError, public_error_message
 from src.models import SearchFailure
 
 
@@ -15,11 +16,12 @@ def search_failure(
     message: object,
     recoverable: bool = True,
 ) -> SearchFailure:
+    external = message if isinstance(message, ExternalServiceError) else None
     return SearchFailure(
         stage=stage,
         source=source,
         type=source_type,
-        code=code,
-        message=str(message)[:500],
-        recoverable=recoverable,
+        code=external.code if external is not None else code,
+        message=public_error_message(message),
+        recoverable=external.recoverable if external is not None else recoverable,
     )

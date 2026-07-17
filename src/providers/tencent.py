@@ -15,6 +15,8 @@ from typing import Any, Dict, List, Optional
 
 import requests
 
+from src.domain.errors import ExternalServiceError
+from src.infrastructure.http_errors import external_http_error
 from src.models import SearchResult
 from src.providers.base import SearchProvider
 
@@ -95,17 +97,24 @@ class TencentSearchProvider(SearchProvider):
         payload = json.dumps(body, ensure_ascii=False)
         headers = _sign_v3(self.secret_id, self.secret_key, payload)
 
-        resp = self._http.post(
-            _ENDPOINT, headers=headers, data=payload.encode("utf-8"), timeout=self.timeout
-        )
-        resp.raise_for_status()
-        data = resp.json().get("Response", {})
-        if "Error" in data:
-            err = data["Error"]
-            raise RuntimeError(
-                f"腾讯搜索错误 [{err.get('Code')}] {err.get('Message')} "
-                f"(RequestId={data.get('RequestId')})"
+        try:
+            resp = self._http.post(
+                _ENDPOINT, headers=headers, data=payload.encode("utf-8"), timeout=self.timeout
             )
+            resp.raise_for_status()
+            data = resp.json().get("Response", {})
+            if "Error" in data:
+                cause = RuntimeError(str(data["Error"]))
+                raise ExternalServiceError(
+                    provider=self.name,
+                    code="SEARCH_UPSTREAM_REJECTED",
+                    recoverable=False,
+                    cause=cause,
+                ) from cause
+        except ExternalServiceError:
+            raise
+        except Exception as exc:
+            raise external_http_error(self.name, "search", exc) from exc
         return self._normalize(data.get("Pages", []))[:top_k]
 
     def _normalize(self, pages: List[str]) -> List[SearchResult]:

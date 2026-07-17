@@ -16,6 +16,7 @@ from src.models import (
     TrustAssessment,
     VerifyResponse,
 )
+from src.domain.errors import public_error_message
 from src.trust.annotate import annotate_evidence, build_search_boundary
 from src.trust.claims import decompose_claims
 from src.trust.entailment import (
@@ -253,7 +254,7 @@ class ClaimVerifier:
                 stage="claim_entailment",
                 source=getattr(self.classifier, "name", "unknown"),
                 code="ENTAILMENT_BACKEND_FAILED",
-                message=str(exc)[:500],
+                message=public_error_message(exc),
             ))
 
         assessments = [

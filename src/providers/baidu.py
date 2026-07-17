@@ -11,6 +11,8 @@ from typing import Any, Dict, List, Optional
 
 import requests
 
+from src.domain.errors import ExternalServiceError
+from src.infrastructure.http_errors import external_http_error
 from src.models import SearchResult
 from src.providers.base import SearchProvider
 
@@ -82,12 +84,22 @@ class BaiduSearchProvider(SearchProvider):
             "Authorization": f"Bearer {self.api_key}",
             "Content-Type": "application/json",
         }
-        resp = self._http.post(_ENDPOINT, headers=headers, json=body, timeout=self.timeout)
-        resp.raise_for_status()
-        data = resp.json()
-        if "references" not in data:
-            msg = data.get("message") or data.get("msg") or data
-            raise RuntimeError(f"百度搜索错误: {msg}")
+        try:
+            resp = self._http.post(_ENDPOINT, headers=headers, json=body, timeout=self.timeout)
+            resp.raise_for_status()
+            data = resp.json()
+            if "references" not in data:
+                cause = RuntimeError(str(data.get("message") or data.get("msg") or data))
+                raise ExternalServiceError(
+                    provider=self.name,
+                    code="SEARCH_UPSTREAM_REJECTED",
+                    recoverable=False,
+                    cause=cause,
+                ) from cause
+        except ExternalServiceError:
+            raise
+        except Exception as exc:
+            raise external_http_error(self.name, "search", exc) from exc
         return self._normalize(data["references"])[:top_k]
 
     def _normalize(self, refs: List[Dict[str, Any]]) -> List[SearchResult]:

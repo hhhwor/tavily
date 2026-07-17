@@ -178,7 +178,9 @@ def test_entailment_backend_failure_falls_back_to_rules():
         name = "broken"
 
         def classify_pairs(self, pairs):
-            raise RuntimeError("backend down")
+            raise RuntimeError(
+                "backend down: https://model.test/run?api_key=secret-model-key"
+            )
 
     claim = CandidateClaim(id="c1", text="材料循环寿命达到 1000 次")
     evidence = _academic_evidence(
@@ -196,6 +198,8 @@ def test_entailment_backend_failure_falls_back_to_rules():
 
     assert response.assessments[0].status == "supported"
     assert response.failures[0].code == "ENTAILMENT_BACKEND_FAILED"
+    assert "secret-model-key" not in response.failures[0].message
+    assert "model.test" not in response.failures[0].message
     assert "ENTAILMENT_BACKEND_FALLBACK" in response.trust_assessment.warnings
     assert response.trust_assessment.model == "rules:v1"
 

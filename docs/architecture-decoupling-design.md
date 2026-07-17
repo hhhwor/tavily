@@ -1,12 +1,12 @@
 # Agent 搜索引擎架构审阅与解耦设计
 
-> 状态：渐进式重构进行中；F-01、F-02、F-03、F-04 已实施
+> 状态：渐进式重构进行中；F-01、F-02、F-03、F-04、F-05 已实施
 >
-> 审阅基线：2026-07-17，`49de85e` 加当前 F-04 工作树
+> 审阅基线：2026-07-17，`7a85de8` 加当前 F-05 工作树
 >
 > 审阅范围：`src/`、`tests/`、`eval/`、`scripts/`、`deploy/` 与直接运行依赖
 >
-> 验证基线：当前工作树 115 个测试全部通过
+> 验证基线：当前工作树 120 个测试全部通过
 >
 > 关联文档：[当前技术路线](tech-route-summary.md)、[Trust Layer 设计](agent-search-trust-layer-design.md)、[评测方法](eval-methodology.md)
 
@@ -152,11 +152,17 @@ flowchart TD
 
 旧 `SearchResult.provider_rank/rerank_score/raw` 暂时保留给 Provider、评测与兼容算法，但不再作为生产阶段之间的共享状态。不可变载荷、缓存无污染、RRF 隔离、排序输入不变以及 Trust 输入不变均有契约测试保护。
 
-#### F-05 外部错误可能暴露凭证，模型覆盖缺少约束
+#### F-05 外部错误可能暴露凭证，模型覆盖缺少约束（已解决）
 
-SerpAPI 把 key 放在 URL 查询参数中，[requests 调用](../src/providers/serpapi.py#L47) 产生的异常可能携带完整 URL；Engine 当前把第三方异常字符串写入 `failures[]` 并打印日志。另一个边界是 REST 允许客户端任意指定 `rerank_backend` 和 `rerank_model`，Engine 会构造并缓存最多 16 个 Scorer；本地后端可能下载或加载任意模型。
+2026-07-17 已建立统一的外部错误与请求级模型选择边界：
 
-处理建议：定义不包含 URL/header/body 的 `ExternalServiceError(code, provider, recoverable)`，由适配器保留原始异常供受控日志使用，并在统一错误边界做 secret redaction。对外只暴露 allowlist 中的 Ranking Profile，不接受任意模型标识。
+- [domain/errors.py](../src/domain/errors.py) 定义 `ExternalServiceError(provider, code, recoverable)`。其公开 `str/repr` 只包含稳定字段，原始异常仅保留在 `cause` 供受控服务端诊断。
+- [infrastructure/http_errors.py](../src/infrastructure/http_errors.py) 将 timeout、401/403、429、5xx、请求拒绝和无效响应映射为稳定错误码；Web Provider、OpenAlex、Patent ES、SiliconFlow 排序与 Entailment 均在适配器边界完成映射。
+- `search_failure` 统一消费安全错误；普通异常不再把 `str(exc)` 返回客户端。URL 查询参数、Bearer、token/key/secret 键值另有末端 redaction，PDF 与 Trust 降级路径也使用同一公开消息策略。
+- Provider 单条坏数据不再把不可信 payload 通过解析异常打印到普通日志；L0 与 scorer 降级日志只记录稳定 code/backend。
+- REST/OpenAPI/UI 已移除 `rerank_backend` 和 `rerank_model` 请求字段；旧客户端继续发送时明确返回 422。外部请求只能选择 allowlist 中的 `fast/semantic/quality` Ranking Profile，具体 backend/model 只能由受信任的部署配置确定。MCP 本来就不暴露模型覆盖。
+
+泄漏 URL 的模拟 HTTP 异常、公开 failure 脱敏、Trust/PDF 降级脱敏和 REST 拒绝请求级模型选择均有契约测试。
 
 ### 3.3 P1：建立清晰模块边界
 
@@ -308,14 +314,15 @@ class SearchUseCase(Protocol):
 
 ## 5. 渐进式重构计划
 
-### Phase 0：冻结行为与修正契约（进行中；F-01/F-02/F-03/F-04 已完成）
+### Phase 0：冻结行为与修正契约（进行中；F-01 至 F-05 已完成）
 
 - [x] F-01：统一 Ranking Profile 与 threshold 语义，并补参数解析、排序行为和兼容性测试。
 - [x] F-02：引入不可变 Settings、唯一 composition root、惰性应用工厂和受管资源生命周期。
 - [x] F-03：拆分搜索应用服务并将 SearchEngine 收敛为兼容门面。
 - [x] F-04：引入不可变阶段文档，移除缓存、排序、PDF 与 Trust 的跨阶段对象污染。
+- [x] F-05：统一外部错误脱敏，并禁止 REST/MCP 请求级 backend/model 覆盖。
 - [ ] 为 REST/MCP 输出差异补测试。
-- 修复无效开关，限制模型选择，增加统一错误脱敏。
+- 修复剩余无效开关。
 - 把当前未跟踪的 Trust 测试纳入版本控制。
 - 记录一份固定语料的排序和 Evidence golden baseline。
 

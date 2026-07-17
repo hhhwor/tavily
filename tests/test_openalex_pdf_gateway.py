@@ -210,7 +210,28 @@ def test_enrich_maps_post_processing_errors_to_worker_failure():
     assert enriched.pdf_status == "failed"
     assert enriched.pdf_error_code == "PDF_ENRICH_WORKER_FAILED"
     assert outcome.failures[0].code == "PDF_ENRICH_WORKER_FAILED"
-    assert "invalid literal" in outcome.failures[0].message
+    assert outcome.failures[0].message == "operation failed; see failure code"
+    assert "not-an-integer" not in outcome.failures[0].message
+
+
+def test_enrich_does_not_expose_upstream_error_body():
+    http = _Http(post_result={
+        "status": "failed",
+        "error_code": "PDF_NOT_CACHED",
+        "error_message": (
+            "GET https://pdf.test/read?api_key=secret-pdf-key failed"
+        ),
+    })
+
+    outcome = _gateway(http).enrich([_paper()], include_pdf_text=True)
+
+    enriched = outcome.academic[0].to_result()
+    assert enriched.pdf_error_code == "PDF_NOT_CACHED"
+    assert enriched.pdf_error_message == (
+        "openalex_pdf external service failed (PDF_NOT_CACHED)"
+    )
+    assert "secret-pdf-key" not in outcome.failures[0].message
+    assert "pdf.test" not in outcome.failures[0].message
 
 
 def test_enrich_disabled_returns_explicit_copies_without_failures():

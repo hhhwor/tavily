@@ -22,6 +22,7 @@ from datetime import datetime, timezone
 from typing import Any, Callable, Dict, Generic, List, Optional, Sequence, Tuple, TypeVar
 
 from src.models import AcademicResult, PatentResult, SearchResult
+from src.infrastructure.http_errors import external_http_error
 from src.pipeline.chunk import chunk_text
 from src.pipeline.dedup import normalize_url
 from src.pipeline.fusion import rrf_fuse
@@ -279,29 +280,32 @@ class SiliconFlowReranker(Reranker):
         doc_scores: dict[int, float] = {}
         documents = [t for _, t in pairs]
 
-        resp = self._http.post(
-            self._url,
-            headers={
-                "Authorization": f"Bearer {self._api_key}",
-                "Content-Type": "application/json",
-            },
-            json={
-                "model": self._model,
-                "query": query,
-                "documents": documents,
-                "top_n": len(documents),
-                "return_documents": False,
-            },
-            timeout=30,
-        )
-        resp.raise_for_status()
-        data = resp.json()
+        try:
+            resp = self._http.post(
+                self._url,
+                headers={
+                    "Authorization": f"Bearer {self._api_key}",
+                    "Content-Type": "application/json",
+                },
+                json={
+                    "model": self._model,
+                    "query": query,
+                    "documents": documents,
+                    "top_n": len(documents),
+                    "return_documents": False,
+                },
+                timeout=30,
+            )
+            resp.raise_for_status()
+            data = resp.json()
 
-        for item in data.get("results", []):
-            doc_idx = pairs[item["index"]][0]
-            s = float(item["relevance_score"])
-            if doc_idx not in doc_scores or s > doc_scores[doc_idx]:
-                doc_scores[doc_idx] = s
+            for item in data.get("results", []):
+                doc_idx = pairs[item["index"]][0]
+                s = float(item["relevance_score"])
+                if doc_idx not in doc_scores or s > doc_scores[doc_idx]:
+                    doc_scores[doc_idx] = s
+        except Exception as exc:
+            raise external_http_error("siliconflow", "rerank", exc) from exc
 
         return [clamp01(doc_scores.get(i, 0.0)) for i in range(len(texts))]
 
@@ -1393,6 +1397,6 @@ def build_text_scorer(
             )
         else:
             return NoOpReranker()
-    except Exception as e:
-        print(f"[rerank] text_scorer backend={backend} 不可用,回退 NoOp: {e}")
+    except Exception:
+        print(f"[rerank] text_scorer backend={backend} 不可用,回退 NoOp")
         return NoOpReranker()

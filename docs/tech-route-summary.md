@@ -3,7 +3,7 @@
 > 对象:本项目(面向 AI Agent / LLM 的通用 Web 搜索引擎,Tavily 路线)**当前已落地的真实实现**。
 > 一句话:**元搜索聚合**——包装现成搜索源 + 跨源去重/融合 + cross-encoder 段落级重排,以结构化 JSON 返回 LLM-ready 内容,**不自建全网爬虫与倒排索引**。另接入 **OpenAlex 学术检索(经本地 Chukonu 检索系统)** 与 **专利检索(houdutech 只读 ES)** 作为两条独立能力支线(学术论文 / 专利结果各自单独成块)。
 > 代码:[src/](../src/) ｜ 调研与选型对比:[agent-search-engine-tech-research.md](./agent-search-engine-tech-research.md) ｜ 学术引擎可行性:[academic-search-engine-feasibility.md](./academic-search-engine-feasibility.md) ｜ 评测体系:[eval-methodology.md](./eval-methodology.md)
-> 编写日期:2026-06-10 ｜ 更新:2026-06-11(接入 OpenAlex 学术检索 + provider 召回缓存)｜ 2026-06-16(接入专利检索 ES 支线)｜ 2026-06-17(专利源切换到 epo_docdb_v2 多语种索引;引擎升级 Python 3.11 + FastAPI 进程内挂载 MCP server `/mcp`)｜ 2026-06-21(专利索引切到读别名 `epo_docdb_read`→`epo_docdb_v2_20260620`)｜ 2026-07-17(统一 Ranking Profile、建立 composition root、拆分应用服务与不可变文档管线)
+> 编写日期:2026-06-10 ｜ 更新:2026-06-11(接入 OpenAlex 学术检索 + provider 召回缓存)｜ 2026-06-16(接入专利检索 ES 支线)｜ 2026-06-17(专利源切换到 epo_docdb_v2 多语种索引;引擎升级 Python 3.11 + FastAPI 进程内挂载 MCP server `/mcp`)｜ 2026-06-21(专利索引切到读别名 `epo_docdb_read`→`epo_docdb_v2_20260620`)｜ 2026-07-17(统一 Ranking Profile、建立 composition root、拆分应用服务与不可变文档管线、收口外部错误与模型选择边界)
 
 本篇只讲**现在到底怎么做的**:分层、选型、默认开关、评测结论、运行方式。选型「为什么这么选 / 和谁对比过」见调研文档;评测「指标怎么算」见评测文档。
 
@@ -85,7 +85,7 @@ POST /search {query, top_k, ranking_profile?, rerank_threshold_mode?, ...}
 | **L4 重排** | `quality/semantic/fast` 三档;SiliconFlow API(BGE-v2-m3)/本地 BGE/FlashRank;`off/prefer/strict` 阈值策略;**web / 学术 / 专利三路独立重排** | [ranking_options.py](../src/pipeline/ranking_options.py) · [rerank.py](../src/pipeline/rerank.py) · [fusion.py](../src/pipeline/fusion.py) | ✅ |
 | **L5 合成** | 未做 | — | ⏳ TODO |
 | **缓存** | provider 召回级缓存(进程内 LRU+TTL,线程安全;接口化预留 Redis);时效查询不缓存 | [cache.py](../src/cache.py) · [application/recall.py](../src/application/recall.py) | ✅ |
-| **横切**(安全/可观测/MCP) | 未做 | — | ⏳ TODO |
+| **横切**(安全/可观测/MCP) | token 鉴权 + MCP Host/Origin 防护 + 外部错误稳定映射/凭证脱敏；完整指标与 tracing 待补 | [domain/errors.py](../src/domain/errors.py) · [infrastructure/http_errors.py](../src/infrastructure/http_errors.py) | 🟡 部分完成 |
 
 ---
 
@@ -118,7 +118,7 @@ POST /search {query, top_k, ranking_profile?, rerank_threshold_mode?, ...}
 
 ### L4 — 重排(质量分水岭)([rerank.py](../src/pipeline/rerank.py))
 
-生产链先把新旧请求字段解析成一个不可变 `RankingOptions(profile, threshold, threshold_mode)`，再由三类领域 reranker 执行。旧 `ThresholdReranker` / `FusionReranker` 仅保留给历史评测代码，不再是生产构建链。
+生产链先把新旧请求字段解析成一个不可变 `RankingOptions(profile, threshold, threshold_mode)`，再由三类领域 reranker 执行。REST/MCP 请求只能选择 allowlist 中的 Profile，不能覆盖 backend/model；具体模型由部署配置决定。旧 `ThresholdReranker` / `FusionReranker` 仅保留给历史评测代码，不再是生产构建链。
 
 - **段落级打分**:每个文档切 chunk,逐 `(query, chunk)` pair 交 cross-encoder 打分,**每文档取 chunk 最高分(max-pooling)**。彻底解决「BGE 512 token 上限 vs 长正文硬截断」的矛盾。
 - **三种 backend**:
@@ -175,8 +175,8 @@ POST /search {query, top_k, ranking_profile?, rerank_threshold_mode?, ...}
 | 开关 | 默认值 | 含义 | 推荐(质量优先) |
 |------|--------|------|----------------|
 | `RANKING_PROFILE` | **`quality`** | `quality`=文本+领域信号；`semantic`=纯文本；`fast`=无文本模型 | `quality`，低延迟场景用 `fast` |
-| `RERANK_BACKEND` | `siliconflow` | `siliconflow`/`bge`/`flashrank`/`none` | `siliconflow`(零 GPU、~2.7s) |
-| `RERANK_MODEL` | `BAAI/bge-reranker-v2-m3` | 重排模型 | 同默认 |
+| `RERANK_BACKEND` | `siliconflow` | `siliconflow`/`bge`/`flashrank`/`none`；仅部署配置，请求不可覆盖 | `siliconflow`(零 GPU、~2.7s) |
+| `RERANK_MODEL` | `BAAI/bge-reranker-v2-m3` | 重排模型；仅部署配置，请求不可覆盖 | 同默认 |
 | `RERANK_THRESHOLD` | `0.3` | 融合前的文本相关性门槛；`0` 等同关闭 | 同默认 |
 | `RERANK_THRESHOLD_MODE` | **`prefer`** | `off`=关闭；`prefer`=达标优先并回填；`strict`=硬过滤 | `prefer`；只在确需空结果时使用 `strict` |
 | `RERANK_ENABLED` | 兼容字段 | `false → fast`；`true` 使用非 fast 默认档 | 新调用改用 `RANKING_PROFILE` |

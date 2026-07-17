@@ -13,7 +13,7 @@ from fastapi.testclient import TestClient
 _ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(_ROOT))
 
-from src.api import create_app
+from src.api import SearchRequest, create_app
 from src.bootstrap import build_container
 from src.config import Settings
 from src.providers.baidu import BaiduSearchProvider
@@ -167,6 +167,25 @@ def test_server_default_ranking_conflict_is_rest_422():
         )
     assert response.status_code == 422
     assert "rerank_backend=none" in response.text
+
+
+@pytest.mark.parametrize("field", ["rerank_backend", "rerank_model"])
+def test_rest_rejects_request_level_model_selection(field):
+    schema = SearchRequest.model_json_schema()
+    assert field not in schema["properties"]
+
+    container = build_container(_safe_settings(), include_mcp=False)
+    with TestClient(create_app(container)) as client:
+        response = client.post(
+            "/search",
+            json={
+                "query": "test",
+                field: "attacker-controlled-model",
+            },
+        )
+
+    assert response.status_code == 422
+    assert "ranking_profile" in response.text
 
 
 def test_invalid_numeric_config_fails_only_when_explicitly_parsed():

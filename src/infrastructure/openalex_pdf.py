@@ -1,6 +1,7 @@
 """OpenAlex PDF 服务适配器。"""
 from __future__ import annotations
 
+import re
 import time
 from concurrent.futures import Executor, as_completed
 from typing import Any, Callable, Optional, Sequence
@@ -12,7 +13,20 @@ from src.application.outcomes import PdfEnrichmentOutcome
 from src.application.ports.pdf_text import PdfTextGateway
 from src.config import Settings
 from src.domain.documents import EnrichedDocument, RankedDocument, RetrievedDocument
+from src.domain.errors import public_error_message
 from src.models import AcademicResult, PdfTextResponse, SearchFailure
+
+
+_ERROR_CODE = re.compile(r"^[A-Z][A-Z0-9_]{0,63}$")
+
+
+def _stable_error_code(value: object, fallback: str) -> str:
+    code = str(value or "")
+    return code if _ERROR_CODE.fullmatch(code) else fallback
+
+
+def _external_error_message(code: str) -> str:
+    return f"openalex_pdf external service failed ({code})"
 
 
 class OpenAlexPdfGateway(PdfTextGateway):
@@ -38,7 +52,7 @@ class OpenAlexPdfGateway(PdfTextGateway):
             source=paper.work_id or paper.doi or paper.title,
             type="academic",
             code=paper.pdf_error_code or "PDF_ENRICH_FAILED",
-            message=str(paper.pdf_error_message or paper.pdf_status)[:500],
+            message=public_error_message(paper.pdf_error_message or paper.pdf_status),
             recoverable=True,
         )
 
@@ -161,7 +175,7 @@ class OpenAlexPdfGateway(PdfTextGateway):
             except Exception as exc:
                 paper.pdf_status = "failed"
                 paper.pdf_error_code = "PDF_ENRICH_FAILED"
-                paper.pdf_error_message = str(exc)[:300]
+                paper.pdf_error_message = public_error_message(exc, limit=300)
                 return
 
             paper.pdf_status = data.get("status") or "failed"
@@ -173,8 +187,16 @@ class OpenAlexPdfGateway(PdfTextGateway):
             paper.pdf_page_from = data.get("page_from")
             paper.pdf_page_to = data.get("page_to")
             paper.pdf_next_cursor = data.get("next_cursor")
-            paper.pdf_error_code = data.get("error_code")
-            paper.pdf_error_message = data.get("error_message")
+            paper.pdf_error_code = (
+                _stable_error_code(data.get("error_code"), "PDF_ENRICH_FAILED")
+                if data.get("error_code")
+                else None
+            )
+            paper.pdf_error_message = (
+                _external_error_message(paper.pdf_error_code)
+                if paper.pdf_error_code
+                else None
+            )
 
         futures = {
             self._executor.submit(enrich_one, paper): paper for paper in candidates
@@ -186,7 +208,7 @@ class OpenAlexPdfGateway(PdfTextGateway):
             except Exception as exc:
                 paper.pdf_status = "failed"
                 paper.pdf_error_code = "PDF_ENRICH_WORKER_FAILED"
-                paper.pdf_error_message = str(exc)[:300]
+                paper.pdf_error_message = public_error_message(exc, limit=300)
 
         failures = tuple(
             self._failure(paper) for paper in materialized if paper.pdf_error_code
@@ -246,10 +268,15 @@ class OpenAlexPdfGateway(PdfTextGateway):
                 work_id=work_id,
                 status="failed",
                 error_code="PDF_TEXT_READ_FAILED",
-                error_message=str(exc)[:300],
+                error_message=public_error_message(exc, limit=300),
             )
 
         text = data.get("text")
+        error_code = (
+            _stable_error_code(data.get("error_code"), "PDF_TEXT_READ_FAILED")
+            if data.get("error_code")
+            else None
+        )
         return PdfTextResponse(
             work_id=data.get("work_id") or work_id,
             status=data.get("status") or "failed",
@@ -260,6 +287,6 @@ class OpenAlexPdfGateway(PdfTextGateway):
             returned_chars=len(text or ""),
             next_cursor=data.get("next_cursor"),
             partial=bool(data.get("next_cursor")),
-            error_code=data.get("error_code"),
-            error_message=data.get("error_message"),
+            error_code=error_code,
+            error_message=_external_error_message(error_code) if error_code else None,
         )

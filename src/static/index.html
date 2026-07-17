@@ -144,23 +144,6 @@
             <option value="quality">quality（语义 + 领域信号）</option>
           </select>
         </label>
-        <label>重排后端
-          <select id="rerank_backend">
-            <option value="">默认</option>
-            <option value="siliconflow">siliconflow（云端 API）</option>
-            <option value="bge">bge（本地）</option>
-            <option value="flashrank">flashrank（本地轻量）</option>
-          </select>
-        </label>
-        <label>重排模型
-          <input id="rerank_model" type="text" list="model_list" placeholder="默认 BAAI/bge-reranker-v2-m3">
-          <datalist id="model_list">
-            <option value="BAAI/bge-reranker-v2-m3"></option>
-            <option value="BAAI/bge-reranker-base"></option>
-            <option value="Pro/BAAI/bge-reranker-v2-m3"></option>
-            <option value="netease-youdao/bce-reranker-base_v1"></option>
-          </datalist>
-        </label>
         <label>语义相关性阈值
           <input id="rerank_threshold" type="number" step="0.05" min="0" max="1" placeholder="默认 0.3">
         </label>
@@ -259,8 +242,6 @@
         include_academic: triBool('include_academic'),
         include_patent: triBool('include_patent'),
         ranking_profile: optStr('ranking_profile'),
-        rerank_backend: optStr('rerank_backend'),
-        rerank_model: optStr('rerank_model'),
         rerank_threshold: optNum('rerank_threshold'),
         rerank_threshold_mode: optStr('rerank_threshold_mode'),
         rewrite_enabled: triBool('rewrite_enabled'),

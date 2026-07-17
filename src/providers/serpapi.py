@@ -12,6 +12,8 @@ from typing import Any, Dict, List, Optional
 
 import requests
 
+from src.domain.errors import ExternalServiceError
+from src.infrastructure.http_errors import external_http_error
 from src.models import SearchResult
 from src.providers.base import SearchProvider
 
@@ -57,12 +59,22 @@ class SerpApiProvider(SearchProvider):
         if recency and recency in _RECENCY_TBS:
             params["tbs"] = _RECENCY_TBS[recency]
 
-        resp = self._http.get(_ENDPOINT, params=params, timeout=self.timeout)
-        resp.raise_for_status()
-        data = resp.json()
-
-        if "error" in data:
-            raise RuntimeError(f"SerpAPI 错误: {data['error']}")
+        try:
+            resp = self._http.get(_ENDPOINT, params=params, timeout=self.timeout)
+            resp.raise_for_status()
+            data = resp.json()
+            if "error" in data:
+                cause = RuntimeError(str(data["error"]))
+                raise ExternalServiceError(
+                    provider=self.name,
+                    code="SEARCH_UPSTREAM_REJECTED",
+                    recoverable=False,
+                    cause=cause,
+                ) from cause
+        except ExternalServiceError:
+            raise
+        except Exception as exc:
+            raise external_http_error(self.name, "search", exc) from exc
 
         return self._normalize(data.get("organic_results", []))[:top_k]
 

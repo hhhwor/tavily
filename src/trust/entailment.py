@@ -8,6 +8,7 @@ from typing import Any, Dict, List, Sequence, Tuple
 
 import requests
 
+from src.infrastructure.http_errors import external_http_error
 from src.models import CandidateClaim, Evidence
 
 EntailmentPair = Tuple[str, CandidateClaim, Evidence]
@@ -138,23 +139,26 @@ class SiliconFlowEntailmentClassifier:
             "confidence 只能 high/medium/low/none，quote 使用最短原文片段。\n输入："
             + json.dumps(payload, ensure_ascii=False)
         )
-        response = self._http.post(
-            self.url,
-            headers={"Authorization": f"Bearer {self.api_key}", "Content-Type": "application/json"},
-            json={
-                "model": self.model,
-                "messages": [{"role": "user", "content": prompt}],
-                "temperature": 0,
-                "max_tokens": min(4096, 256 + 180 * len(pairs)),
-            },
-            timeout=self.timeout,
-        )
-        response.raise_for_status()
-        content = response.json()["choices"][0]["message"]["content"].strip()
-        match = re.search(r"\[.*\]", content, re.S)
-        if not match:
-            raise ValueError("蕴含模型未返回 JSON 数组")
-        rows = json.loads(match.group(0))
+        try:
+            response = self._http.post(
+                self.url,
+                headers={"Authorization": f"Bearer {self.api_key}", "Content-Type": "application/json"},
+                json={
+                    "model": self.model,
+                    "messages": [{"role": "user", "content": prompt}],
+                    "temperature": 0,
+                    "max_tokens": min(4096, 256 + 180 * len(pairs)),
+                },
+                timeout=self.timeout,
+            )
+            response.raise_for_status()
+            content = response.json()["choices"][0]["message"]["content"].strip()
+            match = re.search(r"\[.*\]", content, re.S)
+            if not match:
+                raise ValueError("蕴含模型未返回 JSON 数组")
+            rows = json.loads(match.group(0))
+        except Exception as exc:
+            raise external_http_error("siliconflow", "entailment", exc) from exc
         decisions: Dict[str, EntailmentDecision] = {}
         pair_ids = {pair_id for pair_id, _, _ in pairs}
         for row in rows:

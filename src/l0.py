@@ -16,6 +16,7 @@ from urllib.parse import urlparse
 
 import requests as _requests
 
+from src.domain.errors import ExternalServiceError
 from src.models import SearchFailure, SearchPlan
 
 MAX_QUERY_LEN = 512  # 边界校验:超长截断,防滥用
@@ -197,15 +198,20 @@ def rewrite_query(
         if rewritten and len(rewritten) < len(query) * 3:
             cache.put(query, rewritten)
             return rewritten
-    except Exception as e:
+    except Exception as exc:
+        failure = ExternalServiceError(
+            provider="siliconflow",
+            code="QUERY_REWRITE_FAILED",
+            cause=exc,
+        )
         if failures is not None:
             failures.append(SearchFailure(
                 stage="query_rewrite",
                 source="siliconflow",
                 code="QUERY_REWRITE_FAILED",
-                message=str(e)[:500],
+                message=str(failure),
             ))
-        print(f"[l0] 查询改写失败,使用原始查询: {e}")
+        print("[l0] 查询改写失败,使用原始查询: code=QUERY_REWRITE_FAILED")
 
     return query
 
@@ -263,16 +269,21 @@ def rewrite_academic_query(
         if rewritten:
             cache.put(ck, rewritten)
             return rewritten
-    except Exception as e:
+    except Exception as exc:
+        failure = ExternalServiceError(
+            provider="siliconflow",
+            code="ACADEMIC_QUERY_REWRITE_FAILED",
+            cause=exc,
+        )
         if failures is not None:
             failures.append(SearchFailure(
                 stage="academic_query_rewrite",
                 source="siliconflow",
                 type="academic",
                 code="ACADEMIC_QUERY_REWRITE_FAILED",
-                message=str(e)[:500],
+                message=str(failure),
             ))
-        print(f"[l0] 学术查询改写失败,用原查询: {e}")
+        print("[l0] 学术查询改写失败,使用原查询: code=ACADEMIC_QUERY_REWRITE_FAILED")
 
     return query
 

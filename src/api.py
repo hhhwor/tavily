@@ -5,7 +5,7 @@ import hmac
 import os
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
-from typing import Callable, List, Literal, Optional
+from typing import Any, Callable, List, Literal, Optional
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, JSONResponse
@@ -59,10 +59,6 @@ class SearchRequest(BaseModel):
         description="兼容旧参数:false 映射 fast,true 启用服务端非 fast 档位",
         json_schema_extra={"deprecated": True},
     )
-    rerank_backend: Optional[str] = Field(
-        None, description="重排后端:siliconflow / bge / flashrank / none"
-    )
-    rerank_model: Optional[str] = Field(None, description="重排模型,如 BAAI/bge-reranker-v2-m3")
     rerank_threshold: Optional[float] = Field(
         None,
         ge=0,
@@ -84,6 +80,21 @@ class SearchRequest(BaseModel):
         description="可信证据 Phase 0:off=保持旧 evidence;annotate=补 provenance/locator/quality/边界",
     )
 
+    @model_validator(mode="before")
+    @classmethod
+    def reject_runtime_model_overrides(cls, value: Any) -> Any:
+        """模型和后端由受信任的部署配置决定，不接受请求级标识。"""
+        if isinstance(value, dict):
+            forbidden = sorted(
+                field for field in ("rerank_backend", "rerank_model")
+                if field in value
+            )
+            if forbidden:
+                raise ValueError(
+                    "请求不允许覆盖重排后端或模型；请使用 ranking_profile"
+                )
+        return value
+
     @model_validator(mode="after")
     def validate_explicit_ranking_options(self) -> "SearchRequest":
         """只校验请求内部冲突；服务端默认相关冲突由注入的 Engine 校验。"""
@@ -94,7 +105,6 @@ class SearchRequest(BaseModel):
             ranking_profile=self.ranking_profile,
             rerank_enabled=self.rerank_enabled,
             fusion_enabled=self.fusion_enabled,
-            rerank_backend=self.rerank_backend,
             rerank_threshold=self.rerank_threshold,
             rerank_threshold_mode=self.rerank_threshold_mode,
         )
@@ -240,8 +250,6 @@ def create_app(
                 req.include_patent,
                 ranking_profile=req.ranking_profile,
                 rerank_enabled=req.rerank_enabled,
-                rerank_backend=req.rerank_backend,
-                rerank_model=req.rerank_model,
                 rerank_threshold=req.rerank_threshold,
                 rerank_threshold_mode=req.rerank_threshold_mode,
                 fusion_enabled=req.fusion_enabled,
