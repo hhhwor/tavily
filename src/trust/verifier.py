@@ -5,6 +5,7 @@ import re
 import time
 from typing import Any, Dict, List, Optional, Sequence
 
+from src.application.ports.entailment import EntailmentClassifier
 from src.models import (
     CandidateClaim,
     ClaimAssessment,
@@ -197,15 +198,17 @@ def _unique(items: Sequence[str]) -> List[str]:
 class ClaimVerifier:
     def __init__(
         self,
-        classifier,
+        classifier: EntailmentClassifier,
         *,
         max_claims: int = 20,
         max_evidence_per_claim: int = 5,
+        monotonic=time.monotonic,
     ) -> None:
         self.classifier = classifier
         self.rule_fallback = RuleEntailmentClassifier()
         self.max_claims = max(1, max_claims)
         self.max_evidence_per_claim = max(1, max_evidence_per_claim)
+        self._monotonic = monotonic
 
     def verify(
         self,
@@ -216,7 +219,7 @@ class ClaimVerifier:
         profile: str = "general",
         search_boundary: Optional[SearchBoundary] = None,
     ) -> VerifyResponse:
-        started = time.time()
+        started = self._monotonic()
         profile = (profile or "general").strip().lower()
         if profile not in _PROFILES:
             raise ValueError(f"不支持的 verification profile: {profile}")
@@ -269,7 +272,7 @@ class ClaimVerifier:
             trust_assessment=summary,
             search_boundary=search_boundary,
             failures=failures,
-            elapsed_ms=int((time.time() - started) * 1000),
+            elapsed_ms=int((self._monotonic() - started) * 1000),
         )
 
     def _assess_claim(
@@ -420,6 +423,7 @@ def build_claim_verifier(
     max_claims: int,
     max_evidence_per_claim: int,
     http_session: Any = None,
+    monotonic=time.monotonic,
 ) -> ClaimVerifier:
     backend = (backend or "auto").strip().lower()
     if backend not in {"auto", "rules", "siliconflow"}:
@@ -435,4 +439,5 @@ def build_claim_verifier(
         classifier,
         max_claims=max_claims,
         max_evidence_per_claim=max_evidence_per_claim,
+        monotonic=monotonic,
     )

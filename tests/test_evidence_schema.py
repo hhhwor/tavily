@@ -158,17 +158,17 @@ def test_answerability_reports_gaps_and_partial_failure():
     assert "NO_ACADEMIC_EVIDENCE" in codes
 
 
-def test_plan_query_records_rewrite_failure(monkeypatch):
-    def fail_post(*args, **kwargs):
-        raise RuntimeError("rewrite api down")
-
-    monkeypatch.setattr("src.l0._requests.post", fail_post)
+def test_plan_query_records_rewrite_failure():
+    class FailedSession:
+        def post(self, *args, **kwargs):
+            raise RuntimeError("rewrite api down")
 
     plan = plan_query(
         "what is rag",
         ["baidu"],
         rewrite=True,
         rewrite_api_key="token",
+        http_session=FailedSession(),
     )
 
     assert plan.rewritten_query == "what is rag"

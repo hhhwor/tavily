@@ -1,13 +1,11 @@
 """搜索用例的唯一阶段编排服务。"""
 from __future__ import annotations
 
-import time
-from datetime import datetime, timezone
-
 from src.application.answerability import AnswerabilityPolicy
 from src.application.commands import SearchCommand
 from src.application.evidence_assembler import EvidenceAssembler
 from src.application.ports.pdf_text import PdfTextGateway
+from src.application.ports.runtime import Clock, Deadline
 from src.application.query_planner import QueryPlanner
 from src.application.ranking_service import RankingService
 from src.application.recall import RecallCoordinator
@@ -30,6 +28,8 @@ class SearchService:
         trust_annotator: TrustAnnotator,
         answerability: AnswerabilityPolicy,
         source_registry: SourceRegistry,
+        clock: Clock,
+        deadline_ms: int,
     ) -> None:
         self._query_planner = query_planner
         self._recall = recall
@@ -39,6 +39,8 @@ class SearchService:
         self._trust_annotator = trust_annotator
         self._answerability = answerability
         self._source_registry = source_registry
+        self._clock = clock
+        self._deadline_ms = deadline_ms
 
     def execute(self, command: SearchCommand) -> SearchResponse:
         trust_mode = (command.trust_mode or "annotate").strip().lower()
@@ -47,20 +49,22 @@ class SearchService:
 
         # 排序冲突属于请求错误，必须在查询改写和外部召回之前失败。
         ranking_options = self._ranking.resolve(command)
-        started = time.time()
-        query_time = datetime.now(timezone.utc)
+        started = self._clock.monotonic()
+        query_time = self._clock.now()
+        deadline = Deadline.after(self._deadline_ms, self._clock)
         planned = self._query_planner.plan(
             command,
             self._source_registry.ids("web"),
             academic_available=self._source_registry.has_kind("academic"),
             patent_available=self._source_registry.has_kind("patent"),
         )
-        recalled = self._recall.recall(planned)
+        recalled = self._recall.recall(planned, deadline=deadline)
         ranked = self._ranking.rank(
             command,
             planned,
             recalled,
             options=ranking_options,
+            deadline=deadline,
         )
         pdf = self._pdf_gateway.enrich(
             ranked.academic,
@@ -69,6 +73,7 @@ class SearchService:
             pdf_max_results=command.pdf_max_results,
             pdf_max_chars_per_result=command.pdf_max_chars_per_result,
             pdf_timeout_ms=command.pdf_timeout_ms,
+            deadline=deadline,
         )
 
         failures = [
@@ -121,5 +126,5 @@ class SearchService:
             rerank_threshold=ranked.options.threshold,
             rerank_threshold_mode=ranked.options.threshold_mode,
             ranking_warnings=list(ranked.options.warnings),
-            elapsed_ms=int((time.time() - started) * 1000),
+            elapsed_ms=int((self._clock.monotonic() - started) * 1000),
         )

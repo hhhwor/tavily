@@ -26,6 +26,7 @@ from src.models import Answerability, SearchFailure, SearchPlan, SearchResult
 from src.pipeline.ranking_options import resolve_ranking_options
 from src.pipeline.rerank import NoOpReranker
 from src.providers.base import SearchProvider
+from src.infrastructure.runtime import SystemClock
 
 
 class _InlineExecutor:
@@ -91,6 +92,7 @@ def test_recall_cache_isolated_from_pipeline_mutation_and_time_sensitive_bypass(
         SourceRegistry([provider]),
         InMemoryCache(),
         _InlineExecutor(),
+        clock=SystemClock().now,
     )
 
     first = coordinator.recall(_planned())
@@ -116,6 +118,7 @@ def test_recall_converts_provider_exception_to_stage_failure():
         SourceRegistry([provider]),
         None,
         _InlineExecutor(),
+        clock=SystemClock().now,
     ).recall(_planned())
 
     assert outcome.web == ()
@@ -131,6 +134,7 @@ def test_ranking_noop_disables_threshold_without_partial_failure():
         NoOpReranker(),
         lambda *_: NoOpReranker(),
         _InlineExecutor(),
+        clock=SystemClock(),
     )
     outcome = service.rank(
         SearchCommand(
@@ -162,6 +166,7 @@ def test_ranking_failure_falls_back_per_domain(monkeypatch):
         NoOpReranker(),
         lambda *_: NoOpReranker(),
         _InlineExecutor(),
+        clock=SystemClock(),
     ).rank(SearchCommand("query"), _planned(), RecallOutcome(web=(original,)))
 
     assert outcome.web[0].to_result() == original
@@ -195,7 +200,7 @@ def test_search_service_owns_stage_order_and_failure_order():
             return planned
 
     class Recall:
-        def recall(self, value):
+        def recall(self, value, *, deadline=None):
             trace.append("recall")
             return recalled
 
@@ -204,7 +209,7 @@ def test_search_service_owns_stage_order_and_failure_order():
             trace.append("resolve")
             return options
 
-        def rank(self, command, plan, recall, *, options):
+        def rank(self, command, plan, recall, *, options, deadline=None):
             trace.append("rank")
             return ranked
 
@@ -237,6 +242,8 @@ def test_search_service_owns_stage_order_and_failure_order():
         trust_annotator=Trust(),
         answerability=Policy(),
         source_registry=SourceRegistry(),
+        clock=SystemClock(),
+        deadline_ms=30000,
     )
     response = service.execute(SearchCommand("q", trust_mode="off"))
 

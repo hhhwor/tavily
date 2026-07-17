@@ -64,7 +64,8 @@ def _freshness(
     ctx: RerankContext,
 ) -> float:
     days_ago = parse_date_days_ago(
-        result.publication_date or result.application_date or result.date
+        result.publication_date or result.application_date or result.date,
+        ctx.reference_time,
     )
     if days_ago is None:
         return 0.4 if ctx.wants_recent else 0.5

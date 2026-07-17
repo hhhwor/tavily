@@ -1,12 +1,13 @@
 """查询规划应用服务：封装 L0 理解、领域路由与学术查询改写。"""
 from __future__ import annotations
 
-from typing import Any, Callable, Protocol, Sequence
+from typing import Callable, Protocol, Sequence
 
 from src.application.commands import SearchCommand
 from src.application.failures import search_failure
 from src.application.outcomes import PlannedQuery
-from src.l0 import plan_query, rewrite_academic_query
+from src.application.ports.query_rewriter import QueryRewriter
+from src.l0 import plan_query
 from src.models import SearchFailure, SearchPlan
 
 
@@ -25,24 +26,19 @@ class QueryPlannerSettings(Protocol):
 
 
 PlanQuery = Callable[..., SearchPlan]
-AcademicQueryRewriter = Callable[..., str]
-
-
 class QueryPlanner:
     """把兼容 SearchCommand 转换为召回阶段可直接执行的查询计划。"""
 
     def __init__(
         self,
         settings: QueryPlannerSettings,
-        http_session: Any = None,
+        rewriter: QueryRewriter | None = None,
         *,
         plan_query_fn: PlanQuery = plan_query,
-        academic_rewrite_fn: AcademicQueryRewriter = rewrite_academic_query,
     ) -> None:
         self._settings = settings
-        self._http = http_session
+        self._rewriter = rewriter
         self._plan_query = plan_query_fn
-        self._rewrite_academic_query = academic_rewrite_fn
 
     def plan(
         self,
@@ -64,22 +60,34 @@ class QueryPlanner:
             command.query,
             list(names),
             top_k,
-            rewrite=rewrite,
-            rewrite_api_key=self._settings.siliconflow_api_key,
-            rewrite_base_url=self._settings.siliconflow_base_url,
-            rewrite_model=self._settings.rewrite_model,
-            rewrite_cache_size=self._settings.rewrite_cache_size,
+            rewrite=False,
             academic_detect=self._settings.openalex_academic_detect,
             force_academic=command.include_academic,
             patent_detect=self._settings.patent_detect,
             force_patent=command.include_patent,
-            http_session=self._http,
         )
+
+        failures: list[SearchFailure] = list(plan.failures)
+        if rewrite and self._settings.siliconflow_api_key and self._rewriter is not None:
+            try:
+                rewritten = self._rewriter.rewrite(plan.normalized_query)
+            except Exception as exc:
+                failures.append(search_failure(
+                    stage="query_rewrite",
+                    source="siliconflow",
+                    code="QUERY_REWRITE_FAILED",
+                    message=exc,
+                ))
+                rewritten = plan.normalized_query
+            plan = plan.model_copy(update={
+                "rewritten_query": rewritten,
+                "failures": failures,
+            })
 
         active_names = tuple(name for name in names if name in plan.providers)
         do_academic = bool(academic_available and plan.academic)
         do_patent = bool(patent_available and plan.patent)
-        failures: list[SearchFailure] = list(plan.failures)
+        failures = list(plan.failures)
 
         if plan.academic and not academic_available:
             failures.append(search_failure(
@@ -105,15 +113,19 @@ class QueryPlanner:
             and self._settings.openalex_query_rewrite
             and self._settings.siliconflow_api_key
         ):
-            academic_query = self._rewrite_academic_query(
-                search_query,
-                self._settings.siliconflow_api_key,
-                self._settings.siliconflow_base_url,
-                self._settings.rewrite_model,
-                self._settings.rewrite_cache_size,
-                failures=failures,
-                http_session=self._http,
-            )
+            if self._rewriter is not None:
+                try:
+                    academic_query = self._rewriter.rewrite(
+                        search_query, academic=True
+                    )
+                except Exception as exc:
+                    failures.append(search_failure(
+                        stage="academic_query_rewrite",
+                        source="siliconflow",
+                        source_type="academic",
+                        code="ACADEMIC_QUERY_REWRITE_FAILED",
+                        message=exc,
+                    ))
 
         return PlannedQuery(
             plan=plan,

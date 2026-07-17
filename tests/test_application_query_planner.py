@@ -86,10 +86,8 @@ def test_planner_forwards_request_overrides_to_l0():
             patent=False,
         )
 
-    session = object()
     planner = QueryPlanner(
         _settings(rewrite_enabled=True),
-        session,
         plan_query_fn=fake_plan,
     )
     planned = planner.plan(
@@ -110,23 +108,24 @@ def test_planner_forwards_request_overrides_to_l0():
     assert kwargs["rewrite"] is False
     assert kwargs["force_academic"] is False
     assert kwargs["force_patent"] is True
-    assert kwargs["http_session"] is session
+    assert "http_session" not in kwargs
     assert planned.active_provider_names == ("baidu",)
 
 
 def test_planner_reports_unavailable_verticals_without_rewriting_academic():
     academic_rewrite_calls = []
 
-    def fail_if_rewritten(*args, **kwargs):
-        academic_rewrite_calls.append((args, kwargs))
-        return "unexpected"
+    class Rewriter:
+        def rewrite(self, query, *, academic=False):
+            academic_rewrite_calls.append((query, academic))
+            return "unexpected"
 
     planner = QueryPlanner(
         _settings(
             siliconflow_api_key="configured",
             openalex_query_rewrite=True,
         ),
-        academic_rewrite_fn=fail_if_rewritten,
+        Rewriter(),
     )
     planned = planner.plan(
         SearchCommand("论文和专利", include_academic=True, include_patent=True),
@@ -163,38 +162,19 @@ def test_planner_combines_plan_and_academic_rewrite_failures():
             failures=[initial_failure],
         )
 
-    session = object()
-
-    def fake_academic_rewrite(
-        query,
-        api_key,
-        base_url,
-        model,
-        cache_size,
-        *,
-        failures,
-        http_session,
-    ):
-        assert query == "normalized query"
-        assert api_key == "configured"
-        assert http_session is session
-        failures.append(SearchFailure(
-            stage="academic_query_rewrite",
-            source="siliconflow",
-            type="academic",
-            code="ACADEMIC_QUERY_REWRITE_FAILED",
-            message="academic rewrite failed",
-        ))
-        return query
+    class FailingAcademicRewriter:
+        def rewrite(self, query, *, academic=False):
+            assert query == "normalized query"
+            assert academic is True
+            raise RuntimeError("academic rewrite failed")
 
     planner = QueryPlanner(
         _settings(
             siliconflow_api_key="configured",
             openalex_query_rewrite=True,
         ),
-        session,
+        FailingAcademicRewriter(),
         plan_query_fn=fake_plan,
-        academic_rewrite_fn=fake_academic_rewrite,
     )
     planned = planner.plan(
         SearchCommand("raw"),

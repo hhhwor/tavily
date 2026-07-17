@@ -97,7 +97,7 @@ def test_container_injects_shared_session_and_executor():
         assert service._recall._executor is container.executor
         assert service._ranking._executor is container.executor
         assert service._pdf_gateway._executor is container.executor
-        assert service._query_planner._http is container.http_session
+        assert service._query_planner._rewriter._http is container.http_session
         assert service._pdf_gateway._http is container.http_session
         assert container.engine.providers[0]._http is container.http_session
         assert "test-key" not in repr(container.settings)

@@ -3,9 +3,16 @@ from __future__ import annotations
 
 import math
 from abc import ABC, abstractmethod
-from typing import List, Optional, Sequence
+from typing import List, Optional, Protocol, Sequence
 
 from src.models import SearchResult
+
+
+class TextScorer(Protocol):
+    name: str
+    supports_text_scoring: bool
+
+    def score(self, query: str, texts: Sequence[str]) -> List[float]: ...
 
 
 class Reranker(ABC):

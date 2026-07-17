@@ -11,6 +11,7 @@ import requests
 
 from src.application.outcomes import PdfEnrichmentOutcome
 from src.application.ports.pdf_text import PdfTextGateway
+from src.application.ports.runtime import Deadline
 from src.config import Settings
 from src.domain.documents import EnrichedDocument, RankedDocument, RetrievedDocument
 from src.domain.errors import public_error_message
@@ -65,6 +66,7 @@ class OpenAlexPdfGateway(PdfTextGateway):
         pdf_max_results: Optional[int] = None,
         pdf_max_chars_per_result: Optional[int] = None,
         pdf_timeout_ms: Optional[int] = None,
+        deadline: Deadline | None = None,
     ) -> PdfEnrichmentOutcome:
         """在临时适配器 DTO 上执行 I/O，返回不可变 EnrichedDocument。"""
         ranked = tuple(
@@ -143,12 +145,14 @@ class OpenAlexPdfGateway(PdfTextGateway):
         endpoint = (
             f"{self._settings.openalex_api_url.rstrip('/')}/openalex/pdf/extract"
         )
-        deadline = self._monotonic() + (
+        local_deadline = self._monotonic() + (
             self._settings.openalex_pdf_total_budget_ms / 1000
         )
+        if deadline is not None:
+            local_deadline = min(local_deadline, deadline.expires_at)
 
         def enrich_one(paper: AcademicResult) -> None:
-            remaining = deadline - self._monotonic()
+            remaining = local_deadline - self._monotonic()
             if remaining <= 0:
                 paper.pdf_status = "timeout"
                 paper.pdf_error_code = "PDF_TOTAL_BUDGET_EXCEEDED"
@@ -164,7 +168,7 @@ class OpenAlexPdfGateway(PdfTextGateway):
                         "timeout_ms": budget_ms,
                     },
                     headers=headers,
-                    timeout=max(1, budget_ms / 1000 + 2),
+                    timeout=max(0.1, min(budget_ms / 1000 + 2, remaining)),
                 )
                 response.raise_for_status()
                 data = response.json()

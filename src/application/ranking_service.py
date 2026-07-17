@@ -1,12 +1,15 @@
 """排序 Profile 解析、scorer 生命周期与三领域重排协调。"""
 from __future__ import annotations
 
-from concurrent.futures import Executor, as_completed
+from concurrent.futures import Executor, TimeoutError, as_completed
+from threading import RLock
 from typing import Callable, Protocol
 
 from src.application.commands import SearchCommand
 from src.application.failures import search_failure
 from src.application.outcomes import PlannedQuery, RankingOutcome, RecallOutcome
+from src.application.ports.runtime import Clock
+from src.application.ports.runtime import Deadline
 from src.domain.documents import (
     DocumentKind,
     RankedDocument,
@@ -43,12 +46,16 @@ class RankingService:
         text_scorer: Reranker,
         text_scorer_factory: Callable[[bool, str, str], Reranker],
         executor: Executor,
+        *,
+        clock: Clock,
     ) -> None:
         self._settings = settings
         self.text_scorer = text_scorer
         self._factory = text_scorer_factory
         self._executor = executor
+        self._clock = clock
         self._scorer_cache: dict[tuple[bool, str, str], Reranker] = {}
+        self._scorer_lock = RLock()
         self._closed = False
 
     def _select_text_scorer(
@@ -64,15 +71,16 @@ class RankingService:
             backend or self._settings.rerank_backend,
             model or self._settings.rerank_model,
         )
-        scorer = self._scorer_cache.get(key)
-        if scorer is not None:
+        with self._scorer_lock:
+            scorer = self._scorer_cache.get(key)
+            if scorer is not None:
+                return scorer
+            if len(self._scorer_cache) >= 16:
+                self._close_resources(self._scorer_cache.values())
+                self._scorer_cache.clear()
+            scorer = self._factory(*key)
+            self._scorer_cache[key] = scorer
             return scorer
-        if len(self._scorer_cache) >= 16:
-            self._close_resources(self._scorer_cache.values())
-            self._scorer_cache.clear()
-        scorer = self._factory(*key)
-        self._scorer_cache[key] = scorer
-        return scorer
 
     @staticmethod
     def _close_resources(resources) -> None:
@@ -95,10 +103,11 @@ class RankingService:
         if self._closed:
             return
         self._closed = True
-        try:
-            self._close_resources(self._scorer_cache.values())
-        finally:
-            self._scorer_cache.clear()
+        with self._scorer_lock:
+            try:
+                self._close_resources(self._scorer_cache.values())
+            finally:
+                self._scorer_cache.clear()
 
     def rank(
         self,
@@ -107,6 +116,7 @@ class RankingService:
         recalled: RecallOutcome,
         *,
         options: RankingOptions | None = None,
+        deadline: Deadline | None = None,
     ) -> RankingOutcome:
         options = options or self.resolve(command)
 
@@ -135,6 +145,7 @@ class RankingService:
         context = build_rerank_context(
             planned.search_query,
             time_sensitive=planned.plan.time_sensitive,
+            reference_time=self._clock.now(),
         )
         top_k = planned.plan.top_k
         retrieved_web = [
@@ -273,7 +284,47 @@ class RankingService:
             else:
                 ranked_web = list(documents)
 
-        if len(jobs) > 1:
+        if deadline is not None:
+            futures = {self._executor.submit(function): kind for kind, function in jobs}
+            processed = set()
+
+            def collect(future) -> None:
+                kind = futures[future]
+                processed.add(future)
+                try:
+                    assign(kind, future.result())
+                except Exception as exc:
+                    failures.append(search_failure(
+                        stage="rerank",
+                        source=f"{kind}_reranker",
+                        source_type=kind,
+                        code="RERANK_FAILED",
+                        message=exc,
+                    ))
+                    assign(kind, fallback(kind), already_immutable=True)
+            try:
+                for future in as_completed(
+                    futures, timeout=deadline.remaining_seconds()
+                ):
+                    collect(future)
+            except TimeoutError:
+                pass
+            for future, kind in futures.items():
+                if future in processed:
+                    continue
+                if future.done():
+                    collect(future)
+                    continue
+                future.cancel()
+                failures.append(search_failure(
+                    stage="rerank",
+                    source=f"{kind}_reranker",
+                    source_type=kind,
+                    code="SEARCH_DEADLINE_EXCEEDED",
+                    message="search deadline exceeded",
+                ))
+                assign(kind, fallback(kind), already_immutable=True)
+        elif len(jobs) > 1:
             futures = {self._executor.submit(function): kind for kind, function in jobs}
             for future in as_completed(futures):
                 kind = futures[future]

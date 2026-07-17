@@ -17,10 +17,12 @@ from src.application.search_service import SearchService
 from src.application.source_registry import SourceRegistry
 from src.application.trust_annotator import TrustAnnotator
 from src.application.verify_service import VerifyService
-from src.cache import build_cache
 from src.config import Settings
 from src.engine import SearchEngine
+from src.infrastructure.cache import InMemoryCache, build_cache
 from src.infrastructure.openalex_pdf import OpenAlexPdfGateway
+from src.infrastructure.query_rewriter import SiliconFlowQueryRewriter
+from src.infrastructure.runtime import SystemClock
 from src.providers.base import SearchProvider
 from src.ranking.factory import build_text_scorer
 from src.ranking.ports import Reranker
@@ -116,7 +118,11 @@ def _scorer_factory(
     return build
 
 
-def _claim_verifier(settings: Settings, http: requests.Session):
+def _claim_verifier(
+    settings: Settings,
+    http: requests.Session,
+    clock: SystemClock,
+):
     return build_claim_verifier(
         backend=settings.trust_verify_backend,
         api_key=settings.siliconflow_api_key,
@@ -126,6 +132,7 @@ def _claim_verifier(settings: Settings, http: requests.Session):
         max_claims=settings.trust_verify_max_claims,
         max_evidence_per_claim=settings.trust_verify_max_evidence,
         http_session=http,
+        monotonic=clock.monotonic,
     )
 
 
@@ -182,6 +189,7 @@ def build_container(
 ) -> Container:
     """创建完整运行时；调用方必须进入 ``Container.lifespan`` 或显式 close。"""
     config = settings or Settings.from_env()
+    clock = SystemClock()
     http = requests.Session()
     executor = ThreadPoolExecutor(
         max_workers=config.executor_max_workers,
@@ -202,9 +210,13 @@ def build_container(
             config.rerank_backend,
             config.rerank_model,
         )
-        verifier = _claim_verifier(config, http)
+        verifier = _claim_verifier(config, http, clock)
         cache = (
-            build_cache(config.cache_backend, config.cache_max_size)
+            build_cache(
+                config.cache_backend,
+                config.cache_max_size,
+                monotonic=clock.monotonic,
+            )
             if config.cache_enabled
             else None
         )
@@ -221,15 +233,29 @@ def build_container(
             scorer,
             scorer_factory,
             executor,
+            clock=clock,
         )
-        pdf_gateway = OpenAlexPdfGateway(config, http, executor)
+        pdf_gateway = OpenAlexPdfGateway(
+            config, http, executor, monotonic=clock.monotonic
+        )
+        query_rewriter = SiliconFlowQueryRewriter(
+            config.siliconflow_api_key,
+            config.siliconflow_base_url,
+            config.rewrite_model,
+            cache=InMemoryCache(
+                config.rewrite_cache_size,
+                monotonic=clock.monotonic,
+            ),
+            http_session=http,
+        )
         search_service = SearchService(
-            query_planner=QueryPlanner(config, http),
+            query_planner=QueryPlanner(config, query_rewriter),
             recall=RecallCoordinator(
                 config,
                 registry,
                 cache,
                 executor,
+                clock=clock.now,
             ),
             ranking=ranking_service,
             pdf_gateway=pdf_gateway,
@@ -237,6 +263,8 @@ def build_container(
             trust_annotator=TrustAnnotator(registry.snapshot_for),
             answerability=AnswerabilityPolicy(),
             source_registry=registry,
+            clock=clock,
+            deadline_ms=config.search_deadline_ms,
         )
         verify_service = VerifyService(verifier)
         engine = SearchEngine(

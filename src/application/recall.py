@@ -1,19 +1,20 @@
 """多来源召回协调与 provider 级缓存策略。"""
 from __future__ import annotations
 
-from concurrent.futures import Executor, as_completed
-from datetime import datetime, timedelta, timezone
+from concurrent.futures import Executor, TimeoutError, as_completed
+from datetime import datetime, timedelta
 from typing import Callable, Optional, Protocol
 
 from src.application.failures import search_failure
 from src.application.outcomes import PlannedQuery, RecallOutcome
+from src.application.ports.cache import CacheBackend
+from src.application.ports.runtime import Deadline
 from src.application.ports.retrieval import (
     RetrievalBatch,
     RetrievalRequest,
     RetrievalSource,
 )
 from src.application.source_registry import SourceRegistry
-from src.cache import CacheBackend
 from src.domain.documents import RetrievedDocument
 
 
@@ -33,7 +34,7 @@ class RecallCoordinator:
         cache: Optional[CacheBackend],
         executor: Executor,
         *,
-        clock: Callable[[], datetime] = lambda: datetime.now(timezone.utc),
+        clock: Callable[[], datetime],
     ) -> None:
         self._settings = settings
         self._registry = registry
@@ -92,7 +93,12 @@ class RecallCoordinator:
             jurisdiction=None,
         )
 
-    def recall(self, planned: PlannedQuery) -> RecallOutcome:
+    def recall(
+        self,
+        planned: PlannedQuery,
+        *,
+        deadline: Deadline | None = None,
+    ) -> RecallOutcome:
         active_names = set(planned.active_provider_names)
         tasks: list[tuple[RetrievalSource, RetrievalRequest]] = []
         for source in self._registry.sources("web"):
@@ -133,8 +139,11 @@ class RecallCoordinator:
             ): source.descriptor
             for source, request in tasks
         }
-        for future in as_completed(futures):
+        processed = set()
+
+        def collect(future) -> None:
             descriptor = futures[future]
+            processed.add(future)
             try:
                 batch = future.result()
                 batches.append(batch)
@@ -155,6 +164,28 @@ class RecallCoordinator:
                     code="PROVIDER_SEARCH_FAILED",
                     message=exc,
                 ))
+
+        try:
+            timeout = deadline.remaining_seconds() if deadline is not None else None
+            for future in as_completed(futures, timeout=timeout):
+                collect(future)
+        except TimeoutError:
+            pass
+
+        for future, descriptor in futures.items():
+            if future in processed:
+                continue
+            if future.done():
+                collect(future)
+                continue
+            future.cancel()
+            failures.append(search_failure(
+                stage="provider_search",
+                source=descriptor.id,
+                source_type=descriptor.kind,
+                code="SEARCH_DEADLINE_EXCEEDED",
+                message="search deadline exceeded",
+            ))
 
         return RecallOutcome(
             web=tuple(web),

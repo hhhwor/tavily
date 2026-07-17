@@ -16,6 +16,7 @@ from src.config import Settings
 from src.domain.documents import RankedDocument, RetrievedDocument
 from src.models import SearchPlan, SearchResult
 from src.pipeline.rerank import NoOpReranker
+from src.infrastructure.runtime import SystemClock
 
 
 class _InlineExecutor:
@@ -96,6 +97,7 @@ def test_ranking_uses_ephemeral_dtos_and_preserves_source_attributions():
         NoOpReranker(),
         lambda *_: NoOpReranker(),
         _InlineExecutor(),
+        clock=SystemClock(),
     )
     planned = PlannedQuery(
         plan=SearchPlan(

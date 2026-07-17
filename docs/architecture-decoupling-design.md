@@ -1,12 +1,12 @@
 # Agent 搜索引擎架构审阅与解耦设计
 
-> 状态：渐进式重构进行中；F-01 至 F-07 已实施
+> 状态：渐进式重构进行中；F-01 至 F-08 已实施
 >
-> 审阅基线：2026-07-17，`1d2c3cf` 加当前 F-07 工作树
+> 审阅基线：2026-07-17，`20150df` 加当前 F-08 工作树
 >
 > 审阅范围：`src/`、`tests/`、`eval/`、`scripts/`、`deploy/` 与直接运行依赖
 >
-> 验证基线：当前工作树 128 个测试全部通过
+> 验证基线：当前工作树 133 个测试全部通过
 >
 > 关联文档：[当前技术路线](tech-route-summary.md)、[Trust Layer 设计](agent-search-trust-layer-design.md)、[评测方法](eval-methodology.md)
 
@@ -192,11 +192,18 @@ flowchart TD
 
 排序行为、输入不可变性与兼容导入由现有领域测试保护；新增架构测试固定薄门面、生产依赖方向和单一 RRF 语义。
 
-#### F-08 网络、缓存、时钟和执行器散落在业务模块
+#### F-08 网络、缓存、时钟和执行器散落在业务模块（已解决）
 
-查询改写、Provider、云重排、PDF 和模型蕴含都直接调用 `requests`；`l0.py` 的模块级 rewrite cache 与 Engine 的 Scorer cache 没有并发保护。单次请求还可能分别为召回、重排和 PDF 创建线程池，且没有统一 deadline/cancellation。
+F-02 已先行建立共享 HTTP session 和有界 Executor；2026-07-17 在此基础上补齐运行时 Port 与跨阶段预算：
 
-建议为 `QueryRewriter`、`TextScorer`、`PdfTextGateway`、`EntailmentClassifier` 和 `Cache` 定义 Port。适配器注入共享 HTTP transport、Clock 和有界 Executor；重试、超时、熔断、指标、脱敏和全局 Deadline 在基础设施边界统一实现。
+- `QueryRewriter`、`TextScorer`、`PdfTextGateway`、`EntailmentClassifier`、`CacheBackend` 和 `Clock` 均有显式边界；Application 只依赖这些接口或标准 `Executor`。
+- [l0.py](../src/l0.py) 只保留规范化、意图识别和路由规则，不再导入 `requests`、持有模块级非线程安全缓存或执行生产网络调用。SiliconFlow 查询改写及兼容函数迁入 [infrastructure/query_rewriter.py](../src/infrastructure/query_rewriter.py)。
+- 召回缓存与改写缓存统一使用 [infrastructure/cache.py](../src/infrastructure/cache.py) 的线程安全 LRU+TTL 适配器；过期判断使用注入的 monotonic clock，可确定性测试且不受系统时间回拨影响。
+- `SystemClock` 由 composition root 注入 SearchService、Recall、Ranking、PDF 与 ClaimVerifier；搜索耗时、查询时间、时间过滤和新鲜度计算共享同一个请求时间基准。
+- RankingService 的动态 scorer cache 使用锁保护，避免并发请求重复加载模型或在关闭/淘汰时竞争。
+- 新增部署级 `SEARCH_DEADLINE_MS`。SearchService 创建单一绝对 Deadline 并传播到召回、排序和 PDF；已完成结果正常保留，未开始任务尝试取消并返回稳定的 `SEARCH_DEADLINE_EXCEEDED`，PDF 自身预算也受该绝对上限约束。
+
+Provider、云 scorer、PDF 与 Entailment 中的 `requests` 仅存在于外部适配器；连接池生命周期仍由 Container 统一管理。重试、熔断和结构化运行指标属于 Phase 5 的运行时治理，不再由业务模块自行实现。
 
 #### F-09 REST、MCP 与评测存在契约漂移
 
@@ -351,7 +358,7 @@ class SearchUseCase(Protocol):
 - [x] 抽出 `EvidenceAssembler`、`AnswerabilityPolicy`、`PdfTextGateway`。
 - [x] 抽出 `RecallCoordinator` 与 `RankingService`，统一 Stage Outcome。
 - [x] 将 Claim Verification 从 Engine 门面移到 `VerifyService`。
-- [ ] 引入跨阶段全局 Deadline 与取消传播。
+- [x] F-08：引入跨阶段全局 Deadline、取消传播和共享 Clock/Executor。
 
 退出条件：`SearchEngine` 只做兼容委托；每个服务可用 Fake Port 独立测试；部分失败与降级行为保持不变。
 

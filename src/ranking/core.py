@@ -9,7 +9,7 @@ from typing import Any, Callable, Dict, Generic, List, Optional, Sequence, Tuple
 
 from src.models import SearchResult
 from src.pipeline.ranking_options import RankingProfile, ThresholdMode
-from src.ranking.ports import Reranker, clamp01
+from src.ranking.ports import TextScorer, clamp01
 
 T = TypeVar("T", bound=SearchResult)
 
@@ -36,7 +36,9 @@ _FOUNDATIONAL_QUERY_RE = re.compile(
 )
 
 
-def parse_date_days_ago(date_str: str) -> Optional[int]:
+def parse_date_days_ago(
+    date_str: str, reference_time: datetime | None = None
+) -> Optional[int]:
     if not date_str:
         return None
     for pattern in _DATE_PATTERNS:
@@ -49,7 +51,8 @@ def parse_date_days_ago(date_str: str) -> Optional[int]:
                     int(match.group(3)),
                     tzinfo=timezone.utc,
                 )
-                return max(0, (datetime.now(timezone.utc) - date).days)
+                now = reference_time or datetime.now(timezone.utc)
+                return max(0, (now - date).days)
             except (TypeError, ValueError):
                 continue
     return None
@@ -60,14 +63,20 @@ class RerankContext:
     time_sensitive: bool = False
     wants_recent: bool = False
     wants_foundational: bool = False
+    reference_time: datetime | None = None
 
 
-def build_rerank_context(query: str, time_sensitive: bool = False) -> RerankContext:
+def build_rerank_context(
+    query: str,
+    time_sensitive: bool = False,
+    reference_time: datetime | None = None,
+) -> RerankContext:
     normalized = (query or "").lower()
     return RerankContext(
         time_sensitive=time_sensitive,
         wants_recent=bool(_RECENT_QUERY_RE.search(normalized)),
         wants_foundational=bool(_FOUNDATIONAL_QUERY_RE.search(normalized)),
+        reference_time=reference_time,
     )
 
 
@@ -141,7 +150,7 @@ def rerank_domain(
     query: str,
     candidates: List[T],
     config: DomainConfig[T],
-    text_scorer: Reranker,
+    text_scorer: TextScorer,
     ctx: RerankContext,
     top_k: int,
 ) -> List[T]:

@@ -5,6 +5,7 @@ from abc import ABC, abstractmethod
 from typing import Optional, Sequence
 
 from src.application.outcomes import PdfEnrichmentOutcome
+from src.application.ports.runtime import Deadline
 from src.domain.documents import RankedDocument
 from src.models import PdfTextResponse
 
@@ -22,6 +23,7 @@ class PdfTextGateway(ABC):
         pdf_max_results: Optional[int] = None,
         pdf_max_chars_per_result: Optional[int] = None,
         pdf_timeout_ms: Optional[int] = None,
+        deadline: Deadline | None = None,
     ) -> PdfEnrichmentOutcome:
         """返回不可变富化文档及逐篇失败；不得修改排序阶段输入。"""
         raise NotImplementedError

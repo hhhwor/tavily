@@ -63,11 +63,12 @@ def _freshness(
     pool: Sequence[AcademicResult],
     ctx: RerankContext,
 ) -> float:
-    days_ago = parse_date_days_ago(result.date)
+    days_ago = parse_date_days_ago(result.date, ctx.reference_time)
     if days_ago is None and result.year:
         try:
             date = datetime(int(result.year), 1, 1, tzinfo=timezone.utc)
-            days_ago = max(0, (datetime.now(timezone.utc) - date).days)
+            now = ctx.reference_time or datetime.now(timezone.utc)
+            days_ago = max(0, (now - date).days)
         except (TypeError, ValueError):
             days_ago = None
     if days_ago is None:
