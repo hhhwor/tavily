@@ -1,7 +1,4 @@
-"""Deprecated model compatibility exports.
-
-New code imports the owning domain or interface module directly.
-"""
+"""Convenience exports for current domain contracts."""
 
 from src.domain.evidence import (
     Answerability,
@@ -28,6 +25,7 @@ from src.domain.trust import (
     ConsistencyCheck,
     TrustAssessment,
 )
-from src.interfaces.responses import PdfTextResponse, SearchResponse, VerifyResponse
+from src.domain.research import ResearchTaskEnvelope
+from src.domain.search_api import SearchResponse
 
 __all__ = [name for name in globals() if not name.startswith("_")]

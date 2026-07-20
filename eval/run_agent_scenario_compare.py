@@ -14,6 +14,8 @@ import argparse
 import atexit
 import json
 import time
+from collections import Counter
+from datetime import datetime, timezone
 from typing import Dict, List, Optional, Tuple
 
 from eval.agent_answer_eval import AnswerPairJudge, EvidenceAnswerAgent, answer_support_audit
@@ -25,7 +27,17 @@ from src.bootstrap import build_container
 from src.engine import SearchEngine
 from src.l0 import detect_recency
 from src.models import SearchResponse
+from src.domain.search_api import (
+    QualityMix,
+    RequestedFilters,
+    RetrievalAssessment,
+    RetrievalBoundary,
+    SearchMeta,
+    SearchQuery,
+    SearchResultSet,
+)
 from src.providers.baidu import BaiduSearchProvider
+from src.trust import annotate_evidence
 
 settings = Settings()
 
@@ -46,9 +58,8 @@ def load_scenarios(path: str, limit: int) -> List[dict]:
 def run_full_agent(engine: SearchEngine, task: str, k: int, force_vertical: bool) -> SearchResponse:
     return engine.search(
         task,
-        top_k=k,
-        include_academic=True if force_vertical else None,
-        include_patent=True if force_vertical else None,
+        limit=k,
+        source_types=("web", "academic", "patent") if force_vertical else None,
     )
 
 
@@ -56,7 +67,7 @@ def run_baidu_only(provider: BaiduSearchProvider, task: str, k: int) -> SearchRe
     t0 = time.time()
     recency = detect_recency(task)
     results = provider.search(task, k, recency)
-    evidence = EvidenceAssembler().assemble(results, [], [])
+    evidence = annotate_evidence(EvidenceAssembler().assemble(results, [], []))
     answerability = AnswerabilityPolicy().evaluate(
         evidence,
         [],
@@ -65,17 +76,37 @@ def run_baidu_only(provider: BaiduSearchProvider, task: str, k: int) -> SearchRe
         expected_patent=False,
         include_pdf_text=False,
     )
+    quality_counts = Counter(
+        item.quality.level if item.quality else "unavailable" for item in evidence
+    )
+    elapsed_ms = int((time.time() - t0) * 1000)
     return SearchResponse(
-        query=task,
-        normalized_query=task,
-        recency=recency,
-        time_sensitive=recency is not None,
+        request_id="req_baidu_baseline",
+        status="complete",
+        research_seed=None,
+        query=SearchQuery(
+            original=task,
+            effective=task,
+            filters_requested=RequestedFilters(),
+        ),
         evidence=evidence,
-        answerability=answerability,
-        count=len(evidence),
-        providers_used=["baidu"] if results else [],
-        reranker="baidu-only",
-        elapsed_ms=int((time.time() - t0) * 1000),
+        result_set=SearchResultSet(returned=len(evidence), limit=k),
+        retrieval_assessment=RetrievalAssessment(
+            status={"answerable": "usable", "partial": "limited", "not_answerable": "unusable"}[answerability.status],
+            quality_mix=QualityMix(**{
+                name: quality_counts.get(name, 0)
+                for name in ("citable", "limited", "discovery_only", "unavailable")
+            }),
+            gaps=answerability.gaps,
+        ),
+        retrieval_boundary=RetrievalBoundary(
+            query_time=datetime.now(timezone.utc),
+            candidate_limit=k,
+            deadline_ms=60_000,
+            source_snapshot={"baidu": "provider-managed"} if results else {},
+            limitations=["BASELINE_DIRECT_PROVIDER_CALL"],
+        ),
+        meta=SearchMeta(elapsed_ms=elapsed_ms),
     )
 
 
@@ -282,8 +313,8 @@ def main() -> None:
         rows.append({
             "id": sc["id"],
             "domain": sc.get("domain", ""),
-            "full_ms": full.elapsed_ms,
-            "baidu_ms": baidu_resp.elapsed_ms,
+            "full_ms": full.meta.elapsed_ms,
+            "baidu_ms": baidu_resp.meta.elapsed_ms,
             "full_web": full_counts["web"],
             "full_academic": full_counts["academic"],
             "full_patent": full_counts["patent"],
@@ -291,8 +322,8 @@ def main() -> None:
         })
         print(
             f"      full web={full_counts['web']} acad={full_counts['academic']} "
-            f"pat={full_counts['patent']} {full.elapsed_ms}ms | "
-            f"baidu web={baidu_counts['web']} {baidu_resp.elapsed_ms}ms"
+            f"pat={full_counts['patent']} {full.meta.elapsed_ms}ms | "
+            f"baidu web={baidu_counts['web']} {baidu_resp.meta.elapsed_ms}ms"
         )
 
     answers: Dict[str, str] = {}

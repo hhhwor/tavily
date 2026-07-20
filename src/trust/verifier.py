@@ -16,7 +16,7 @@ from src.domain.trust import (
     TrustAssessment,
 )
 from src.domain.errors import public_error_message
-from src.interfaces.responses import VerifyResponse
+from src.domain.trust import VerificationResult
 from src.trust.annotate import annotate_evidence, build_search_boundary
 from src.trust.claims import decompose_claims
 from src.trust.entailment import (
@@ -217,7 +217,7 @@ class ClaimVerifier:
         evidence: Sequence[Evidence],
         profile: str = "general",
         search_boundary: Optional[SearchBoundary] = None,
-    ) -> VerifyResponse:
+    ) -> VerificationResult:
         started = self._monotonic()
         profile = (profile or "general").strip().lower()
         if profile not in _PROFILES:
@@ -264,7 +264,7 @@ class ClaimVerifier:
             for claim in atomic_claims
         ]
         summary = self._summarize(assessments, failures, model_name)
-        return VerifyResponse(
+        return VerificationResult(
             query=query,
             profile=profile,
             assessments=assessments,

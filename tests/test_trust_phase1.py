@@ -276,20 +276,11 @@ def test_siliconflow_classifier_validates_structured_labels(monkeypatch):
     assert decisions[pair_id].quote == "材料循环寿命达到 1000 次。"
 
 
-def test_verify_route_is_exposed_in_openapi():
-    from src.api import VerifyRequest, app
+def test_verify_is_internal_and_research_routes_are_public():
+    from src.api import app
 
-    evidence = _academic_evidence(
-        "材料循环寿命达到 1000 次。",
-        work_id="W6",
-        doi="10.1/api",
-    )
-    request = VerifyRequest(
-        query="材料寿命",
-        claims=[CandidateClaim(id="c1", text="材料循环寿命达到 1000 次")],
-        evidence=[evidence],
-        profile="scientific",
-    )
-
-    assert request.profile == "scientific"
-    assert "/verify" in app.openapi()["paths"]
+    paths = app.openapi()["paths"]
+    assert "/verify" not in paths
+    assert "/academic/pdf/text/{work_id}" not in paths
+    assert "/research" in paths
+    assert "/research/{research_id}" in paths

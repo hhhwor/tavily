@@ -117,8 +117,10 @@ class PatentEsProvider(SearchProvider):
             "index": self.index,
             "size": min(request.candidate_budget, self.per_page),
         }
-        if request.recency and request.time_from:
+        if request.time_from:
             filters["application_date_gte"] = request.time_from.date().isoformat()
+        if request.time_to:
+            filters["application_date_lte"] = request.time_to.date().isoformat()
         return filters
 
     def search(
@@ -155,10 +157,7 @@ class PatentEsProvider(SearchProvider):
             "_source": _SOURCE,
             "query": {"bool": {
                 "must": must,
-                "filter": self._recency_filter(
-                    recency,
-                    request.time_from if request is not None else None,
-                ),
+                "filter": self._date_filter(recency, request),
             }},
             # highlight 给摘要片段当 snippet(去标签后用)
             "highlight": {"fields": {"abstract": {"fragment_size": 160, "number_of_fragments": 1}}},
@@ -176,20 +175,25 @@ class PatentEsProvider(SearchProvider):
 
         return self._normalize(hits)[:size]
 
-    def _recency_filter(
+    def _date_filter(
         self,
         recency: Optional[str],
-        time_from=None,
+        request: Optional[RetrievalRequest],
     ) -> List[Dict[str, Any]]:
+        if request is not None and (request.time_from or request.time_to):
+            bounds: Dict[str, str] = {}
+            if request.time_from:
+                bounds["gte"] = request.time_from.date().isoformat()
+            if request.time_to:
+                bounds["lte"] = request.time_to.date().isoformat()
+            return [{"range": {"application_date": bounds}}]
         days = _RECENCY_DAYS.get(recency or "")
         if not days:
             return []
         since = (
-            time_from.date().isoformat()
-            if time_from is not None
-            else (date.today() - timedelta(days=days)).isoformat()
+            date.today() - timedelta(days=days)
         )
-        return [{"range": {"application_date": {"gte": since}}}]
+        return [{"range": {"application_date": {"gte": since.isoformat()}}}]
 
     def _normalize(self, hits: List[Dict[str, Any]]) -> List[PatentResult]:
         results: List[PatentResult] = []

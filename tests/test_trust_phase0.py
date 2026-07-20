@@ -20,6 +20,7 @@ def empty_engine():
             ranking_profile="fast",
             rerank_threshold_mode="off",
             mcp_mode="false",
+            state_db_path=":memory:",
         ),
         include_mcp=False,
     )
@@ -207,36 +208,24 @@ def test_search_boundary_exposes_limits_and_serializes_to_json():
     assert data["query_time"] == "2026-07-15T00:00:00Z"
 
 
-def test_engine_off_bypasses_phase0_annotations(monkeypatch, empty_engine):
+def test_search_always_runs_basic_evidence_annotation(monkeypatch, empty_engine):
 
     def fail_if_called(*args, **kwargs):
-        raise AssertionError("annotate_evidence must not run in off mode")
+        raise AssertionError("annotation called")
 
     monkeypatch.setattr("src.application.trust_annotator.annotate_evidence", fail_if_called)
-    response = empty_engine.search(
-        "query",
-        include_academic=False,
-        include_patent=False,
-        trust_mode="off",
-    )
-
-    assert response.trust_mode == "off"
-    assert response.search_boundary is None
+    with pytest.raises(AssertionError, match="annotation called"):
+        empty_engine.search("query", source_types=("web",))
 
 
 def test_engine_defaults_to_annotate_mode(empty_engine):
-    response = empty_engine.search(
-        "query",
-        include_academic=False,
-        include_patent=False,
-    )
+    response = empty_engine.search("query", source_types=("web",))
 
-    assert response.trust_mode == "annotate"
-    assert response.search_boundary is not None
-    assert response.search_boundary.max_rounds == 1
-    json.dumps(response.model_dump())
+    assert response.retrieval_boundary is not None
+    assert response.schema_version == "search.v1"
+    json.dumps(response.model_dump(mode="json"))
 
 
-def test_engine_rejects_unknown_trust_mode(empty_engine):
-    with pytest.raises(ValueError, match="off / annotate"):
+def test_engine_has_no_public_trust_mode(empty_engine):
+    with pytest.raises(TypeError, match="trust_mode"):
         empty_engine.search("query", trust_mode="verify")

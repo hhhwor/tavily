@@ -92,7 +92,7 @@ def test_settings_do_not_treat_unset_legacy_false_as_semantic():
     assert configured.fusion_enabled is True
 
 
-def test_engine_noop_disables_strict_threshold_without_partial_failure():
+def test_public_search_does_not_expose_ranking_controls():
     from src.bootstrap import build_container
     from src.config import Settings
 
@@ -102,30 +102,25 @@ def test_engine_noop_disables_strict_threshold_without_partial_failure():
             patent_es_enabled=False,
             siliconflow_api_key="",
             mcp_mode="false",
+            state_db_path=":memory:",
         ),
         include_mcp=False,
     )
     try:
         response = container.engine.search(
             "query",
-            include_academic=False,
-            include_patent=False,
-            ranking_profile="quality",
-            rerank_backend="siliconflow",
-            rerank_threshold_mode="strict",
-            rewrite_enabled=False,
-            trust_mode="off",
+            source_types=("web",),
         )
     finally:
         container.close()
 
-    assert response.ranking_profile == "quality"
-    assert response.rerank_threshold_mode == "off"
-    assert response.ranking_warnings == ["THRESHOLD_SKIPPED_NO_SCORER"]
-    assert response.partial_failure is False
+    data = response.model_dump()
+    assert response.schema_version == "search.v1"
+    assert "ranking_profile" not in data
+    assert "rerank_threshold_mode" not in data
 
 
-def test_rest_request_reports_profile_conflicts_as_validation_error():
+def test_rest_request_rejects_removed_ranking_fields():
     from src.api import SearchRequest
 
     with pytest.raises(ValidationError):

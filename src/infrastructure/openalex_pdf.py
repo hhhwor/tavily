@@ -17,7 +17,7 @@ from src.domain.documents import EnrichedDocument, RankedDocument, RetrievedDocu
 from src.domain.errors import public_error_message
 from src.domain.failures import SearchFailure
 from src.domain.search import AcademicResult
-from src.interfaces.responses import PdfTextResponse
+from src.domain.pdf_text import PdfTextPage
 
 
 _ERROR_CODE = re.compile(r"^[A-Z][A-Z0-9_]{0,63}$")
@@ -226,11 +226,11 @@ class OpenAlexPdfGateway(PdfTextGateway):
         work_id: str,
         cursor: Optional[str] = None,
         max_chars: Optional[int] = None,
-    ) -> PdfTextResponse:
+    ) -> PdfTextPage:
         """读取已缓存的 PDF 正文分页。"""
         work_id = (work_id or "").strip()
         if not work_id:
-            return PdfTextResponse(
+            return PdfTextPage(
                 work_id="",
                 status="failed",
                 error_code="WORK_ID_MISSING",
@@ -263,14 +263,14 @@ class OpenAlexPdfGateway(PdfTextGateway):
             response.raise_for_status()
             data = response.json()
         except requests.Timeout:
-            return PdfTextResponse(
+            return PdfTextPage(
                 work_id=work_id,
                 status="failed",
                 error_code="PDF_TEXT_TIMEOUT",
                 error_message="PDF text read timed out",
             )
         except Exception as exc:
-            return PdfTextResponse(
+            return PdfTextPage(
                 work_id=work_id,
                 status="failed",
                 error_code="PDF_TEXT_READ_FAILED",
@@ -283,7 +283,7 @@ class OpenAlexPdfGateway(PdfTextGateway):
             if data.get("error_code")
             else None
         )
-        return PdfTextResponse(
+        return PdfTextPage(
             work_id=data.get("work_id") or work_id,
             status=data.get("status") or "failed",
             chunk_index=data.get("chunk_index"),

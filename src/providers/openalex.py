@@ -114,7 +114,8 @@ class OpenAlexProvider(SearchProvider):
     descriptor = SourceDescriptor(
         id=name,
         kind="academic",
-        capabilities=frozenset({"recency_filter", "time_range_filter", "open_access_metadata"}),
+        # 当前上游只支持年级边界，不声称精确执行公开日期过滤。
+        capabilities=frozenset({"recency_filter", "open_access_metadata"}),
         snapshot_capability="service_index",
         default_snapshot="service-index:unspecified",
         data_license="OpenAlex",
@@ -138,9 +139,11 @@ class OpenAlexProvider(SearchProvider):
 
     def actual_filters(self, request: RetrievalRequest) -> Dict[str, Any]:
         filters: Dict[str, Any] = {"size": min(request.candidate_budget, self.per_page)}
-        if request.recency in ("day", "week", "month", "year"):
-            year = (request.time_to or date.today()).year
-            filters.update({"year_min": year, "year_max": year})
+        if request.time_from or request.time_to:
+            filters.update({
+                "year_min": (request.time_from or request.time_to).year,
+                "year_max": (request.time_to or request.time_from).year,
+            })
         return filters
 
     def search(
@@ -171,10 +174,12 @@ class OpenAlexProvider(SearchProvider):
         size = min(top_k or self.per_page, self.per_page)
         body: Dict[str, Any] = {"query": query, "size": size}
         # 时效:keyword 端点只支持 year_min/year_max(需成对);把任意 recency 近似为「今年」
-        if recency in ("day", "week", "month", "year"):
-            yr = (request.time_to if request and request.time_to else date.today()).year
-            body["year_min"] = yr
-            body["year_max"] = yr
+        if request is not None and (request.time_from or request.time_to):
+            body["year_min"] = (request.time_from or request.time_to).year
+            body["year_max"] = (request.time_to or request.time_from).year
+        elif recency in ("day", "week", "month", "year"):
+            body["year_min"] = date.today().year
+            body["year_max"] = date.today().year
 
         headers = {"Content-Type": "application/json"}
         if self.api_key:

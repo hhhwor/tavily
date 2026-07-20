@@ -53,8 +53,8 @@ class RetrievalRequest:
     recency: str | None = None
     time_from: datetime | None = None
     time_to: datetime | None = None
-    language: str | None = None
-    jurisdiction: str | None = None
+    languages: tuple[str, ...] = ()
+    jurisdictions: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         if not self.query.strip():
@@ -63,6 +63,16 @@ class RetrievalRequest:
             raise ValueError("RetrievalRequest.candidate_budget 必须大于 0")
         if self.time_from and self.time_to and self.time_from > self.time_to:
             raise ValueError("RetrievalRequest.time_from 不能晚于 time_to")
+        object.__setattr__(self, "languages", tuple(self.languages))
+        object.__setattr__(self, "jurisdictions", tuple(self.jurisdictions))
+
+    @property
+    def language(self) -> str | None:
+        return self.languages[0] if self.languages else None
+
+    @property
+    def jurisdiction(self) -> str | None:
+        return self.jurisdictions[0] if self.jurisdictions else None
 
 
 @dataclass(frozen=True, slots=True)

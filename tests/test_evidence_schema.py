@@ -7,7 +7,18 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from src.application.answerability import AnswerabilityPolicy
 from src.application.evidence_assembler import EvidenceAssembler
 from src.l0 import plan_query
+from datetime import datetime, timezone
+
 from src.models import AcademicResult, PatentResult, SearchFailure, SearchResponse, SearchResult
+from src.domain.search_api import (
+    QualityMix,
+    RequestedFilters,
+    RetrievalAssessment,
+    RetrievalBoundary,
+    SearchMeta,
+    SearchQuery,
+    SearchResultSet,
+)
 
 
 def test_build_evidence_mixes_sources_by_relevance():
@@ -112,21 +123,34 @@ def test_build_evidence_marks_pdf_gap_for_abstract_only_paper():
 
 def test_search_response_exposes_only_evidence_results():
     resp = SearchResponse(
-        query="q",
+        request_id="req_test",
+        status="complete",
+        research_seed=None,
+        query=SearchQuery(
+            original="q",
+            effective="q",
+            filters_requested=RequestedFilters(),
+        ),
         evidence=[],
-        count=0,
-        providers_used=[],
-        reranker="none",
-        elapsed_ms=1,
+        result_set=SearchResultSet(returned=0, limit=10),
+        retrieval_assessment=RetrievalAssessment(
+            status="unusable",
+            quality_mix=QualityMix(),
+        ),
+        retrieval_boundary=RetrievalBoundary(
+            query_time=datetime.now(timezone.utc),
+            deadline_ms=2000,
+        ),
+        meta=SearchMeta(elapsed_ms=1),
     )
 
     data = resp.model_dump()
 
     assert "evidence" in data
-    assert "answerability" in data
+    assert "retrieval_assessment" in data
     assert "failures" in data
-    assert "partial_failure" in data
-    assert data["answerability"]["status"] == "not_answerable"
+    assert data["schema_version"] == "search.v1"
+    assert data["retrieval_assessment"]["status"] == "unusable"
     assert "results" not in data
     assert "academic_results" not in data
     assert "patent_results" not in data

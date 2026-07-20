@@ -26,6 +26,7 @@ def _safe_settings(**overrides) -> Settings:
         "ranking_profile": "fast",
         "rerank_threshold_mode": "off",
         "mcp_mode": "false",
+        "state_db_path": ":memory:",
     }
     values.update(overrides)
     return Settings(**values)
@@ -42,7 +43,8 @@ import src.mcp_server
 src.mcp_server.build_mcp = lambda *a, **k: (_ for _ in ()).throw(AssertionError('mcp built'))
 import src.api
 assert '/search' in src.api.app.openapi()['paths']
-assert '/verify' in src.api.app.openapi()['paths']
+assert '/research' in src.api.app.openapi()['paths']
+assert '/verify' not in src.api.app.openapi()['paths']
 """
     completed = subprocess.run(
         [sys.executable, "-c", code],
@@ -94,11 +96,13 @@ def test_container_injects_shared_session_and_executor():
     )
     try:
         service = container.engine._search_service
-        assert service._recall._executor is container.executor
-        assert service._ranking._executor is container.executor
-        assert service._pdf_gateway._executor is container.executor
-        assert service._query_planner._rewriter._http is container.http_session
-        assert service._pdf_gateway._http is container.http_session
+        discovery = service._discovery
+        assert discovery._recall._executor is container.executor
+        assert discovery._ranking._executor is container.executor
+        pdf = container.engine._research_service._pdf_gateway
+        assert pdf._executor is container.executor
+        assert discovery._query_planner._rewriter._http is container.http_session
+        assert pdf._http is container.http_session
         assert container.engine.providers[0]._http is container.http_session
         assert "test-key" not in repr(container.settings)
     finally:
@@ -130,13 +134,12 @@ def test_create_app_defers_factory_and_closes_runtime():
             "/search",
             json={
                 "query": "test",
-                "include_academic": False,
-                "include_patent": False,
-                "trust_mode": "off",
+                "source_types": ["web"],
             },
         )
         assert response.status_code == 200
-        assert response.json()["ranking_profile"] == "fast"
+        assert response.json()["schema_version"] == "search.v1"
+        assert response.json()["research_seed"]["search_id"].startswith("srch_")
 
     assert created[0].closed is True
 
@@ -150,7 +153,7 @@ def test_explicit_container_is_rejected_after_it_has_closed():
             pass
 
 
-def test_server_default_ranking_conflict_is_rest_422():
+def test_search_rejects_removed_ranking_controls():
     container = build_container(
         _safe_settings(rerank_backend="none"),
         include_mcp=False,
@@ -161,12 +164,10 @@ def test_server_default_ranking_conflict_is_rest_422():
             json={
                 "query": "test",
                 "ranking_profile": "quality",
-                "include_academic": False,
-                "include_patent": False,
             },
         )
     assert response.status_code == 422
-    assert "rerank_backend=none" in response.text
+    assert "Extra inputs are not permitted" in response.text
 
 
 @pytest.mark.parametrize("field", ["rerank_backend", "rerank_model"])
@@ -185,7 +186,7 @@ def test_rest_rejects_request_level_model_selection(field):
         )
 
     assert response.status_code == 422
-    assert "ranking_profile" in response.text
+    assert "Extra inputs are not permitted" in response.text
 
 
 def test_invalid_numeric_config_fails_only_when_explicitly_parsed():

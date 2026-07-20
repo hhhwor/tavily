@@ -28,7 +28,7 @@ class QueryPlannerSettings(Protocol):
 
 PlanQuery = Callable[..., SearchPlan]
 class QueryPlanner:
-    """把兼容 SearchCommand 转换为召回阶段可直接执行的查询计划。"""
+    """把轻量 SearchCommand 转换为召回阶段可直接执行的查询计划。"""
 
     def __init__(
         self,
@@ -50,22 +50,22 @@ class QueryPlanner:
         patent_available: bool,
     ) -> PlannedQuery:
         """规划 Web/Academic/Patent 查询，并保留原链路的失败语义。"""
-        top_k = command.top_k or self._settings.default_top_k
-        rewrite = (
-            self._settings.rewrite_enabled
-            if command.rewrite_enabled is None
-            else command.rewrite_enabled
-        )
-        names = tuple(provider_names)
+        top_k = command.limit
+        rewrite = self._settings.rewrite_enabled
+        requested = set(command.source_types or ())
+        auto_route = command.source_types is None
+        names = tuple(provider_names) if auto_route or "web" in requested else ()
+        force_academic = None if auto_route else "academic" in requested
+        force_patent = None if auto_route else "patent" in requested
         plan = self._plan_query(
             command.query,
             list(names),
             top_k,
             rewrite=False,
             academic_detect=self._settings.openalex_academic_detect,
-            force_academic=command.include_academic,
+            force_academic=force_academic,
             patent_detect=self._settings.patent_detect,
-            force_patent=command.include_patent,
+            force_patent=force_patent,
         )
 
         failures: list[SearchFailure] = list(plan.failures)

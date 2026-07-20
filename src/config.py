@@ -110,6 +110,9 @@ class Settings:
     per_provider_k: int = 10
     provider_timeout: int = 15
     search_deadline_ms: int = 30000
+    state_db_path: str = "/tmp/chukonu-state.sqlite3"
+    search_seed_ttl_seconds: int = 86400
+    research_max_workers: int = 4
 
     ranking_profile: str = "quality"
     rerank_backend: str = "siliconflow"
@@ -222,6 +225,15 @@ class Settings:
             per_provider_k=_int(env, "SEARCH_PER_PROVIDER_K", 10, minimum=1),
             provider_timeout=_int(env, "SEARCH_PROVIDER_TIMEOUT", 15, minimum=1),
             search_deadline_ms=_int(env, "SEARCH_DEADLINE_MS", 30000, minimum=1),
+            state_db_path=env.get(
+                "STATE_DB_PATH", "/tmp/chukonu-state.sqlite3"
+            ),
+            search_seed_ttl_seconds=_int(
+                env, "SEARCH_SEED_TTL_SECONDS", 86400, minimum=1
+            ),
+            research_max_workers=_int(
+                env, "RESEARCH_MAX_WORKERS", 4, minimum=1
+            ),
             ranking_profile=ranking.profile,
             rerank_backend=rerank_backend,
             rerank_model=env.get("RERANK_MODEL", "BAAI/bge-reranker-v2-m3"),

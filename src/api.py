@@ -1,17 +1,32 @@
-"""FastAPI 传输层；运行资源在 lifespan 中由 ``src.bootstrap`` 装配。"""
+"""FastAPI transport for lightweight search and durable research tasks."""
 from __future__ import annotations
 
 import hmac
 import os
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
-from typing import Callable, Optional
+from typing import Any, Callable, Optional
 
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, Header, HTTPException, Query, Request, Response
 from fastapi.responses import FileResponse, JSONResponse
+
+from src.application.ports.research_store import (
+    ResearchIdempotencyConflict,
+    ResearchRevisionConflict,
+    ResearchTaskNotFound,
+)
+from src.application.ports.search_seed import SearchSeedExpired, SearchSeedNotFound
 from src.bootstrap import Container, build_container
-from src.interfaces.schemas import SearchRequest, VerifyRequest
-from src.interfaces.responses import PdfTextResponse, SearchResponse, VerifyResponse
+from src.application.research_service import ResearchRequestError
+from src.domain.research import ResearchTaskEnvelope
+from src.domain.search_api import SearchResponse
+from src.interfaces.schemas import (
+    ResearchCancelRequest,
+    ResearchDetail,
+    ResearchFeedbackRequest,
+    ResearchRequest,
+    SearchRequest,
+)
 
 _STATIC_DIR = os.path.join(os.path.dirname(__file__), "static")
 _PUBLIC_PATHS = {"/", "/health", "/docs", "/redoc", "/openapi.json", "/docs/oauth2-redirect"}
@@ -23,8 +38,6 @@ class _RuntimeSlot:
 
 
 class _DeferredMcpApp:
-    """固定 mount；请求时转发给 lifespan 中创建的 MCP ASGI app。"""
-
     def __init__(self, slot: _RuntimeSlot):
         self._slot = slot
 
@@ -47,16 +60,25 @@ def _request_token(request: Request) -> str:
     return request.headers.get("x-api-key", "").strip()
 
 
+def _translate_error(exc: Exception) -> HTTPException:
+    if isinstance(exc, ResearchIdempotencyConflict):
+        return HTTPException(status_code=409, detail=str(exc))
+    if isinstance(exc, ResearchRequestError):
+        return HTTPException(status_code=422, detail=str(exc))
+    if isinstance(exc, (ResearchRevisionConflict, ValueError)):
+        return HTTPException(status_code=409, detail=str(exc))
+    if isinstance(exc, (SearchSeedNotFound, ResearchTaskNotFound)):
+        return HTTPException(status_code=404, detail="资源不存在")
+    if isinstance(exc, SearchSeedExpired):
+        return HTTPException(status_code=410, detail="search seed 已过期，请重新搜索")
+    return HTTPException(status_code=500, detail="服务内部错误")
+
+
 def create_app(
     container: Optional[Container] = None,
     *,
     container_factory: Callable[[], Container] = build_container,
 ) -> FastAPI:
-    """创建隔离的 API app；此调用本身不读取环境或创建运行资源。
-
-    显式传入的 ``container`` 是一次性运行时；需要重复启动同一个 app（例如测试）
-    时应传 ``container_factory``，使每次 lifespan 都获得新的 Container。
-    """
     slot = _RuntimeSlot()
 
     @asynccontextmanager
@@ -72,8 +94,8 @@ def create_app(
             application.state.container = None
 
     application = FastAPI(
-        title="Agent Search Engine (MVP)",
-        version="0.2.0",
+        title="Agent Search and Research API",
+        version="1.0.0",
         lifespan=lifespan,
     )
 
@@ -95,7 +117,7 @@ def create_app(
             )
             if not ok:
                 return JSONResponse(
-                    {"detail": "缺少或无效的 API token(Authorization: Bearer <token> 或 X-API-Key)"},
+                    {"detail": "缺少或无效的 API token"},
                     status_code=401,
                     headers={"WWW-Authenticate": "Bearer"},
                 )
@@ -113,27 +135,15 @@ def create_app(
         classifier = getattr(engine.claim_verifier, "classifier", None)
         return {
             "status": "ok",
+            "capabilities": ["search", "research"],
             "providers": list(settings.enabled_providers),
             "academic": engine.academic_provider is not None,
             "patent": engine.patent_provider is not None,
-            "reranker": engine.text_scorer.name,
-            "claim_verifier": getattr(classifier, "name", "unknown"),
+            "reranker": getattr(engine.text_scorer, "name", "unknown"),
+            "research_verifier": getattr(classifier, "name", "unknown"),
             "auth": settings.auth_enabled,
             "mcp": current.mcp_available,
             "cache": engine.cache.stats() if engine.cache else {"enabled": False},
-            "defaults": {
-                "ranking_profile": settings.ranking_profile,
-                "rerank_enabled": settings.rerank_enabled,
-                "rerank_backend": settings.rerank_backend,
-                "rerank_model": settings.rerank_model,
-                "rerank_threshold": settings.rerank_threshold,
-                "rerank_threshold_mode": settings.rerank_threshold_mode,
-                "ranking_warnings": list(settings.ranking_warnings),
-                "fusion_enabled": settings.fusion_enabled,
-                "rewrite_enabled": settings.rewrite_enabled,
-                "trust_mode": "annotate",
-                "top_k": settings.default_top_k,
-            },
         }
 
     @application.post("/search", response_model=SearchResponse)
@@ -143,28 +153,72 @@ def create_app(
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
 
-    @application.post("/verify", response_model=VerifyResponse)
-    def verify(req: VerifyRequest) -> VerifyResponse:
-        return runtime().engine.verify_claims(
-            req.query,
-            req.claims,
-            req.evidence,
-            profile=req.profile,
-            search_boundary=req.search_boundary,
-        )
+    @application.post("/research", response_model=ResearchTaskEnvelope, status_code=202)
+    def start_research(
+        req: ResearchRequest,
+        response: Response,
+        idempotency_key: str = Header(..., alias="Idempotency-Key"),
+    ) -> ResearchTaskEnvelope:
+        try:
+            task = runtime().engine.start_research(
+                req.to_command(),
+                idempotency_key=idempotency_key,
+            )
+            response.headers["Location"] = task.links.self
+            if task.retry_after_ms is not None:
+                response.headers["Retry-After"] = str(
+                    max(1, task.retry_after_ms // 1000)
+                )
+            return task
+        except Exception as exc:
+            raise _translate_error(exc) from exc
 
-    @application.get("/academic/pdf/text/{work_id}", response_model=PdfTextResponse)
-    def get_pdf_text(
-        work_id: str,
-        cursor: Optional[str] = None,
-        max_chars: int = 8000,
-    ) -> PdfTextResponse:
-        return runtime().engine.get_pdf_text(work_id, cursor=cursor, max_chars=max_chars)
+    @application.get("/research/{research_id}", response_model=ResearchTaskEnvelope)
+    def get_research(
+        research_id: str,
+        response: Response,
+        detail: ResearchDetail = Query("standard"),
+        if_none_match: str | None = Header(None, alias="If-None-Match"),
+    ) -> Any:
+        try:
+            task = runtime().engine.get_research(research_id, detail=detail)
+            etag = f'W/"{task.task_revision}-{task.evidence_set_revision}"'
+            if if_none_match == etag:
+                return Response(status_code=304, headers={"ETag": etag})
+            response.headers["ETag"] = etag
+            if task.retry_after_ms is not None:
+                response.headers["Retry-After"] = str(
+                    max(1, task.retry_after_ms // 1000)
+                )
+            return task
+        except Exception as exc:
+            raise _translate_error(exc) from exc
 
-    # 必须最后注册，避免 root mount 截获显式 REST 路由。
+    @application.post("/research/{research_id}/feedback", response_model=ResearchTaskEnvelope)
+    def research_feedback(
+        research_id: str,
+        req: ResearchFeedbackRequest,
+    ) -> ResearchTaskEnvelope:
+        try:
+            return runtime().engine.research_feedback(research_id, req.to_command())
+        except Exception as exc:
+            raise _translate_error(exc) from exc
+
+    @application.post("/research/{research_id}/cancel", response_model=ResearchTaskEnvelope)
+    def cancel_research(
+        research_id: str,
+        req: ResearchCancelRequest | None = None,
+    ) -> ResearchTaskEnvelope:
+        try:
+            return runtime().engine.cancel_research(
+                research_id,
+                task_revision=req.task_revision if req else None,
+            )
+        except Exception as exc:
+            raise _translate_error(exc) from exc
+
     application.mount("/", _DeferredMcpApp(slot), name="mcp")
     return application
 
 
-# Uvicorn 兼容入口；这里只创建路由，配置和资源延迟到 lifespan。
 app = create_app()

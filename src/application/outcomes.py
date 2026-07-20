@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Sequence, Tuple, TypeVar
 
 from src.application.ports.retrieval import RetrievalBatch
@@ -90,3 +91,13 @@ class PdfEnrichmentOutcome:
     def __post_init__(self) -> None:
         object.__setattr__(self, "academic", _tuple(self.academic))
         object.__setattr__(self, "failures", _tuple(self.failures))
+
+
+@dataclass(frozen=True, slots=True)
+class DiscoveryOutcome:
+    """Search 与 Research 复用的一轮发现结果。"""
+
+    query_time: datetime
+    planned: PlannedQuery
+    recalled: RecallOutcome
+    ranked: RankingOutcome

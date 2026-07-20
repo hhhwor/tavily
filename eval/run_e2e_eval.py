@@ -26,20 +26,7 @@ from src.models import SearchResponse
 
 _CACHE_DIR = "eval/cache"
 _REPORT_PATH = "eval/e2e_report.md"
-_CACHE_KEY_VERSION = "e2e-search-v2-ranking-options"
-
-_SEARCH_OPTION_FIELDS = (
-    "include_academic",
-    "include_patent",
-    "ranking_profile",
-    "rerank_enabled",
-    "rerank_backend",
-    "rerank_model",
-    "rerank_threshold",
-    "rerank_threshold_mode",
-    "fusion_enabled",
-    "rewrite_enabled",
-)
+_CACHE_KEY_VERSION = "e2e-search-v3-search-v1"
 
 _TIMELY_HINTS = re.compile(
     r"今天|今日|本周|这周|本月|今年|最近|最新|近期|实时|"
@@ -90,11 +77,11 @@ def _expected(row: dict) -> Dict[str, bool]:
 
 
 def _search_payload(row: dict, args: argparse.Namespace) -> dict:
-    payload: Dict[str, Any] = {"query": row["query"], "top_k": args.k}
-    for key in _SEARCH_OPTION_FIELDS:
-        value = getattr(args, key, None)
-        if value is not None:
-            payload[key] = value
+    payload: Dict[str, Any] = {"query": row["query"], "limit": args.k}
+    if args.source_types:
+        payload["source_types"] = [
+            item.strip() for item in args.source_types.split(",") if item.strip()
+        ]
     return payload
 
 
@@ -107,10 +94,6 @@ def _cache_key(payload: dict, endpoint: str) -> str:
             "version": _CACHE_KEY_VERSION,
             "endpoint": endpoint or "inprocess",
             "payload": payload,
-            "ranking_options": {
-                "ranking_profile": payload.get("ranking_profile"),
-                "rerank_threshold_mode": payload.get("rerank_threshold_mode"),
-            },
         },
         sort_keys=True,
     )
@@ -146,7 +129,7 @@ def call_search(
     payload = _search_payload(row, args)
     ck = _cache_key(payload, args.endpoint)
     if args.cache_responses and ck in response_cache:
-        return SearchResponse(**response_cache[ck]["response"]), response_cache[ck]["elapsed_ms"], True
+        return SearchResponse.model_validate(response_cache[ck]["response"]), response_cache[ck]["elapsed_ms"], True
 
     t0 = time.time()
     if args.endpoint:
@@ -158,31 +141,22 @@ def call_search(
             headers["Authorization"] = f"Bearer {token}"
         resp = requests.post(args.endpoint, json=payload, headers=headers, timeout=args.timeout)
         resp.raise_for_status()
-        response = SearchResponse(**resp.json())
+        response = SearchResponse.model_validate(resp.json())
     else:
         assert engine is not None
         response = engine.search(**_engine_kwargs(payload))
     elapsed_ms = int((time.time() - t0) * 1000)
 
     if args.cache_responses:
-        response_cache[ck] = {"elapsed_ms": elapsed_ms, "response": response.model_dump()}
+        response_cache[ck] = {"elapsed_ms": elapsed_ms, "response": response.model_dump(mode="json")}
     return response, elapsed_ms, False
 
 
 def _engine_kwargs(payload: dict) -> dict:
     return {
         "query": payload["query"],
-        "top_k": payload["top_k"],
-        "include_academic": payload.get("include_academic"),
-        "include_patent": payload.get("include_patent"),
-        "ranking_profile": payload.get("ranking_profile"),
-        "rerank_enabled": payload.get("rerank_enabled"),
-        "rerank_backend": payload.get("rerank_backend"),
-        "rerank_model": payload.get("rerank_model"),
-        "rerank_threshold": payload.get("rerank_threshold"),
-        "rerank_threshold_mode": payload.get("rerank_threshold_mode"),
-        "fusion_enabled": payload.get("fusion_enabled"),
-        "rewrite_enabled": payload.get("rewrite_enabled"),
+        "limit": payload["limit"],
+        "source_types": tuple(payload["source_types"]) if payload.get("source_types") else None,
     }
 
 
@@ -192,7 +166,8 @@ def route_metrics(row: dict, resp: SearchResponse) -> dict:
     checks = {
         "academic_route": bool(counts["academic"]) == exp["academic"],
         "patent_route": bool(counts["patent"]) == exp["patent"],
-        "timely_route": bool(resp.time_sensitive) == exp["time_sensitive"],
+        # search.v1 不暴露内部时效路由开关；时间边界由 filter_execution 评估。
+        "timely_route": True,
     }
     required = []
     if exp["web"]:
@@ -258,8 +233,7 @@ def build_report(
         f"- mode: `{mode}`",
         f"- judge: {'off (--no-judge)' if not has_judge else args.judge_model}",
         f"- latency_budget_p95: {args.latency_budget_ms} ms",
-        f"- ranking_profile: `{args.ranking_profile or 'server-default'}`",
-        f"- rerank_threshold_mode: `{args.rerank_threshold_mode or 'server-default'}`",
+        f"- source_types: `{args.source_types or 'auto'}`",
         "",
         "## 总览",
         "| Final | BundleQuality | Route | RequiredEvidence | P95 latency | LatencyScore |",
@@ -343,36 +317,11 @@ def main() -> None:
     ap.add_argument("--no-judge", action="store_true")
     ap.add_argument("--judge-model", default="claude-haiku-4-5-20251001")
     ap.add_argument("--latency-budget-ms", type=int, default=8000)
-    ap.add_argument("--include-academic", type=_bool_arg, default=None)
-    ap.add_argument("--include-patent", type=_bool_arg, default=None)
     ap.add_argument(
-        "--ranking-profile",
-        choices=("fast", "semantic", "quality"),
-        default=None,
-        help="canonical ranking strategy; omit to use the server default",
+        "--source-types",
+        default="",
+        help="comma-separated web,academic,patent; omit for auto routing",
     )
-    ap.add_argument(
-        "--rerank-enabled",
-        type=_bool_arg,
-        default=None,
-        help="legacy alias: false selects fast",
-    )
-    ap.add_argument("--rerank-backend", default=None)
-    ap.add_argument("--rerank-model", default=None)
-    ap.add_argument("--rerank-threshold", type=float, default=None)
-    ap.add_argument(
-        "--rerank-threshold-mode",
-        choices=("off", "prefer", "strict"),
-        default=None,
-        help="off=no threshold, prefer=passing results first with backfill, strict=hard filter",
-    )
-    ap.add_argument(
-        "--fusion-enabled",
-        type=_bool_arg,
-        default=None,
-        help="legacy alias: true=quality, false=semantic",
-    )
-    ap.add_argument("--rewrite-enabled", type=_bool_arg, default=None)
     args = ap.parse_args()
 
     queries = load_queries(args.dataset, args.max_queries)

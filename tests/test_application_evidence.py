@@ -178,4 +178,5 @@ def test_assemble_skips_empty_text_but_keeps_original_rank_fallback():
     assert evidence[0].passage.snippet_type == "web_snippet"
     assert evidence[0].scores.source_rank == 1
     assert evidence[0].scores.relevance == 0.5
-    assert evidence[0].scores.confidence == 0.5
+    # 排序相关性不能伪装成事实置信度。
+    assert evidence[0].scores.confidence is None

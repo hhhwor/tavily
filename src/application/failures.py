@@ -11,9 +11,9 @@ def search_failure(
     *,
     stage: str,
     source: str,
-    source_type: Optional[str],
     code: str,
     message: object,
+    source_type: Optional[str] = None,
     recoverable: bool = True,
 ) -> SearchFailure:
     external = message if isinstance(message, ExternalServiceError) else None

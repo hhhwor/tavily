@@ -29,22 +29,17 @@ def _settings(**overrides) -> Settings:
     return Settings(**values)
 
 
-def test_search_command_is_frozen_and_matches_legacy_defaults():
+def test_search_command_is_frozen_and_has_lightweight_defaults():
     command = SearchCommand("query")
 
-    assert command.top_k == 0
-    assert command.include_academic is None
-    assert command.include_patent is None
-    assert command.rerank_enabled is None
-    assert command.ranking_profile is None
-    assert command.rewrite_enabled is None
-    assert command.trust_mode == "annotate"
-    assert command.include_pdf_text is False
+    assert command.limit == 10
+    assert command.source_types is None
+    assert command.filters.languages == ()
     with pytest.raises(FrozenInstanceError):
-        command.top_k = 3  # type: ignore[misc]
+        command.limit = 3  # type: ignore[misc]
 
 
-def test_search_command_covers_search_engine_compatibility_parameters():
+def test_search_command_matches_current_search_engine_parameters():
     command_fields = {field.name for field in fields(SearchCommand)}
     engine_parameters = set(signature(SearchEngine.search).parameters) - {"self"}
 
@@ -63,7 +58,7 @@ def test_planner_preserves_l0_normalization_detection_and_default_top_k():
     assert planned.plan.normalized_query == "最新 AI 论文和专利"
     assert planned.plan.recency == "month"
     assert planned.plan.time_sensitive is True
-    assert planned.plan.top_k == 7
+    assert planned.plan.top_k == 10
     assert planned.active_provider_names == ("tencent", "baidu")
     assert planned.do_academic is True
     assert planned.do_patent is True
@@ -91,13 +86,7 @@ def test_planner_forwards_request_overrides_to_l0():
         plan_query_fn=fake_plan,
     )
     planned = planner.plan(
-        SearchCommand(
-            "raw",
-            top_k=4,
-            include_academic=False,
-            include_patent=True,
-            rewrite_enabled=False,
-        ),
+        SearchCommand("raw", limit=4, source_types=("web", "patent")),
         ("tencent", "baidu"),
         academic_available=True,
         patent_available=True,
@@ -128,7 +117,7 @@ def test_planner_reports_unavailable_verticals_without_rewriting_academic():
         Rewriter(),
     )
     planned = planner.plan(
-        SearchCommand("论文和专利", include_academic=True, include_patent=True),
+        SearchCommand("论文和专利", source_types=("academic", "patent")),
         (),
         academic_available=False,
         patent_available=False,

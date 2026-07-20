@@ -1,418 +1,60 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="zh-CN">
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Agent Search Engine</title>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Search & Research</title>
   <style>
-    * { box-sizing: border-box; margin: 0; padding: 0; }
-    :root {
-      --bg: #0f1115; --panel: #181b22; --border: #272b34;
-      --text: #e6e8eb; --muted: #8b919c; --accent: #4f8cff; --accent-dim: #2a3a5c;
-      --good: #3fb950; --tag: #21262d;
-    }
-    body {
-      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC",
-                   "Microsoft YaHei", Roboto, Helvetica, Arial, sans-serif;
-      background: var(--bg); color: var(--text); line-height: 1.6;
-      min-height: 100vh; padding: 32px 16px;
-    }
-    .wrap { max-width: 820px; margin: 0 auto; }
-    header { text-align: center; margin-bottom: 28px; }
-    header h1 { font-size: 26px; font-weight: 600; letter-spacing: .5px; }
-    header p { color: var(--muted); font-size: 13px; margin-top: 6px; }
-    .searchbar {
-      display: flex; gap: 10px; margin-bottom: 18px;
-    }
-    .searchbar input {
-      flex: 1; background: var(--panel); border: 1px solid var(--border);
-      border-radius: 10px; padding: 13px 16px; color: var(--text); font-size: 15px;
-      outline: none; transition: border-color .15s;
-    }
-    .searchbar input:focus { border-color: var(--accent); }
-    .searchbar button {
-      background: var(--accent); color: #fff; border: none; border-radius: 10px;
-      padding: 0 22px; font-size: 15px; font-weight: 500; cursor: pointer;
-      transition: opacity .15s; white-space: nowrap;
-    }
-    .searchbar button:hover { opacity: .9; }
-    .searchbar button:disabled { opacity: .5; cursor: not-allowed; }
-    .opts { display: flex; align-items: center; gap: 8px; margin-bottom: 10px;
-            color: var(--muted); font-size: 13px; }
-    .opts input { width: 60px; background: var(--panel); border: 1px solid var(--border);
-                  border-radius: 6px; padding: 5px 8px; color: var(--text); }
-    /* 高级选项面板 */
-    .adv { margin-bottom: 24px; border: 1px solid var(--border); border-radius: 10px;
-           background: var(--panel); overflow: hidden; }
-    .adv > summary { cursor: pointer; padding: 10px 14px; font-size: 13px; color: var(--muted);
-                     list-style: none; user-select: none; }
-    .adv > summary::-webkit-details-marker { display: none; }
-    .adv > summary::before { content: '⚙ 高级选项 ▾'; }
-    .adv[open] > summary::before { content: '⚙ 高级选项 ▴'; }
-    .adv-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
-                gap: 12px 16px; padding: 4px 14px 16px; }
-    .adv-grid label { display: flex; flex-direction: column; gap: 4px; font-size: 12px;
-                      color: var(--muted); }
-    .adv-grid select, .adv-grid input {
-      background: var(--bg); border: 1px solid var(--border); border-radius: 6px;
-      padding: 6px 8px; color: var(--text); font-size: 13px; outline: none; width: 100%;
-    }
-    .adv-grid select:focus, .adv-grid input:focus { border-color: var(--accent); }
-    .section-title { font-size: 13px; color: var(--muted); margin: 22px 0 12px;
-                     padding-bottom: 6px; border-bottom: 1px solid var(--border);
-                     display: flex; align-items: center; gap: 8px; }
-    .section-title b { color: var(--text); font-size: 14px; }
-    .paper .top { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; }
-    .paper .authors { color: var(--muted); font-size: 12px; margin: 4px 0; }
-    .paper .meta-line { color: var(--muted); font-size: 12px; margin: 2px 0 8px;
-                        display: flex; flex-wrap: wrap; gap: 4px 12px; }
-    .paper .meta-line .oa { color: var(--good); }
-    /* OA 开放获取徽章:按 oa_status 着色 */
-    .oa-badge { display: inline-flex; align-items: center; gap: 4px; border-radius: 20px;
-                padding: 1px 9px; font-size: 11px; font-weight: 600; line-height: 1.5;
-                border: 1px solid currentColor; }
-    .oa-badge::before { content: '●'; font-size: 9px; }
-    .oa-badge.gold    { color: #e3b341; }
-    .oa-badge.hybrid  { color: #d29922; }
-    .oa-badge.bronze  { color: #c98b56; }
-    .oa-badge.green   { color: #3fb950; }
-    .oa-badge.diamond { color: #58c4dd; }
-    .oa-badge.closed  { color: var(--muted); border-style: dashed; }
-    .oa-badge.closed::before { content: '○'; }
-    .paper .oa-link { color: var(--good); font-size: 12px; text-decoration: none; }
-    .paper .oa-link:hover { text-decoration: underline; }
-    .meta { color: var(--muted); font-size: 13px; margin-bottom: 16px;
-            display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: center; }
-    .meta .pill { background: var(--tag); border: 1px solid var(--border);
-                  border-radius: 20px; padding: 3px 11px; font-size: 12px; }
-    .meta .pill b { color: var(--text); font-weight: 600; }
-    .diagnostics { margin-bottom: 14px; color: var(--muted); font-size: 12px; }
-    .diagnostics .warn { border: 1px solid #5c442a; background: #211a12;
-                         border-radius: 8px; padding: 9px 11px; margin-bottom: 8px; }
-    .diagnostics b { color: #e3b341; }
-    .result {
-      background: var(--panel); border: 1px solid var(--border); border-radius: 12px;
-      padding: 16px 18px; margin-bottom: 14px; transition: border-color .15s;
-    }
-    .result:hover { border-color: var(--accent-dim); }
-    .result .top { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; }
-    .result a.title { color: var(--accent); font-size: 16px; font-weight: 600;
-                      text-decoration: none; }
-    .result a.title:hover { text-decoration: underline; }
-    .result .score { color: var(--good); font-size: 12px; font-weight: 600;
-                     white-space: nowrap; font-variant-numeric: tabular-nums; }
-    .result .url { color: var(--muted); font-size: 12px; margin: 4px 0 8px;
-                   word-break: break-all; }
-    .result .content { font-size: 14px; color: #c4c9d1; max-height: 7.5em;
-                       overflow: hidden; position: relative; }
-    .result .content.expanded { max-height: none; }
-    .result .tags { margin-top: 10px; display: flex; gap: 8px; flex-wrap: wrap;
-                    font-size: 11px; color: var(--muted); }
-    .result .tags span { background: var(--tag); border-radius: 5px; padding: 2px 8px; }
-    .toggle { color: var(--accent); font-size: 12px; cursor: pointer; margin-top: 6px;
-              display: inline-block; }
-    .status { text-align: center; color: var(--muted); padding: 40px 0; font-size: 14px; }
-    .err { color: #f85149; }
-    .spinner { display: inline-block; width: 16px; height: 16px; border: 2px solid var(--border);
-               border-top-color: var(--accent); border-radius: 50%; animation: spin .7s linear infinite;
-               vertical-align: middle; margin-right: 8px; }
-    @keyframes spin { to { transform: rotate(360deg); } }
+    :root{color-scheme:dark;--bg:#0d1117;--panel:#161b22;--line:#30363d;--text:#e6edf3;--muted:#8b949e;--blue:#58a6ff;--green:#3fb950;--yellow:#d29922;--red:#f85149}
+    *{box-sizing:border-box} body{margin:0;background:var(--bg);color:var(--text);font:14px/1.55 system-ui,-apple-system,"PingFang SC",sans-serif}
+    main{max-width:980px;margin:0 auto;padding:36px 18px 80px} h1{margin:0;font-size:28px} header p{color:var(--muted);margin:6px 0 26px}
+    .panel,.card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:16px;margin:12px 0}
+    .search{display:flex;gap:10px}.search input{flex:1}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:12px;margin-top:12px}
+    label{display:flex;flex-direction:column;gap:5px;color:var(--muted);font-size:12px} input,select,textarea,button{font:inherit}
+    input,select,textarea{width:100%;background:var(--bg);color:var(--text);border:1px solid var(--line);border-radius:7px;padding:9px}
+    button{border:0;border-radius:8px;background:var(--blue);color:#08111c;padding:9px 16px;font-weight:700;cursor:pointer}button:disabled{opacity:.45;cursor:not-allowed}
+    button.secondary{background:transparent;color:var(--blue);border:1px solid var(--blue)} .row{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+    .sources label{display:inline-flex;flex-direction:row;align-items:center;margin-right:14px}.sources input{width:auto}
+    .meta{display:flex;gap:8px;flex-wrap:wrap}.pill{border:1px solid var(--line);border-radius:999px;padding:3px 9px;color:var(--muted)}.pill b{color:var(--text)}
+    .title{color:var(--blue);font-size:16px;text-decoration:none;font-weight:650}.muted{color:var(--muted)}.passage{margin-top:8px;white-space:pre-wrap}.tags{margin-top:10px}.tags span{display:inline-block;background:var(--bg);border-radius:5px;padding:2px 7px;margin:0 6px 4px 0;color:var(--muted);font-size:12px}
+    .warning{border-color:#6e531a;color:#e3b341}.error{color:var(--red)}.good{color:var(--green)} h2{font-size:18px;margin:28px 0 8px} h3{font-size:15px;margin:0 0 8px}.hidden{display:none}.gap{border-left:3px solid var(--yellow);padding-left:10px;margin:8px 0}.spinner{color:var(--blue)}
+    code{word-break:break-all;color:#a5d6ff}@media(max-width:640px){.search{flex-direction:column}}
   </style>
 </head>
-<body>
-  <div class="wrap">
-    <header>
-      <h1>🔍 Agent Search Engine</h1>
-      <p>面向 LLM 的 Web 检索 · 多源聚合 + 重排</p>
-    </header>
-
-    <div class="searchbar">
-      <input id="q" type="text" placeholder="输入你的问题，例如：BGE-Reranker-v2-m3 模型的特点" autofocus>
-      <button id="btn" onclick="doSearch()">搜索</button>
+<body><main>
+  <header><h1>Search & Research</h1><p>轻量搜索负责发现，可信研究负责补证、反证与覆盖评估。</p></header>
+  <section class="panel">
+    <div class="search"><input id="query" placeholder="输入研究问题" autofocus><button id="searchBtn">搜索</button></div>
+    <div class="grid">
+      <label>返回条数<input id="limit" type="number" min="1" max="20" value="10"></label>
+      <label>起始日期<input id="from" type="date"></label><label>结束日期<input id="to" type="date"></label>
+      <label>语言（逗号分隔）<input id="languages" placeholder="zh,en"></label><label>辖区（逗号分隔）<input id="jurisdictions" placeholder="CN,US,EP,WO"></label>
+      <label>API Token<input id="token" type="password" placeholder="可选"></label>
     </div>
-    <div class="opts">
-      <label>返回条数 <input id="topk" type="number" value="10" min="1" max="50"></label>
-    </div>
-    <details class="adv">
-      <summary></summary>
-      <div class="adv-grid">
-        <label>排序策略
-          <select id="ranking_profile">
-            <option value="">默认</option>
-            <option value="fast">fast（快速先验排序）</option>
-            <option value="semantic">semantic（纯语义重排）</option>
-            <option value="quality">quality（语义 + 领域信号）</option>
-          </select>
-        </label>
-        <label>语义相关性阈值
-          <input id="rerank_threshold" type="number" step="0.05" min="0" max="1" placeholder="默认 0.3">
-        </label>
-        <label>阈值模式
-          <select id="rerank_threshold_mode">
-            <option value="">默认</option>
-            <option value="off">off（不使用阈值）</option>
-            <option value="prefer">prefer（达标项优先）</option>
-            <option value="strict">strict（删除未达标项）</option>
-          </select>
-        </label>
-        <label>学术检索
-          <select id="include_academic">
-            <option value="">自动识别</option>
-            <option value="true">强制开（OpenAlex）</option>
-            <option value="false">强制关</option>
-          </select>
-        </label>
-        <label>专利检索
-          <select id="include_patent">
-            <option value="">自动识别</option>
-            <option value="true">强制开（ES）</option>
-            <option value="false">强制关</option>
-          </select>
-        </label>
-        <label>查询改写
-          <select id="rewrite_enabled">
-            <option value="">默认</option>
-            <option value="true">开（LLM）</option>
-            <option value="false">关</option>
-          </select>
-        </label>
-        <label>PDF 正文
-          <select id="include_pdf_text">
-            <option value="false">关闭</option>
-            <option value="true">开启（前几篇）</option>
-          </select>
-        </label>
-        <label>PDF 模式
-          <select id="pdf_text_mode">
-            <option value="">默认</option>
-            <option value="cached">只读缓存</option>
-            <option value="sync">同步解析</option>
-          </select>
-        </label>
-        <label>PDF 篇数
-          <input id="pdf_max_results" type="number" min="0" max="5" placeholder="默认 2">
-        </label>
-        <label>PDF 字符数/篇
-          <input id="pdf_max_chars_per_result" type="number" min="1" max="30000" placeholder="默认 8000">
-        </label>
-        <label>API Token（服务端开启鉴权时必填）
-          <input id="api_token" type="password" placeholder="Bearer token，本地保存于浏览器">
-        </label>
-      </div>
-    </details>
+    <div class="sources" style="margin-top:12px"><span class="muted">来源类型（不勾选=自动路由）　</span><label><input type="checkbox" value="web">网页</label><label><input type="checkbox" value="academic">学术</label><label><input type="checkbox" value="patent">专利</label></div>
+  </section>
+  <div id="searchStatus" class="muted"></div><div id="searchMeta" class="meta"></div><div id="searchGaps"></div><div id="evidence"></div>
 
-    <div id="meta" class="meta" style="display:none"></div>
-    <div id="diagnostics" class="diagnostics"></div>
-    <div id="evidence"></div>
-    <div id="status" class="status"></div>
-  </div>
-
-  <script>
-    const $ = (id) => document.getElementById(id);
-
-    $('q').addEventListener('keydown', (e) => { if (e.key === 'Enter') doSearch(); });
-
-    // 鉴权 token:页面加载时从 localStorage 恢复,搜索时持久化
-    $('api_token').value = localStorage.getItem('api_token') || '';
-
-    function esc(s) {
-      return (s || '').replace(/[&<>"']/g, (c) => (
-        { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]
-      ));
-    }
-
-    // 三态下拉:'' → undefined(用服务端默认), 'true'/'false' → 布尔
-    function triBool(id) {
-      const v = $(id).value;
-      return v === '' ? undefined : v === 'true';
-    }
-    // 文本/数值:空 → undefined
-    function optStr(id) {
-      const v = $(id).value.trim();
-      return v === '' ? undefined : v;
-    }
-    function optNum(id) {
-      const v = $(id).value.trim();
-      return v === '' ? undefined : parseFloat(v);
-    }
-
-    function buildBody() {
-      const body = { query: $('q').value.trim(), top_k: parseInt($('topk').value) || 10 };
-      const opt = {
-        include_academic: triBool('include_academic'),
-        include_patent: triBool('include_patent'),
-        ranking_profile: optStr('ranking_profile'),
-        rerank_threshold: optNum('rerank_threshold'),
-        rerank_threshold_mode: optStr('rerank_threshold_mode'),
-        rewrite_enabled: triBool('rewrite_enabled'),
-        include_pdf_text: triBool('include_pdf_text'),
-        pdf_text_mode: optStr('pdf_text_mode'),
-        pdf_max_results: optNum('pdf_max_results'),
-        pdf_max_chars_per_result: optNum('pdf_max_chars_per_result'),
-      };
-      // 只带上用户实际设置的参数(其余用服务端默认)
-      for (const [k, v] of Object.entries(opt)) if (v !== undefined) body[k] = v;
-      return body;
-    }
-
-    async function doSearch() {
-      const query = $('q').value.trim();
-      if (!query) return;
-
-      $('btn').disabled = true;
-      $('meta').style.display = 'none';
-      $('diagnostics').innerHTML = '';
-      $('evidence').innerHTML = '';
-      $('status').innerHTML = '<span class="spinner"></span>检索中…';
-
-      const t0 = performance.now();
-      try {
-        const token = $('api_token').value.trim();
-        if (token) localStorage.setItem('api_token', token); else localStorage.removeItem('api_token');
-        const headers = { 'Content-Type': 'application/json' };
-        if (token) headers['Authorization'] = 'Bearer ' + token;
-        const resp = await fetch('/search', {
-          method: 'POST',
-          headers,
-          body: JSON.stringify(buildBody()),
-        });
-        if (resp.status === 401)
-          throw new Error('鉴权失败（401）：请在「高级选项 → API Token」填入有效 token。');
-        if (!resp.ok) throw new Error('HTTP ' + resp.status + ': ' + (await resp.text()));
-        const data = await resp.json();
-        renderMeta(data, Math.round(performance.now() - t0));
-        renderDiagnostics(data);
-        renderEvidence(data.evidence || []);
-        if (!(data.evidence || []).length)
-          $('status').innerHTML = '没有找到结果。';
-        else
-          $('status').innerHTML = '';
-      } catch (err) {
-        $('status').innerHTML = '<span class="err">出错了：' + esc(err.message) + '</span>';
-      } finally {
-        $('btn').disabled = false;
-      }
-    }
-
-    function renderMeta(d, clientMs) {
-      const pills = [];
-      const evidence = d.evidence || [];
-      const counts = evidence.reduce((acc, e) => {
-        acc[e.type] = (acc[e.type] || 0) + 1;
-        return acc;
-      }, {});
-      pills.push(`<span class="pill">证据 <b>${d.count ?? evidence.length}</b> 条</span>`);
-      if (counts.web) pills.push(`<span class="pill">网页 <b>${counts.web}</b> 条</span>`);
-      if (counts.academic) pills.push(`<span class="pill">论文 <b>${counts.academic}</b> 条</span>`);
-      if (counts.patent) pills.push(`<span class="pill">专利 <b>${counts.patent}</b> 条</span>`);
-      pills.push(`<span class="pill">来源 <b>${esc((d.providers_used || []).join(' · '))}</b></span>`);
-      if (d.ranking_profile)
-        pills.push(`<span class="pill">排序策略 <b>${esc(d.ranking_profile)}</b></span>`);
-      pills.push(`<span class="pill">重排器 <b>${esc(d.reranker)}</b></span>`);
-      if (d.rerank_threshold_mode)
-        pills.push(`<span class="pill">阈值 <b>${esc(d.rerank_threshold_mode)} / ${esc(String(d.rerank_threshold ?? ''))}</b></span>`);
-      pills.push(`<span class="pill">耗时 <b>${d.elapsed_ms ?? clientMs}ms</b></span>`);
-      if (d.rewritten_query && d.rewritten_query !== d.normalized_query)
-        pills.push(`<span class="pill">改写 <b>${esc(d.rewritten_query)}</b></span>`);
-      if (d.time_sensitive)
-        pills.push(`<span class="pill">时效 <b>${esc(d.recency || 'yes')}</b></span>`);
-      if (d.answerability)
-        pills.push(`<span class="pill">可答性 <b>${esc(d.answerability.status || '')}/${esc(d.answerability.confidence || '')}</b></span>`);
-      if (d.partial_failure)
-        pills.push(`<span class="pill">部分失败 <b>${(d.failures || []).length}</b></span>`);
-      $('meta').innerHTML = pills.join('');
-      $('meta').style.display = 'flex';
-    }
-
-    function renderDiagnostics(d) {
-      const gaps = (d.answerability && d.answerability.gaps) || [];
-      const failures = d.failures || [];
-      const rankingWarnings = d.ranking_warnings || [];
-      if (!gaps.length && !failures.length && !rankingWarnings.length) {
-        $('diagnostics').innerHTML = '';
-        return;
-      }
-      const gapItems = gaps.map(g =>
-        `<div><b>${esc(g.code)}</b> [${esc(g.severity || '')}] ${esc(g.message || '')}</div>`
-      ).join('');
-      const failureItems = failures.map(f =>
-        `<div><b>${esc(f.code)}</b> ${esc(f.stage || '')}/${esc(f.source || '')}: ${esc(f.message || '')}</div>`
-      ).join('');
-      const rankingItems = rankingWarnings.map(w =>
-        `<div><b>${esc(w)}</b> 排序策略已按可用能力调整。</div>`
-      ).join('');
-      const sections = [gapItems, failureItems, rankingItems].filter(Boolean);
-      $('diagnostics').innerHTML =
-        `<div class="warn">${sections.join('<hr style="border-color:#3a2b1c;border-width:0 0 1px;margin:8px 0">')}</div>`;
-    }
-
-    const TYPE_LABELS = { web: '网页', academic: '论文', patent: '专利' };
-    const SNIPPET_LABELS = {
-      web_content: '网页正文',
-      web_snippet: '网页摘要',
-      abstract: '论文摘要',
-      pdf_text: 'PDF 正文',
-      patent_abstract: '专利摘要',
-    };
-
-    function renderEvidence(evidence) {
-      const typeCounts = {};
-      $('evidence').innerHTML = evidence.map((e, i) => {
-        const type = e.type || 'evidence';
-        typeCounts[type] = (typeCounts[type] || 0) + 1;
-        const ref = `${type}${typeCounts[type]}`;
-        const passage = e.passage || {};
-        const citation = e.citation || {};
-        const scores = e.scores || {};
-        const access = e.access || {};
-        const diagnostics = e.diagnostics || {};
-        const body = esc(passage.text || '');
-        const score = scores.relevance != null ? Number(scores.relevance).toFixed(3) : '';
-        const title = e.title || citation.label || e.url || e.id || ref;
-        const line = [];
-        line.push(`<b>${esc(TYPE_LABELS[type] || type)} · [${esc(ref)}]</b>`);
-        if (passage.snippet_type)
-          line.push(esc(SNIPPET_LABELS[passage.snippet_type] || passage.snippet_type));
-        if (e.source) line.push(esc(e.source));
-        if (e.published_date) line.push(esc(e.published_date));
-        if (citation.label) line.push(esc(citation.label));
-        if (citation.venue) line.push(esc(citation.venue));
-        if (citation.publication_number) line.push(esc(citation.publication_number));
-        if (citation.doi) line.push(`DOI: ${esc(citation.doi.replace(/^https?:\/\/(dx\.)?doi\.org\//, ''))}`);
-        if (access.license) line.push(`License: ${esc(access.license)}`);
-        if (access.pdf_status && access.pdf_status !== 'not_requested')
-          line.push(`PDF: ${esc(access.pdf_status)}`);
-        const tags = [];
-        if (access.oa_pdf_url)
-          tags.push(`<a class="oa-link" href="${esc(access.oa_pdf_url)}" target="_blank" rel="noopener">PDF</a>`);
-        if (access.next_cursor) tags.push('<span>可继续读取</span>');
-        if (diagnostics.partial) tags.push('<span>partial</span>');
-        for (const warning of diagnostics.warnings || []) tags.push(`<span>${esc(warning)}</span>`);
-        const cid = `ev${i}`;
-        return `
-          <div class="result paper">
-            <div class="top">
-              <a class="title" href="${esc(e.url || '#')}" target="_blank" rel="noopener">
-                ${i + 1}. ${esc(title)}
-              </a>
-              ${score ? `<span class="score">${score}</span>` : ''}
-            </div>
-            ${e.url ? `<div class="url">${esc(e.url)}</div>` : ''}
-            <div class="meta-line">${line.join('<span>·</span>')}</div>
-            <div class="content" id="${cid}">${body}</div>
-            ${body.length > 280 ? `<span class="toggle" onclick="toggle('${cid}')">展开 ▾</span>` : ''}
-            ${tags.length ? `<div class="tags">${tags.join('')}</div>` : ''}
-          </div>`;
-      }).join('');
-    }
-
-    function toggle(id) {
-      const el = $(id);
-      const t = el.nextElementSibling;
-      el.classList.toggle('expanded');
-      if (t && t.classList.contains('toggle'))
-        t.textContent = el.classList.contains('expanded') ? '收起 ▴' : '展开 ▾';
-    }
-  </script>
-</body>
-</html>
+  <section id="researchPanel" class="panel hidden">
+    <h2 style="margin-top:0">提升可信度</h2><p class="muted">Research 将固定使用本次 search seed，执行补充检索、全文读取与 claim 校验。</p>
+    <div class="grid"><label>研究类型<select id="profile"><option value="technology_validation">技术验证</option><option value="literature_review">文献综述</option><option value="prior_art_landscape">现有技术/专利全景</option><option value="technology_landscape">技术全景</option></select></label><label>深度<select id="depth"><option value="quick">quick</option><option value="standard" selected>standard</option><option value="deep">deep</option></select></label></div>
+    <label style="margin-top:12px">需要优先验证的 claim（每行一条，可空）<textarea id="claims" rows="3"></textarea></label>
+    <div class="row" style="margin-top:12px"><button id="researchBtn">开始研究</button><button id="cancelBtn" class="secondary hidden">取消</button><span id="researchStatus" class="muted"></span></div>
+  </section>
+  <section id="dossier" class="hidden"><h2>Research Dossier</h2><div id="researchMeta" class="meta"></div><div id="findings"></div><h3>剩余缺口</h3><div id="researchGaps"></div></section>
+</main>
+<script>
+  const $=id=>document.getElementById(id); let searchSeed=null,researchId=null,pollTimer=null;
+  $('token').value=localStorage.getItem('api_token')||'';
+  const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  const csv=id=>$(id).value.split(',').map(v=>v.trim()).filter(Boolean);
+  function headers(){const token=$('token').value.trim();if(token)localStorage.setItem('api_token',token);else localStorage.removeItem('api_token');return {'Content-Type':'application/json',...(token?{Authorization:'Bearer '+token}:{})}}
+  async function jsonFetch(url,options={}){const res=await fetch(url,{...options,headers:{...headers(),...(options.headers||{})}});const body=await res.json().catch(()=>({detail:'响应不是 JSON'}));if(!res.ok)throw new Error(body.detail||`HTTP ${res.status}`);return body}
+  function searchBody(){const filters={languages:csv('languages'),jurisdictions:csv('jurisdictions')};if($('from').value)filters.published_from=$('from').value;if($('to').value)filters.published_to=$('to').value;const selected=[...document.querySelectorAll('.sources input:checked')].map(x=>x.value);return{query:$('query').value.trim(),limit:Number($('limit').value)||10,...(selected.length?{source_types:selected}:{}),filters}}
+  $('query').addEventListener('keydown',e=>{if(e.key==='Enter')runSearch()});$('searchBtn').onclick=runSearch;
+  async function runSearch(){if(!$('query').value.trim())return;$('searchBtn').disabled=true;$('searchStatus').innerHTML='<span class="spinner">检索中…</span>';$('evidence').innerHTML='';$('searchGaps').innerHTML='';$('researchPanel').classList.add('hidden');$('dossier').classList.add('hidden');try{const d=await jsonFetch('/search',{method:'POST',body:JSON.stringify(searchBody())});searchSeed=d.research_seed;$('searchStatus').textContent='';$('searchMeta').innerHTML=`<span class="pill">状态 <b>${esc(d.status)}</b></span><span class="pill">证据 <b>${d.result_set.returned}</b></span><span class="pill">检索质量 <b>${esc(d.retrieval_assessment.status)}</b></span><span class="pill">耗时 <b>${d.meta.elapsed_ms}ms</b></span>`+(searchSeed?`<span class="pill">seed <code>${esc(searchSeed.search_id)}</code></span>`:'');$('searchGaps').innerHTML=(d.retrieval_assessment.gaps||[]).map(g=>`<div class="panel warning"><b>${esc(g.code)}</b> ${esc(g.message)}</div>`).join('');$('evidence').innerHTML=(d.evidence||[]).map(e=>`<article class="card"><a class="title" href="${esc(e.url)}" target="_blank" rel="noreferrer">${esc(e.title||e.url)}</a><div class="muted">${esc(e.type)} · ${esc(e.provenance?.publisher_name||e.source)} · ${esc(e.published_date)}</div><div class="passage">${esc(e.passage?.text)}</div><div class="tags"><span>${esc(e.quality?.level||'unavailable')}</span><span>${esc(e.passage?.snippet_type)}</span></div></article>`).join('');if(searchSeed)$('researchPanel').classList.remove('hidden')}catch(e){$('searchStatus').innerHTML=`<span class="error">${esc(e.message)}</span>`}finally{$('searchBtn').disabled=false}}
+  $('researchBtn').onclick=async()=>{if(!searchSeed)return;$('researchBtn').disabled=true;$('researchStatus').textContent='提交中…';const lines=$('claims').value.split('\n').map(v=>v.trim()).filter(Boolean);const body={search_id:searchSeed.search_id,profile:$('profile').value,depth:$('depth').value,objective:{question:$('query').value.trim(),claims:lines.map(text=>({text,importance:'key'}))}};try{const d=await jsonFetch('/research',{method:'POST',headers:{'Idempotency-Key':crypto.randomUUID()},body:JSON.stringify(body)});researchId=d.research_id;$('cancelBtn').classList.remove('hidden');renderTask(d);poll()}catch(e){$('researchStatus').innerHTML=`<span class="error">${esc(e.message)}</span>`;$('researchBtn').disabled=false}}
+  $('cancelBtn').onclick=async()=>{if(!researchId)return;try{renderTask(await jsonFetch(`/research/${researchId}/cancel`,{method:'POST',body:'{}'}))}catch(e){$('researchStatus').innerHTML=`<span class="error">${esc(e.message)}</span>`}};
+  function poll(){clearTimeout(pollTimer);pollTimer=setTimeout(async()=>{try{const d=await jsonFetch(`/research/${researchId}?detail=full`);renderTask(d);if(['queued','running'].includes(d.state))poll()}catch(e){$('researchStatus').innerHTML=`<span class="error">${esc(e.message)}</span>`}},900)}
+  function renderTask(d){$('researchStatus').textContent=`${d.state}${d.phase?' · '+d.phase:''}`;if(['queued','running'].includes(d.state))return;clearTimeout(pollTimer);$('researchBtn').disabled=false;$('cancelBtn').classList.add('hidden');if(!d.dossier)return;$('dossier').classList.remove('hidden');const a=d.dossier.assessment;$('researchMeta').innerHTML=`<span class="pill">任务 <b>${esc(d.state)}</b></span><span class="pill">结论 <b>${esc(a.overall)}</b></span><span class="pill">轮次 <b>${d.progress.rounds_completed}</b></span><span class="pill">采纳证据 <b>${d.progress.evidence_adopted}</b></span><span class="pill">深读 <b>${d.progress.deep_reads}</b></span><span class="pill">停止 <b>${esc(d.stop?.reason)}</b></span>`;$('findings').innerHTML=(d.dossier.findings||[]).map(f=>`<article class="card"><h3>${esc(f.claim.text)}</h3><div>状态：<b>${esc(f.assessment.status)}</b>　置信度：<b>${esc(f.assessment.confidence)}</b></div><div class="muted">支持 ${f.assessment.support_refs.length} · 冲突 ${f.assessment.conflict_refs.length} · 独立支持 ${f.assessment.independent_support_count}</div></article>`).join('');$('researchGaps').innerHTML=(d.dossier.coverage.gaps||[]).map(g=>`<div class="gap"><b>${esc(g.code)}</b> ${esc(g.message)}<div class="muted">${esc(g.suggested_action||'')}</div></div>`).join('')||'<span class="good">未发现剩余覆盖缺口</span>'}
+</script></body></html>

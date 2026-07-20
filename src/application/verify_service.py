@@ -4,8 +4,7 @@ from __future__ import annotations
 from typing import Sequence
 
 from src.domain.evidence import Evidence, SearchBoundary
-from src.domain.trust import CandidateClaim
-from src.interfaces.responses import VerifyResponse
+from src.domain.trust import CandidateClaim, VerificationResult
 from src.trust import ClaimVerifier
 
 
@@ -21,7 +20,7 @@ class VerifyService:
         *,
         profile: str = "general",
         search_boundary: SearchBoundary | None = None,
-    ) -> VerifyResponse:
+    ) -> VerificationResult:
         return self.verifier.verify(
             query=query,
             claims=claims,

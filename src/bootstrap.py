@@ -9,11 +9,14 @@ from typing import Any, AsyncIterator, Optional
 import requests
 
 from src.application.answerability import AnswerabilityPolicy
+from src.application.discovery_service import DiscoveryService
 from src.application.evidence_assembler import EvidenceAssembler
 from src.application.query_planner import QueryPlanner
 from src.application.ranking_service import RankingService
 from src.application.recall import RecallCoordinator
 from src.application.search_service import SearchService
+from src.application.research_dispatcher import ResearchDispatcher
+from src.application.research_service import ResearchService
 from src.application.source_registry import SourceRegistry
 from src.application.trust_annotator import TrustAnnotator
 from src.application.verify_service import VerifyService
@@ -23,6 +26,8 @@ from src.infrastructure.cache import InMemoryCache, build_cache
 from src.infrastructure.openalex_pdf import OpenAlexPdfGateway
 from src.infrastructure.query_rewriter import SiliconFlowQueryRewriter
 from src.infrastructure.runtime import SystemClock
+from src.infrastructure.sqlite_research_store import SqliteResearchStore
+from src.infrastructure.sqlite_seed_store import SqliteSearchSeedStore
 from src.providers.base import SearchProvider
 from src.ranking.factory import build_text_scorer
 from src.ranking.ports import Reranker
@@ -144,6 +149,9 @@ class Container:
     engine: SearchEngine
     http_session: requests.Session
     executor: ThreadPoolExecutor
+    research_dispatcher: ResearchDispatcher
+    seed_store: SqliteSearchSeedStore
+    research_store: SqliteResearchStore
     mcp: Any = None
     mcp_app: Any = None
     _closed: bool = field(default=False, init=False, repr=False)
@@ -174,12 +182,21 @@ class Container:
             return
         self._closed = True
         try:
-            self.engine.close()
+            self.research_dispatcher.close()
         finally:
             try:
-                self.executor.shutdown(wait=True, cancel_futures=True)
+                self.engine.close()
             finally:
-                self.http_session.close()
+                try:
+                    self.seed_store.close()
+                finally:
+                    try:
+                        self.research_store.close()
+                    finally:
+                        try:
+                            self.executor.shutdown(wait=True, cancel_futures=True)
+                        finally:
+                            self.http_session.close()
 
 
 def build_container(
@@ -203,6 +220,9 @@ def build_container(
     academic_provider: Optional[SearchProvider] = None
     patent_provider: Optional[SearchProvider] = None
     ranking_service: Optional[RankingService] = None
+    seed_store: Optional[SqliteSearchSeedStore] = None
+    research_store: Optional[SqliteResearchStore] = None
+    research_dispatcher: Optional[ResearchDispatcher] = None
     try:
         scorer_factory = _scorer_factory(config, http)
         scorer = scorer_factory(
@@ -248,38 +268,67 @@ def build_container(
             ),
             http_session=http,
         )
-        search_service = SearchService(
-            query_planner=QueryPlanner(config, query_rewriter),
-            recall=RecallCoordinator(
-                config,
-                registry,
-                cache,
-                executor,
-                clock=clock.now,
-            ),
+        query_planner = QueryPlanner(config, query_rewriter)
+        recall = RecallCoordinator(
+            config,
+            registry,
+            cache,
+            executor,
+            clock=clock.now,
+        )
+        discovery = DiscoveryService(
+            query_planner=query_planner,
+            recall=recall,
             ranking=ranking_service,
-            pdf_gateway=pdf_gateway,
-            evidence_assembler=EvidenceAssembler(),
-            trust_annotator=TrustAnnotator(registry.snapshot_for),
-            answerability=AnswerabilityPolicy(),
             source_registry=registry,
             clock=clock,
             deadline_ms=config.search_deadline_ms,
         )
+        seed_store = SqliteSearchSeedStore(config.state_db_path)
+        research_store = SqliteResearchStore(config.state_db_path)
+        evidence_assembler = EvidenceAssembler()
+        trust_annotator = TrustAnnotator(registry.snapshot_for)
+        search_service = SearchService(
+            discovery=discovery,
+            evidence_assembler=evidence_assembler,
+            trust_annotator=trust_annotator,
+            answerability=AnswerabilityPolicy(),
+            seed_store=seed_store,
+            clock=clock,
+            deadline_ms=config.search_deadline_ms,
+            seed_ttl_seconds=config.search_seed_ttl_seconds,
+        )
         verify_service = VerifyService(verifier)
+        research_service = ResearchService(
+            seed_store=seed_store,
+            task_store=research_store,
+            discovery=discovery,
+            evidence_assembler=evidence_assembler,
+            trust_annotator=trust_annotator,
+            pdf_gateway=pdf_gateway,
+            verify_service=verify_service,
+            clock=clock,
+        )
+        research_dispatcher = ResearchDispatcher(
+            research_service.run,
+            max_workers=config.research_max_workers,
+        )
+        research_service.attach_dispatcher(research_dispatcher)
         engine = SearchEngine(
             settings=config,
             search_service=search_service,
-            verify_service=verify_service,
-            pdf_gateway=pdf_gateway,
+            research_service=research_service,
             providers=providers,
             academic_provider=academic_provider,
             patent_provider=patent_provider,
             cache=cache,
             text_scorer=scorer,
             ranking_service=ranking_service,
+            claim_verifier=verifier,
             source_registry=registry,
         )
+        for research_id in research_store.runnable():
+            research_dispatcher.submit(research_id)
 
         mcp = None
         mcp_app = None
@@ -299,6 +348,9 @@ def build_container(
             engine=engine,
             http_session=http,
             executor=executor,
+            research_dispatcher=research_dispatcher,
+            seed_store=seed_store,
+            research_store=research_store,
             mcp=mcp,
             mcp_app=mcp_app,
         )
@@ -306,6 +358,8 @@ def build_container(
         try:
             if engine is not None:
                 try:
+                    if research_dispatcher is not None:
+                        research_dispatcher.close()
                     engine.close()
                 except BaseException:
                     pass
@@ -319,6 +373,8 @@ def build_container(
                     *providers,
                     academic_provider,
                     patent_provider,
+                    seed_store,
+                    research_store,
                 ]
                 closed: set[int] = set()
                 for resource in resources:

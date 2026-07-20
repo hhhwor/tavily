@@ -6,6 +6,7 @@ import json
 import os
 import time
 from datetime import timedelta
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
 import anyio
@@ -15,6 +16,15 @@ from eval.e2e_judge import compact_response, evidence_type_counts
 from src.config import Settings
 from src.interfaces.presenters import McpSearchPresenter
 from src.models import SearchResponse
+from src.domain.search_api import (
+    QualityMix,
+    RequestedFilters,
+    RetrievalAssessment,
+    RetrievalBoundary,
+    SearchMeta,
+    SearchQuery,
+    SearchResultSet,
+)
 
 _REPORT_PATH = "eval/tool_agent_report.md"
 _DETAILS_PATH = "eval/tool_agent_details.json"
@@ -27,9 +37,9 @@ _AGENT_SYSTEM = (
     "- 需要外部事实、最新信息、论文、专利、公司/产业动态时,先调用 search。\n"
     "- 技术尽调/R&D 任务应尽量覆盖 web、academic、patent 三类证据。\n"
     "- search 结果会以 web1/academic1/patent1 等 ref 形式返回;最终回答只能引用这些 ref。\n"
-    "- 必须检查 partial_failure、failures、answerability.gaps;有缺口时明确说明。\n"
+    "- 必须检查 status、failures、retrieval_assessment.gaps;有缺口时明确说明。\n"
     "- 没有 academic evidence 时,不得把网页包装成论文证据;没有 patent evidence 时,不得把网页包装成专利证据。\n"
-    "- 如 academic evidence 有 next_cursor 且任务需要论文正文,可调用 get_pdf_text 续读。\n"
+    "- 需要全文、反证或 claim 校验时,用 search_id 启动 research 并轮询任务。\n"
     "- 最终用中文输出紧凑报告,覆盖结论、证据、机会、风险和下一步建议。"
 )
 
@@ -80,32 +90,30 @@ def _client(model_api_key: Optional[str] = None):
 def _tools_schema() -> List[dict]:
     search_props = {
         "query": {"type": "string"},
-        "top_k": {"type": "integer", "minimum": 1, "maximum": 20},
-        "include_academic": {"type": "boolean"},
-        "include_patent": {"type": "boolean"},
-        "rerank": {"type": "boolean"},
-        "include_pdf_text": {"type": "boolean"},
-        "pdf_text_mode": {"type": "string", "enum": ["cached", "sync"]},
-        "pdf_max_results": {"type": "integer", "minimum": 0, "maximum": 5},
-        "pdf_max_chars_per_result": {"type": "integer", "minimum": 1, "maximum": 30000},
+        "limit": {"type": "integer", "minimum": 1, "maximum": 20},
+        "source_types": {"type": "array", "items": {"type": "string", "enum": ["web", "academic", "patent"]}},
+        "filters": {"type": "object"},
     }
     return [
         {
             "name": "search",
             "description": (
                 "调用真实 MCP search 工具,返回按 web/academic/patent ref 压缩后的证据包。"
-                "技术尽调任务应考虑 include_academic/include_patent。"
+                "技术尽调任务可显式声明 source_types。"
             ),
             "input_schema": {"type": "object", "properties": search_props, "required": ["query"]},
         },
         {
-            "name": "get_pdf_text",
-            "description": "用 search 返回的 citation.work_id 和 access.next_cursor 续读已抽取 PDF 正文。",
+            "name": "research",
+            "description": "启动、读取、反馈或取消可信研究任务。先 search，再以 search_id start。",
             "input_schema": {"type": "object", "properties": {
-                "work_id": {"type": "string"},
-                "cursor": {"type": "string"},
-                "max_chars": {"type": "integer", "minimum": 1, "maximum": 30000},
-            }, "required": ["work_id"]},
+                "operation": {"type": "string", "enum": ["start", "get", "feedback", "cancel"]},
+                "search_id": {"type": "string"},
+                "research_id": {"type": "string"},
+                "profile": {"type": "string"},
+                "depth": {"type": "string", "enum": ["quick", "standard", "deep"]},
+                "detail": {"type": "string", "enum": ["standard", "full"]},
+            }, "required": ["operation"]},
         },
     ]
 
@@ -143,32 +151,41 @@ def _search_response_from_mcp(data: dict) -> SearchResponse:
 
 def _merge_responses(task: str, responses: List[SearchResponse]) -> SearchResponse:
     if not responses:
-        return SearchResponse(query=task, normalized_query=task, evidence=[], count=0,
-                              providers_used=[], reranker="tool-agent:none", elapsed_ms=0)
+        return SearchResponse(
+            request_id="req_tool_agent_empty",
+            status="complete",
+            research_seed=None,
+            query=SearchQuery(
+                original=task,
+                effective=task,
+                filters_requested=RequestedFilters(),
+            ),
+            result_set=SearchResultSet(returned=0, limit=10),
+            retrieval_assessment=RetrievalAssessment(
+                status="unusable", quality_mix=QualityMix()
+            ),
+            retrieval_boundary=RetrievalBoundary(
+                query_time=datetime.now(timezone.utc), deadline_ms=0
+            ),
+            meta=SearchMeta(elapsed_ms=0),
+        )
     evidence = []
     failures = []
-    providers: List[str] = []
     for resp in responses:
         evidence.extend(resp.evidence)
         failures.extend(resp.failures)
-        for provider in resp.providers_used:
-            if provider not in providers:
-                providers.append(provider)
     last = responses[-1]
     return SearchResponse(
-        query=task,
-        normalized_query=last.normalized_query or task,
-        rewritten_query=last.rewritten_query,
-        recency=last.recency,
-        time_sensitive=any(r.time_sensitive for r in responses),
+        request_id=last.request_id,
+        status="partial" if any(r.status == "partial" for r in responses) else "complete",
+        research_seed=last.research_seed,
+        query=last.query.model_copy(update={"original": task}),
         evidence=evidence,
-        partial_failure=any(r.partial_failure for r in responses),
         failures=failures,
-        answerability=last.answerability,
-        count=len(evidence),
-        providers_used=providers,
-        reranker=last.reranker,
-        elapsed_ms=sum(r.elapsed_ms for r in responses),
+        result_set=SearchResultSet(returned=len(evidence), limit=len(evidence)),
+        retrieval_assessment=last.retrieval_assessment,
+        retrieval_boundary=last.retrieval_boundary,
+        meta=SearchMeta(elapsed_ms=sum(r.meta.elapsed_ms for r in responses)),
     )
 
 
@@ -246,18 +263,18 @@ class McpToolAgent:
         aggregate = _merge_responses(task, search_responses)
         audit = answer_support_audit(answer, aggregate)
         counts = evidence_type_counts(aggregate)
-        material_gaps = [g for g in aggregate.answerability.gaps if getattr(g, "severity", "") in {"warning", "blocking"}]
-        has_gaps = bool(aggregate.partial_failure or aggregate.failures or material_gaps)
+        material_gaps = [g for g in aggregate.retrieval_assessment.gaps if getattr(g, "severity", "") in {"warning", "blocking"}]
+        has_gaps = bool(aggregate.status == "partial" or aggregate.failures or material_gaps)
         stats = {
             "tool_calls": len(tool_events),
             "search_calls": sum(1 for e in tool_events if e["tool"] == "search"),
-            "pdf_calls": sum(1 for e in tool_events if e["tool"] == "get_pdf_text"),
+            "research_calls": sum(1 for e in tool_events if e["tool"] == "research"),
             "tool_call_rate": 1.0 if tool_events else 0.0,
             "tool_latency_ms": sum(int(e.get("latency_ms", 0)) for e in tool_events),
             "elapsed_ms": int((time.time() - started) * 1000),
             "counts": counts,
             "required_source_coverage": _coverage(needs, counts),
-            "partial_failure": aggregate.partial_failure,
+            "partial_failure": aggregate.status == "partial",
             "failure_count": len(aggregate.failures),
             "has_gaps": has_gaps,
             "gap_disclosed": (not has_gaps) or _has_gap_disclosure(answer),
@@ -300,24 +317,15 @@ class McpToolAgent:
             event["summary"] = {"counts": compact["counts"], "partial_failure": compact["partial_failure"],
                                 "failures": compact["failures"], "elapsed_ms": compact["elapsed_ms"]}
             return event, compact
-        if name == "get_pdf_text" and isinstance(data, dict):
-            compact_pdf = {
-                "work_id": data.get("work_id"),
-                "status": data.get("status"),
-                "chunk_index": data.get("chunk_index"),
-                "page_from": data.get("page_from"),
-                "page_to": data.get("page_to"),
-                "text": (data.get("text") or "")[: self.args.pdf_result_chars],
-                "returned_chars": data.get("returned_chars"),
-                "next_cursor": data.get("next_cursor"),
-                "partial": data.get("partial"),
-                "error_code": data.get("error_code"),
-                "error_message": data.get("error_message"),
+        if name == "research" and isinstance(data, dict):
+            event["summary"] = {
+                "research_id": data.get("research_id"),
+                "state": data.get("state"),
+                "phase": data.get("phase"),
+                "assessment": (data.get("dossier") or {}).get("assessment"),
+                "stop": data.get("stop"),
             }
-            event["summary"] = {"status": compact_pdf["status"],
-                                "returned_chars": compact_pdf["returned_chars"],
-                                "partial": compact_pdf["partial"]}
-            return event, compact_pdf
+            return event, data
         return event, data
 
 
@@ -367,7 +375,7 @@ def build_report(details: List[dict], judgments: Dict[str, dict], args: argparse
         judge_text = "N/A" if not j else f"{j.get('winner')} {j.get('full_score')}:{j.get('baidu_score')}"
         lines.append(
             f"| {_md(d['id'])} | {_md(d.get('domain', ''))} | "
-            f"{s['tool_calls']}({s['search_calls']}/{s['pdf_calls']}) | "
+            f"{s['tool_calls']}({s['search_calls']}/{s['research_calls']}) | "
             f"{c['web']}/{c['academic']}/{c['patent']} | "
             f"{s['required_source_coverage']:.2f} | {int(s['partial_failure'])} | "
             f"{s['support_audit_flags']} | {_md(judge_text)} |"

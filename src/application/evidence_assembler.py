@@ -134,7 +134,6 @@ class EvidenceAssembler:
                     relevance=relevance,
                     source_rank=rank,
                     rerank_score=result.rerank_score,
-                    confidence=relevance,
                 ),
                 access=EvidenceAccess(is_open=bool(result.url)),
                 diagnostics=EvidenceDiagnostics(
@@ -223,7 +222,6 @@ class EvidenceAssembler:
                     authority=(
                         float(paper.citations) if paper.citations else None
                     ),
-                    confidence=relevance,
                 ),
                 access=EvidenceAccess(
                     is_open=paper.is_oa,
@@ -301,7 +299,6 @@ class EvidenceAssembler:
                         if patent.citation_count
                         else None
                     ),
-                    confidence=relevance,
                 ),
                 access=EvidenceAccess(is_open=bool(patent.url)),
                 diagnostics=EvidenceDiagnostics(

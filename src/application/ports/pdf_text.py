@@ -7,7 +7,7 @@ from typing import Optional, Sequence
 from src.application.outcomes import PdfEnrichmentOutcome
 from src.application.ports.runtime import Deadline
 from src.domain.documents import RankedDocument
-from src.interfaces.responses import PdfTextResponse
+from src.domain.pdf_text import PdfTextPage
 
 
 class PdfTextGateway(ABC):
@@ -34,6 +34,6 @@ class PdfTextGateway(ABC):
         work_id: str,
         cursor: Optional[str] = None,
         max_chars: Optional[int] = None,
-    ) -> PdfTextResponse:
+    ) -> PdfTextPage:
         """读取已经抽取并缓存的 PDF 正文分页，不触发新抽取。"""
         raise NotImplementedError

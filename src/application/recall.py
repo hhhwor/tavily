@@ -6,6 +6,7 @@ from datetime import datetime, timedelta
 from typing import Callable, Optional, Protocol
 
 from src.application.failures import search_failure
+from src.application.commands import SearchFilters
 from src.application.outcomes import PlannedQuery, RecallOutcome
 from src.application.ports.cache import CacheBackend
 from src.application.ports.runtime import Deadline
@@ -54,8 +55,10 @@ class RecallCoordinator:
             source.descriptor.id,
             str(request.candidate_budget),
             request.recency or "",
-            request.language or "",
-            request.jurisdiction or "",
+            ",".join(request.languages),
+            ",".join(request.jurisdictions),
+            request.time_from.isoformat() if request.time_from else "",
+            request.time_to.isoformat() if request.time_to else "",
             request.query,
         ))
         cached = self._cache.get(key)
@@ -75,7 +78,12 @@ class RecallCoordinator:
             return "en"
         return None
 
-    def _request(self, query: str, recency: str | None) -> RetrievalRequest:
+    def _request(
+        self,
+        query: str,
+        recency: str | None,
+        filters: SearchFilters,
+    ) -> RetrievalRequest:
         now = self._clock()
         delta = {
             "day": timedelta(days=1),
@@ -83,38 +91,51 @@ class RecallCoordinator:
             "month": timedelta(days=30),
             "year": timedelta(days=365),
         }.get(recency or "")
+        time_from = (
+            datetime.combine(filters.published_from, datetime.min.time(), tzinfo=now.tzinfo)
+            if filters.published_from
+            else (now - delta if delta else None)
+        )
+        time_to = (
+            datetime.combine(filters.published_to, datetime.max.time(), tzinfo=now.tzinfo)
+            if filters.published_to
+            else (now if delta else None)
+        )
+        languages = filters.languages or tuple(filter(None, (self._language(query),)))
         return RetrievalRequest(
             query=query,
             candidate_budget=self._settings.per_provider_k,
             recency=recency,
-            time_from=now - delta if delta else None,
-            time_to=now if delta else None,
-            language=self._language(query),
-            jurisdiction=None,
+            time_from=time_from,
+            time_to=time_to,
+            languages=languages,
+            jurisdictions=filters.jurisdictions,
         )
 
     def recall(
         self,
         planned: PlannedQuery,
         *,
+        filters: SearchFilters | None = None,
         deadline: Deadline | None = None,
     ) -> RecallOutcome:
+        filters = filters or SearchFilters()
         active_names = set(planned.active_provider_names)
         tasks: list[tuple[RetrievalSource, RetrievalRequest]] = []
         for source in self._registry.sources("web"):
             if source.descriptor.id in active_names:
                 tasks.append((
                     source,
-                    self._request(planned.search_query, planned.plan.recency),
+                    self._request(planned.search_query, planned.plan.recency, filters),
                 ))
         if planned.do_academic:
             tasks.extend(
-                (source, self._request(planned.academic_query, planned.plan.recency))
+                (source, self._request(planned.academic_query, planned.plan.recency, filters))
                 for source in self._registry.sources("academic")
             )
         if planned.do_patent:
             tasks.extend(
-                (source, self._request(planned.search_query, planned.plan.recency))
+                (source, self._request(planned.search_query, planned.plan.recency, filters))
                 for source in self._registry.sources("patent")
             )
 

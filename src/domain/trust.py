@@ -5,7 +5,8 @@ from typing import List, Literal, Optional
 
 from pydantic import BaseModel, Field
 
-from src.domain.evidence import EvidenceLocator
+from src.domain.evidence import EvidenceLocator, SearchBoundary
+from src.domain.failures import SearchFailure
 
 
 class CandidateClaim(BaseModel):
@@ -74,3 +75,15 @@ class TrustAssessment(BaseModel):
     policy_version: str = "trust-phase1-v1"
     model: str = "rules"
     warnings: List[str] = Field(default_factory=list)
+
+
+class VerificationResult(BaseModel):
+    """Internal verification stage result; it is not a public API response."""
+
+    query: str
+    profile: str = "general"
+    assessments: List[ClaimAssessment] = Field(default_factory=list)
+    trust_assessment: TrustAssessment = Field(default_factory=TrustAssessment)
+    search_boundary: Optional[SearchBoundary] = None
+    failures: List[SearchFailure] = Field(default_factory=list)
+    elapsed_ms: int = 0

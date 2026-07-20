@@ -132,16 +132,13 @@ def compact_response(resp: SearchResponse, per_block_k: int = 5) -> dict:
         refs[item.type] = refs.get(item.type, 0) + 1
         evidence.append(_evidence_summary(item, f"{item.type}{refs[item.type]}"))
     return {
-        "normalized_query": resp.normalized_query,
-        "rewritten_query": resp.rewritten_query,
-        "time_sensitive": resp.time_sensitive,
-        "recency": resp.recency,
-        "providers_used": resp.providers_used,
-        "reranker": resp.reranker,
-        "elapsed_ms": resp.elapsed_ms,
-        "partial_failure": resp.partial_failure,
+        "query": resp.query.model_dump(mode="json"),
+        "providers_used": list(resp.retrieval_boundary.source_snapshot),
+        "elapsed_ms": resp.meta.elapsed_ms,
+        "partial_failure": resp.status == "partial",
         "failures": [f.model_dump() for f in resp.failures],
-        "answerability": resp.answerability.model_dump(),
+        "retrieval_assessment": resp.retrieval_assessment.model_dump(),
+        "retrieval_boundary": resp.retrieval_boundary.model_dump(mode="json"),
         "counts": evidence_type_counts(resp),
         "evidence": evidence,
     }

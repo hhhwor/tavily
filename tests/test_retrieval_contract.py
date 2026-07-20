@@ -8,9 +8,11 @@ from pathlib import Path
 
 import pytest
 
+from src.application.commands import SearchCommand, SearchFilters
 from src.application.outcomes import PlannedQuery
 from src.application.ports.retrieval import RetrievalRequest, SourceDescriptor
 from src.application.recall import RecallCoordinator
+from src.application.search_service import SearchService
 from src.application.source_registry import SourceRegistry
 from src.application.trust_annotator import TrustAnnotator
 from src.config import Settings
@@ -177,8 +179,8 @@ def test_concrete_sources_declare_and_report_provider_specific_filters():
         recency="month",
         time_from=datetime(2026, 6, 17, tzinfo=timezone.utc),
         time_to=datetime(2026, 7, 17, tzinfo=timezone.utc),
-        language="zh",
-        jurisdiction="CN",
+        languages=("zh",),
+        jurisdictions=("CN",),
     )
     tencent = TencentSearchProvider(secret_id="id", secret_key="key")
     baidu = BaiduSearchProvider(api_key="key")
@@ -203,6 +205,7 @@ def test_concrete_sources_declare_and_report_provider_specific_filters():
         "index": "read-v3",
         "size": 25,
         "application_date_gte": "2026-06-17",
+        "application_date_lte": "2026-07-17",
     }
     assert patent.descriptor.default_snapshot == "index-alias:read-v3"
     assert openalex.descriptor.data_license == "OpenAlex"
@@ -228,6 +231,78 @@ class _Http:
         self.calls.append((url, kwargs))
         return _Response(self.payload)
 
+    def get(self, url, **kwargs):
+        self.calls.append((url, kwargs))
+        return _Response(self.payload)
+
+
+def test_serpapi_sends_requested_language_without_recasting_legal_jurisdiction():
+    request = RetrievalRequest(
+        query="query",
+        candidate_budget=5,
+        recency="week",
+        languages=("fr",),
+        jurisdictions=("CA",),
+    )
+    http = _Http({"organic_results": []})
+    provider = SerpApiProvider(
+        api_key="key",
+        gl="us",
+        hl="en",
+        http_session=http,
+    )
+
+    batch = provider.retrieve(request)
+
+    params = http.calls[0][1]["params"]
+    assert params["hl"] == "fr"
+    assert params["gl"] == "us"
+    assert params["tbs"] == "qdr:w"
+    assert batch.actual_filters.to_dict()["hl"] == "fr"
+    assert batch.actual_filters.to_dict()["gl"] == "us"
+    assert batch.diagnostics.to_dict()["applied_request_filters"] == {
+        "languages": ["fr"]
+    }
+    execution = SearchService._filter_execution(  # noqa: SLF001
+        SearchCommand(
+            query="query",
+            source_types=("web",),
+            filters=SearchFilters(
+                languages=("fr",),
+                jurisdictions=("CA",),
+            ),
+        ),
+        [batch],
+    )["web"]
+    assert execution.applied == {"languages": ["fr"]}
+    assert execution.unsupported == []
+    assert execution.not_applicable == ["jurisdictions"]
+
+
+def test_serpapi_does_not_claim_a_multi_language_filter_it_cannot_apply():
+    request = RetrievalRequest(
+        query="query",
+        candidate_budget=5,
+        languages=("fr", "en"),
+    )
+    provider = SerpApiProvider(
+        api_key="key",
+        http_session=_Http({"organic_results": []}),
+    )
+    batch = provider.retrieve(request)
+
+    execution = SearchService._filter_execution(  # noqa: SLF001
+        SearchCommand(
+            query="query",
+            source_types=("web",),
+            filters=SearchFilters(languages=("fr", "en")),
+        ),
+        [batch],
+    )["web"]
+
+    assert execution.applied == {}
+    assert execution.unsupported == ["languages"]
+
 
 def test_explicit_time_boundary_is_the_one_sent_to_adapters():
     request = RetrievalRequest(
@@ -250,7 +325,7 @@ def test_explicit_time_boundary_is_the_one_sent_to_adapters():
 
     openalex_http = _Http({"results": []})
     OpenAlexProvider(http_session=openalex_http).retrieve(request)
-    assert openalex_http.calls[0][1]["json"]["year_min"] == 2026
+    assert openalex_http.calls[0][1]["json"]["year_min"] == 2025
     assert openalex_http.calls[0][1]["json"]["year_max"] == 2026
 
     patent_http = _Http({"hits": {"hits": []}})
@@ -260,7 +335,9 @@ def test_explicit_time_boundary_is_the_one_sent_to_adapters():
     ).retrieve(request)
     patent_filter = patent_http.calls[0][1]["json"]["query"]["bool"]["filter"]
     assert patent_filter == [{
-        "range": {"application_date": {"gte": "2025-12-15"}}
+        "range": {"application_date": {
+            "gte": "2025-12-15", "lte": "2026-01-14"
+        }}
     }]
 
 

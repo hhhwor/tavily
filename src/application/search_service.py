@@ -1,130 +1,244 @@
-"""搜索用例的唯一阶段编排服务。"""
+"""Lightweight search use case and research-seed creation."""
 from __future__ import annotations
+
+import secrets
+from collections import Counter
 
 from src.application.answerability import AnswerabilityPolicy
 from src.application.commands import SearchCommand
+from src.application.discovery_service import DiscoveryService
 from src.application.evidence_assembler import EvidenceAssembler
-from src.application.ports.pdf_text import PdfTextGateway
-from src.application.ports.runtime import Clock, Deadline
-from src.application.query_planner import QueryPlanner
-from src.application.ranking_service import RankingService
-from src.application.recall import RecallCoordinator
-from src.application.source_registry import SourceRegistry
+from src.application.ports.runtime import Clock
+from src.application.ports.search_seed import SearchSeedStore
 from src.application.trust_annotator import TrustAnnotator
-from src.interfaces.responses import SearchResponse
+from src.domain.documents import EnrichedDocument
+from src.domain.evidence import AnswerabilityGap, Evidence
+from src.domain.search_api import (
+    FailureDetail,
+    QualityMix,
+    RequestedFilters,
+    RetrievalAssessment,
+    RetrievalBoundary,
+    SearchMeta,
+    SearchQuery,
+    SearchResponse,
+    SearchResultSet,
+    SearchSeedSnapshot,
+    SourceFilterExecution,
+)
 
 
 class SearchService:
-    """按固定顺序协调规划、召回、排序、富化、Evidence 与 Trust。"""
+    """Return discovery evidence quickly and persist its immutable research seed."""
 
     def __init__(
         self,
         *,
-        query_planner: QueryPlanner,
-        recall: RecallCoordinator,
-        ranking: RankingService,
-        pdf_gateway: PdfTextGateway,
+        discovery: DiscoveryService,
         evidence_assembler: EvidenceAssembler,
         trust_annotator: TrustAnnotator,
         answerability: AnswerabilityPolicy,
-        source_registry: SourceRegistry,
+        seed_store: SearchSeedStore,
         clock: Clock,
         deadline_ms: int,
+        seed_ttl_seconds: int,
     ) -> None:
-        self._query_planner = query_planner
-        self._recall = recall
-        self._ranking = ranking
-        self._pdf_gateway = pdf_gateway
+        self._discovery = discovery
         self._evidence_assembler = evidence_assembler
         self._trust_annotator = trust_annotator
         self._answerability = answerability
-        self._source_registry = source_registry
+        self._seed_store = seed_store
         self._clock = clock
         self._deadline_ms = deadline_ms
+        self._seed_ttl_seconds = seed_ttl_seconds
+
+    @staticmethod
+    def _failure(value) -> FailureDetail:
+        return FailureDetail(
+            stage=value.stage,
+            source=value.source,
+            type=value.type,
+            code=value.code,
+            message=value.message,
+            retryable=value.recoverable,
+        )
+
+    @staticmethod
+    def _requested_filters(command: SearchCommand) -> RequestedFilters:
+        filters = command.filters
+        return RequestedFilters(
+            published_from=filters.published_from,
+            published_to=filters.published_to,
+            languages=list(filters.languages),
+            jurisdictions=list(filters.jurisdictions),
+        )
+
+    @staticmethod
+    def _filter_execution(command: SearchCommand, batches) -> dict[str, SourceFilterExecution]:
+        requested = SearchService._requested_filters(command).model_dump(
+            mode="json", exclude_none=True
+        )
+        kinds = command.source_types or ("web", "academic", "patent")
+        result: dict[str, SourceFilterExecution] = {}
+        for kind in kinds:
+            relevant = [batch for batch in batches if batch.source.kind == kind]
+            executions = [
+                batch.diagnostics.to_dict().get("applied_request_filters", {})
+                for batch in relevant
+            ]
+            applied: dict[str, object] = {}
+            unsupported: list[str] = []
+            not_applicable: list[str] = []
+            for name, value in requested.items():
+                if value in (None, [], {}):
+                    continue
+                if name == "jurisdictions" and kind in {"web", "academic"}:
+                    not_applicable.append(name)
+                elif relevant and all(
+                    execution.get(name) == value for execution in executions
+                ):
+                    applied[name] = value
+                else:
+                    unsupported.append(name)
+            result[kind] = SourceFilterExecution(
+                applied=applied,
+                unsupported=unsupported,
+                not_applicable=not_applicable,
+            )
+        return result
+
+    @staticmethod
+    def _quality_mix(evidence: list[Evidence]) -> QualityMix:
+        counts = Counter(
+            item.quality.level if item.quality is not None else "unavailable"
+            for item in evidence
+        )
+        return QualityMix(**{
+            name: counts.get(name, 0)
+            for name in ("citable", "limited", "discovery_only", "unavailable")
+        })
 
     def execute(self, command: SearchCommand) -> SearchResponse:
-        trust_mode = (command.trust_mode or "annotate").strip().lower()
-        if trust_mode not in {"off", "annotate"}:
-            raise ValueError("trust_mode 仅支持 off / annotate")
-
-        # 排序冲突属于请求错误，必须在查询改写和外部召回之前失败。
-        ranking_options = self._ranking.resolve(command)
         started = self._clock.monotonic()
-        query_time = self._clock.now()
-        deadline = Deadline.after(self._deadline_ms, self._clock)
-        planned = self._query_planner.plan(
-            command,
-            self._source_registry.ids("web"),
-            academic_available=self._source_registry.has_kind("academic"),
-            patent_available=self._source_registry.has_kind("patent"),
-        )
-        recalled = self._recall.recall(planned, deadline=deadline)
-        ranked = self._ranking.rank(
-            command,
-            planned,
-            recalled,
-            options=ranking_options,
-            deadline=deadline,
-        )
-        pdf = self._pdf_gateway.enrich(
-            ranked.academic,
-            include_pdf_text=command.include_pdf_text,
-            pdf_text_mode=command.pdf_text_mode,
-            pdf_max_results=command.pdf_max_results,
-            pdf_max_chars_per_result=command.pdf_max_chars_per_result,
-            pdf_timeout_ms=command.pdf_timeout_ms,
-            deadline=deadline,
-        )
-
+        outcome = self._discovery.execute(command)
         failures = [
-            *planned.failures,
-            *recalled.failures,
-            *ranked.failures,
-            *pdf.failures,
+            *outcome.planned.failures,
+            *outcome.recalled.failures,
+            *outcome.ranked.failures,
         ]
-        evidence = self._evidence_assembler.assemble(
-            ranked.web,
-            pdf.academic,
-            ranked.patent,
-        )
+        academic = [
+            EnrichedDocument.from_result(item, item.to_result())
+            for item in outcome.ranked.academic
+        ]
+        assembled = self._evidence_assembler.assemble(
+            outcome.ranked.web,
+            academic,
+            outcome.ranked.patent,
+        )[: command.limit]
         trust = self._trust_annotator.annotate(
-            mode=trust_mode,
-            query=planned.plan.normalized_query,
-            planned_sources=recalled.planned_sources,
-            evidence=evidence,
-            query_time=query_time,
-            candidate_budget=recalled.candidate_budget,
+            mode="annotate",
+            query=outcome.planned.plan.normalized_query,
+            planned_sources=outcome.recalled.planned_sources,
+            evidence=assembled,
+            query_time=outcome.query_time,
+            candidate_budget=outcome.recalled.candidate_budget,
             source_snapshots={
-                batch.source.id: batch.snapshot for batch in recalled.batches
+                batch.source.id: batch.snapshot for batch in outcome.recalled.batches
             },
         )
+        evidence = list(trust.evidence)
         answerability = self._answerability.evaluate(
-            trust.evidence,
+            evidence,
             failures,
-            expected_web=bool(planned.active_provider_names),
-            expected_academic=planned.plan.academic,
-            expected_patent=planned.plan.patent,
-            include_pdf_text=command.include_pdf_text,
+            expected_web=bool(outcome.planned.active_provider_names),
+            expected_academic=outcome.planned.do_academic,
+            expected_patent=outcome.planned.do_patent,
+            include_pdf_text=False,
         )
+        assessment = RetrievalAssessment(
+            status={
+                "answerable": "usable",
+                "partial": "limited",
+                "not_answerable": "unusable",
+            }[answerability.status],
+            quality_mix=self._quality_mix(evidence),
+            gaps=answerability.gaps,
+        )
+        filter_execution = self._filter_execution(command, outcome.recalled.batches)
+        query = SearchQuery(
+            original=command.query,
+            effective=(
+                outcome.planned.plan.rewritten_query
+                or outcome.planned.plan.normalized_query
+            ),
+            filters_requested=self._requested_filters(command),
+            filter_execution=filter_execution,
+        )
+        batch_limitations = sorted({
+            str(item)
+            for batch in outcome.recalled.batches
+            for item in batch.diagnostics.to_dict().get("limitations", [])
+        })
+        if any(item.unsupported for item in filter_execution.values()):
+            batch_limitations.append("REQUESTED_FILTER_PARTIALLY_UNSUPPORTED")
+        licenses = sorted({
+            str(batch.diagnostics.to_dict().get("data_license", "unspecified"))
+            for batch in outcome.recalled.batches
+        }) or ["unspecified"]
+        boundary = RetrievalBoundary(
+            query_time=outcome.query_time,
+            languages=(
+                list(command.filters.languages)
+                or sorted({item.language for item in evidence if item.language})
+            ),
+            jurisdictions=list(command.filters.jurisdictions),
+            license_scope=licenses,
+            candidate_limit=outcome.recalled.candidate_budget,
+            deadline_ms=self._deadline_ms,
+            source_snapshot={
+                batch.source.id: batch.snapshot for batch in outcome.recalled.batches
+            },
+            limitations=sorted(set(batch_limitations)),
+        )
+        public_failures = [self._failure(item) for item in failures]
+        snapshot = SearchSeedSnapshot(
+            query=query,
+            evidence=evidence,
+            retrieval_assessment=assessment,
+            retrieval_boundary=boundary,
+            failures=public_failures,
+        )
+        seed = None
+        try:
+            seed = self._seed_store.save(
+                snapshot,
+                ttl_seconds=self._seed_ttl_seconds,
+            )
+        except Exception:
+            public_failures.append(FailureDetail(
+                stage="seed_store",
+                source="search_seed_store",
+                code="SEARCH_SEED_UNAVAILABLE",
+                message="研究种子暂时不可用；搜索结果仍可使用。",
+                retryable=True,
+            ))
 
+        counts = Counter(item.type for item in evidence)
         return SearchResponse(
-            query=command.query,
-            normalized_query=planned.plan.normalized_query,
-            rewritten_query=planned.plan.rewritten_query,
-            recency=planned.plan.recency,
-            time_sensitive=planned.plan.time_sensitive,
-            evidence=list(trust.evidence),
-            partial_failure=bool(failures),
-            failures=failures,
-            answerability=answerability,
-            trust_mode=trust_mode,
-            search_boundary=trust.search_boundary,
-            count=len(trust.evidence),
-            providers_used=list(recalled.providers_used),
-            reranker=ranked.reranker,
-            ranking_profile=ranked.options.profile,
-            rerank_threshold=ranked.options.threshold,
-            rerank_threshold_mode=ranked.options.threshold_mode,
-            ranking_warnings=list(ranked.options.warnings),
-            elapsed_ms=int((self._clock.monotonic() - started) * 1000),
+            request_id="req_" + secrets.token_urlsafe(12),
+            status="partial" if public_failures else "complete",
+            research_seed=seed,
+            query=query,
+            evidence=evidence,
+            result_set=SearchResultSet(
+                returned=len(evidence),
+                limit=command.limit,
+                counts_by_type=dict(counts),
+            ),
+            retrieval_assessment=assessment,
+            retrieval_boundary=boundary,
+            failures=public_failures,
+            meta=SearchMeta(
+                elapsed_ms=int((self._clock.monotonic() - started) * 1000)
+            ),
         )

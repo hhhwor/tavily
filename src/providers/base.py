@@ -35,6 +35,24 @@ class SearchProvider(ABC):
     def actual_filters(self, request: RetrievalRequest) -> Mapping[str, Any]:
         return {"recency": request.recency} if request.recency else {}
 
+    def applied_request_filters(
+        self,
+        request: RetrievalRequest,
+    ) -> Mapping[str, Any]:
+        """Return only canonical public filters this adapter applies exactly."""
+        capabilities = self.descriptor.capabilities
+        applied: dict[str, Any] = {}
+        if "time_range_filter" in capabilities:
+            if request.time_from is not None:
+                applied["published_from"] = request.time_from.date().isoformat()
+            if request.time_to is not None:
+                applied["published_to"] = request.time_to.date().isoformat()
+        if request.languages and "language_filter" in capabilities:
+            applied["languages"] = list(request.languages)
+        if request.jurisdictions and "jurisdiction_filter" in capabilities:
+            applied["jurisdictions"] = list(request.jurisdictions)
+        return applied
+
     def snapshot(self, request: RetrievalRequest) -> str:
         return self.descriptor.default_snapshot
 
@@ -51,10 +69,20 @@ class SearchProvider(ABC):
         capabilities = self.descriptor.capabilities
         if request.language and "language_filter" not in capabilities:
             limitations.append("LANGUAGE_FILTER_UNSUPPORTED")
-        if request.jurisdiction and "jurisdiction_filter" not in capabilities:
+        if (
+            request.jurisdiction
+            and self.descriptor.kind == "patent"
+            and "jurisdiction_filter" not in capabilities
+        ):
             limitations.append("JURISDICTION_FILTER_UNSUPPORTED")
-        if request.time_from and not ({"time_range_filter", "recency_filter"} & capabilities):
-            limitations.append("TIME_FILTER_UNSUPPORTED")
+        if request.time_from or request.time_to:
+            required = (
+                {"time_range_filter", "recency_filter"}
+                if request.recency
+                else {"time_range_filter"}
+            )
+            if not (required & capabilities):
+                limitations.append("TIME_FILTER_UNSUPPORTED")
         return tuple(limitations)
 
     def retrieve(self, request: RetrievalRequest) -> RetrievalBatch:
@@ -92,5 +120,6 @@ class SearchProvider(ABC):
             diagnostics=FrozenMap.from_mapping({
                 "limitations": self.limitations(request),
                 "data_license": self.descriptor.data_license,
+                "applied_request_filters": self.applied_request_filters(request),
             }),
         )

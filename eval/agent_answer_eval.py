@@ -19,7 +19,7 @@ _ANSWER_PROMPT = """你是技术情报 agent。给定用户任务和搜索结果
 - 用中文输出一份紧凑但完整的技术尽调/研发情报报告
 - 覆盖: 结论摘要、学术研究证据、专利布局、产业/市场信号、机会、风险、下一步建议
 - 每个关键判断尽量带引用标记,例如 [web1]、[academic2]、[patent3]
-- 必须先检查 answerability.gaps 和 failures;有缺口时在对应章节明确说明,不要把 partial evidence 当完整证据
+- 必须先检查 retrieval_assessment.gaps 和 failures;有缺口时在对应章节明确说明,不要把 discovery evidence 当完整证据
 - 如果某类证据不足,必须明确说明证据缺口,不要编造
 - 如果 evidence[] 中没有 type=academic,不得把 web 文章包装成论文证据;对应章节必须写明未检索到可核验学术论文
 - 如果 evidence[] 中没有 type=patent,不得把 web 文章包装成专利证据;对应章节必须写明未检索到可核验专利

@@ -96,10 +96,22 @@ class TencentSearchProvider(SearchProvider):
 
     def actual_filters(self, request: RetrievalRequest) -> Dict[str, Any]:
         filters: Dict[str, Any] = {}
-        if request.recency and request.time_from and request.time_to:
+        if request.time_from and request.time_to:
             filters["FromTime"] = int(request.time_from.timestamp())
             filters["ToTime"] = int(request.time_to.timestamp())
         return filters
+
+    def applied_request_filters(
+        self,
+        request: RetrievalRequest,
+    ) -> Dict[str, Any]:
+        # SearchPro 当前适配器只在起止边界齐全时下传时间窗口。
+        if request.time_from is None or request.time_to is None:
+            return {}
+        return {
+            "published_from": request.time_from.date().isoformat(),
+            "published_to": request.time_to.date().isoformat(),
+        }
 
     def search(self, query: str, top_k: int = 10, recency: Optional[str] = None) -> List[SearchResult]:
         return self._search(query, top_k, recency, request=None)

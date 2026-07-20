@@ -9,7 +9,7 @@ import pytest
 
 from src.application.commands import SearchCommand
 from src.application.outcomes import (
-    PdfEnrichmentOutcome,
+    DiscoveryOutcome,
     PlannedQuery,
     RankingOutcome,
     RecallOutcome,
@@ -130,18 +130,14 @@ def test_recall_converts_provider_exception_to_stage_failure():
 
 def test_ranking_noop_disables_threshold_without_partial_failure():
     service = RankingService(
-        _settings(ranking_profile="quality", rerank_threshold_mode="prefer"),
+        _settings(ranking_profile="quality", rerank_threshold_mode="strict"),
         NoOpReranker(),
         lambda *_: NoOpReranker(),
         _InlineExecutor(),
         clock=SystemClock(),
     )
     outcome = service.rank(
-        SearchCommand(
-            "query",
-            ranking_profile="quality",
-            rerank_threshold_mode="strict",
-        ),
+        SearchCommand("query"),
         _planned(),
         RecallOutcome(web=(SearchResult(url="u", title="doc"),)),
     )
@@ -178,7 +174,7 @@ def test_search_service_owns_stage_order_and_failure_order():
     trace = []
     failures = [
         SearchFailure(stage=stage, code=stage.upper())
-        for stage in ("plan", "recall", "rank", "pdf")
+        for stage in ("plan", "recall", "rank")
     ]
     planned = PlannedQuery(
         plan=SearchPlan(raw_query="q", normalized_query="q", top_k=2),
@@ -194,29 +190,15 @@ def test_search_service_owns_stage_order_and_failure_order():
     )
     ranked = RankingOutcome(options=options, reranker="none", failures=(failures[2],))
 
-    class Planner:
-        def plan(self, *args, **kwargs):
-            trace.append("plan")
-            return planned
-
-    class Recall:
-        def recall(self, value, *, deadline=None):
-            trace.append("recall")
-            return recalled
-
-    class Ranking:
-        def resolve(self, command):
-            trace.append("resolve")
-            return options
-
-        def rank(self, command, plan, recall, *, options, deadline=None):
-            trace.append("rank")
-            return ranked
-
-    class Pdf:
-        def enrich(self, *args, **kwargs):
-            trace.append("pdf")
-            return PdfEnrichmentOutcome(failures=(failures[3],))
+    class Discovery:
+        def execute(self, command):
+            trace.append("discovery")
+            return DiscoveryOutcome(
+                query_time=SystemClock().now(),
+                planned=planned,
+                recalled=recalled,
+                ranked=ranked,
+            )
 
     class Evidence:
         def assemble(self, *args):
@@ -233,25 +215,36 @@ def test_search_service_owns_stage_order_and_failure_order():
             trace.append("answer")
             return Answerability()
 
+    class SeedStore:
+        def save(self, snapshot, *, ttl_seconds):
+            from datetime import timedelta
+            from src.domain.search_api import SearchSeed
+
+            trace.append("seed")
+            now = SystemClock().now()
+            return SearchSeed(
+                search_id="srch_test",
+                created_at=now,
+                expires_at=now + timedelta(seconds=ttl_seconds),
+                evidence_count=len(snapshot.evidence),
+                seed_snapshot_hash="sha256:test",
+            )
+
     service = SearchService(
-        query_planner=Planner(),
-        recall=Recall(),
-        ranking=Ranking(),
-        pdf_gateway=Pdf(),
+        discovery=Discovery(),
         evidence_assembler=Evidence(),
         trust_annotator=Trust(),
         answerability=Policy(),
-        source_registry=SourceRegistry(),
+        seed_store=SeedStore(),
         clock=SystemClock(),
         deadline_ms=30000,
+        seed_ttl_seconds=60,
     )
-    response = service.execute(SearchCommand("q", trust_mode="off"))
+    response = service.execute(SearchCommand("q"))
 
-    assert trace == [
-        "resolve", "plan", "recall", "rank", "pdf", "evidence", "trust", "answer"
-    ]
+    assert trace == ["discovery", "evidence", "trust", "answer", "seed"]
     assert [failure.code for failure in response.failures] == [
-        "PLAN", "RECALL", "RANK", "PDF"
+        "PLAN", "RECALL", "RANK"
     ]
 
 

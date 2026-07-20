@@ -111,7 +111,7 @@ def test_ranking_uses_ephemeral_dtos_and_preserves_source_attributions():
     )
 
     outcome = service.rank(
-        SearchCommand("query", ranking_profile="fast"),
+        SearchCommand("query"),
         planned,
         RecallOutcome(web=(first, second)),
     )

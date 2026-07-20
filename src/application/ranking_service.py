@@ -126,11 +126,7 @@ class RankingService:
             if options.text_scoring_enabled == default_text_scoring
             else options.text_scoring_enabled
         )
-        scorer = self._select_text_scorer(
-            enabled_override,
-            command.rerank_backend,
-            command.rerank_model,
-        )
+        scorer = self._select_text_scorer(enabled_override, None, None)
         if not scorer.supports_text_scoring and options.threshold_mode != "off":
             options = options.disable_threshold("THRESHOLD_SKIPPED_NO_SCORER")
 
@@ -362,16 +358,16 @@ class RankingService:
             failures=tuple(failures),
         )
 
-    def resolve(self, command: SearchCommand) -> RankingOptions:
-        """在执行任何检索 I/O 前解析并校验请求排序选项。"""
+    def resolve(self, command: SearchCommand | None = None) -> RankingOptions:
+        """解析服务端固定排序策略；调用方不能覆盖模型或阈值。"""
         return resolve_ranking_options(
             default_profile=self._settings.ranking_profile,
             default_threshold=self._settings.rerank_threshold,
             default_threshold_mode=self._settings.rerank_threshold_mode,
-            ranking_profile=command.ranking_profile,
-            rerank_enabled=command.rerank_enabled,
-            fusion_enabled=command.fusion_enabled,
-            rerank_backend=command.rerank_backend or self._settings.rerank_backend,
-            rerank_threshold=command.rerank_threshold,
-            rerank_threshold_mode=command.rerank_threshold_mode,
+            ranking_profile=None,
+            rerank_enabled=None,
+            fusion_enabled=None,
+            rerank_backend=self._settings.rerank_backend,
+            rerank_threshold=None,
+            rerank_threshold_mode=None,
         )

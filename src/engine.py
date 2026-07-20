@@ -1,127 +1,110 @@
-"""兼容搜索门面；真实用例编排位于 ``src.application``。"""
+"""Public in-process facade for the two supported capabilities."""
 from __future__ import annotations
 
-from typing import Any, Optional, Sequence
+from typing import Any, Sequence
 
-from src.application.commands import SearchCommand
-from src.application.ports.pdf_text import PdfTextGateway
+from src.application.commands import (
+    ResearchCommand,
+    ResearchFeedbackCommand,
+    SearchCommand,
+    SearchFilters,
+)
+from src.application.research_service import ResearchService
 from src.application.search_service import SearchService
-from src.application.verify_service import VerifyService
 from src.config import Settings
-from src.domain.evidence import Evidence, SearchBoundary
-from src.domain.trust import CandidateClaim
-from src.interfaces.responses import PdfTextResponse, SearchResponse, VerifyResponse
+from src.domain.documents import DocumentKind
+from src.domain.research import ResearchTaskEnvelope
+from src.domain.search_api import SearchResponse
 
 
 class SearchEngine:
-    """保留旧公开签名的薄门面，由 composition root 注入应用用例。"""
+    """Expose only lightweight search and durable research task operations."""
 
     def __init__(
         self,
         *,
         settings: Settings,
         search_service: SearchService,
-        verify_service: VerifyService,
-        pdf_gateway: PdfTextGateway,
+        research_service: ResearchService,
         providers: Sequence[Any],
         academic_provider: Any = None,
         patent_provider: Any = None,
         cache: Any = None,
         text_scorer: Any = None,
         ranking_service: Any = None,
+        claim_verifier: Any = None,
         source_registry: Any = None,
     ) -> None:
         self.settings = settings
         self._search_service = search_service
-        self._verify_service = verify_service
-        self._pdf_gateway = pdf_gateway
+        self._research_service = research_service
         self._ranking_service = ranking_service
         self.source_registry = source_registry
-
-        # 兼容健康检查与既有运维读取；搜索编排不再依赖这些属性。
         self.providers = list(providers)
         self.academic_provider = academic_provider
         self.patent_provider = patent_provider
         self.cache = cache
         self.text_scorer = text_scorer
-        self.claim_verifier = verify_service.verifier
+        self.claim_verifier = claim_verifier
         self._closed = False
 
     def search(
-        self, query: str, top_k: int = 0, include_academic: Optional[bool] = None,
-        include_patent: Optional[bool] = None,
+        self,
+        query: str,
         *,
-        rerank_enabled: Optional[bool] = None,
-        rerank_backend: Optional[str] = None,
-        rerank_model: Optional[str] = None,
-        rerank_threshold: Optional[float] = None,
-        fusion_enabled: Optional[bool] = None,
-        ranking_profile: Optional[str] = None,
-        rerank_threshold_mode: Optional[str] = None,
-        rewrite_enabled: Optional[bool] = None,
-        trust_mode: str = "annotate",
-        include_pdf_text: bool = False,
-        pdf_text_mode: Optional[str] = None,
-        pdf_max_results: Optional[int] = None,
-        pdf_max_chars_per_result: Optional[int] = None,
-        pdf_timeout_ms: Optional[int] = None,
+        limit: int = 10,
+        source_types: tuple[DocumentKind, ...] | None = None,
+        filters: SearchFilters | None = None,
     ) -> SearchResponse:
         return self.execute(SearchCommand(
             query=query,
-            top_k=top_k,
-            include_academic=include_academic,
-            include_patent=include_patent,
-            rerank_enabled=rerank_enabled,
-            rerank_backend=rerank_backend,
-            rerank_model=rerank_model,
-            rerank_threshold=rerank_threshold,
-            fusion_enabled=fusion_enabled,
-            ranking_profile=ranking_profile,
-            rerank_threshold_mode=rerank_threshold_mode,
-            rewrite_enabled=rewrite_enabled,
-            trust_mode=trust_mode,
-            include_pdf_text=include_pdf_text,
-            pdf_text_mode=pdf_text_mode,
-            pdf_max_results=pdf_max_results,
-            pdf_max_chars_per_result=pdf_max_chars_per_result,
-            pdf_timeout_ms=pdf_timeout_ms,
+            limit=limit,
+            source_types=source_types,
+            filters=filters or SearchFilters(),
         ))
 
     def execute(self, command: SearchCommand) -> SearchResponse:
-        """Public use-case entry shared by REST, MCP and in-process clients."""
         return self._search_service.execute(command)
 
-    def verify_claims(
+    def start_research(
         self,
-        query: str,
-        claims: Sequence[CandidateClaim],
-        evidence: Sequence[Evidence],
+        command: ResearchCommand,
         *,
-        profile: str = "general",
-        search_boundary: Optional[SearchBoundary] = None,
-    ) -> VerifyResponse:
-        return self._verify_service.verify(
-            query,
-            claims,
-            evidence,
-            profile=profile,
-            search_boundary=search_boundary,
+        idempotency_key: str,
+    ) -> ResearchTaskEnvelope:
+        return self._research_service.start(
+            command,
+            idempotency_key=idempotency_key,
         )
 
-    def get_pdf_text(
+    def get_research(
         self,
-        work_id: str,
-        cursor: Optional[str] = None,
-        max_chars: Optional[int] = None,
-    ) -> PdfTextResponse:
-        return self._pdf_gateway.read_page(
-            work_id,
-            cursor=cursor,
-            max_chars=max_chars,
+        research_id: str,
+        *,
+        detail: str = "standard",
+    ) -> ResearchTaskEnvelope:
+        return self._research_service.get(research_id, detail=detail)
+
+    def research_feedback(
+        self,
+        research_id: str,
+        command: ResearchFeedbackCommand,
+    ) -> ResearchTaskEnvelope:
+        return self._research_service.feedback(research_id, command)
+
+    def cancel_research(
+        self,
+        research_id: str,
+        *,
+        task_revision: int | None = None,
+    ) -> ResearchTaskEnvelope:
+        return self._research_service.cancel(
+            research_id,
+            task_revision=task_revision,
         )
 
     def close(self) -> None:
-        """释放 Engine 自有适配器；共享 HTTP/Executor 仍由 Container 关闭。"""
+        """Release adapter resources; stores/executors are owned by Container."""
         if self._closed:
             return
         self._closed = True
