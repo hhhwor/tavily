@@ -56,7 +56,7 @@ def test_planner_preserves_l0_normalization_detection_and_default_top_k():
     )
 
     assert planned.plan.normalized_query == "最新 AI 论文和专利"
-    assert planned.plan.recency == "month"
+    assert planned.plan.recency is None
     assert planned.plan.time_sensitive is True
     assert planned.plan.top_k == 10
     assert planned.active_provider_names == ("tencent", "baidu")
@@ -65,6 +65,44 @@ def test_planner_preserves_l0_normalization_detection_and_default_top_k():
     assert planned.search_query == "最新 AI 论文和专利"
     assert planned.academic_query == planned.search_query
     assert planned.failures == ()
+
+
+@pytest.mark.parametrize(
+    ("query", "expected_recency"),
+    [
+        ("今天的 AI 新闻", "day"),
+        ("本周发布的 AI 论文", "week"),
+        ("本月公开的电池专利", "month"),
+        ("今年的机器人研究", "year"),
+        ("近五年的电池专利", "year"),
+    ],
+)
+def test_planner_keeps_explicit_query_windows_as_hard_recency(
+    query,
+    expected_recency,
+):
+    planned = QueryPlanner(_settings()).plan(
+        SearchCommand(query),
+        ("baidu",),
+        academic_available=True,
+        patent_available=True,
+    )
+
+    assert planned.plan.recency == expected_recency
+    assert planned.plan.time_sensitive is True
+
+
+@pytest.mark.parametrize("query", ["近年的 AI 进展", "实时股票行情", "前沿机器人技术"])
+def test_planner_treats_general_freshness_as_ranking_preference(query):
+    planned = QueryPlanner(_settings()).plan(
+        SearchCommand(query),
+        ("baidu",),
+        academic_available=True,
+        patent_available=True,
+    )
+
+    assert planned.plan.recency is None
+    assert planned.plan.time_sensitive is True
 
 
 def test_planner_forwards_request_overrides_to_l0():

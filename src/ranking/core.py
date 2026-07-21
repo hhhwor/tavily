@@ -29,7 +29,8 @@ _DATE_PATTERNS = [
     re.compile(r"(\d{4})年(\d{1,2})月(\d{1,2})日"),
 ]
 _RECENT_QUERY_RE = re.compile(
-    r"\b(latest|recent|newest|state of the art|sota|202\d)\b|最新|最近|近年|近期|202\d"
+    r"\b(latest|recent|newest|state[- ]of[- ]the[- ]art|sota|202\d)\b|"
+    r"最新|最近|近年|近期|实时|前沿|202\d"
 )
 _FOUNDATIONAL_QUERY_RE = re.compile(
     r"\b(survey|review|benchmark|foundation|foundational|seminal)\b|综述|综述性|基准|经典"

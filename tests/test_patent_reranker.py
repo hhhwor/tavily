@@ -2,6 +2,8 @@
 import os
 import sys
 
+import pytest
+
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from src.models import PatentResult
@@ -112,6 +114,11 @@ def test_patent_reranker_boosts_recent_patents_for_recent_queries():
     ctx = build_rerank_context("latest robot arm patent", time_sensitive=True)
     out = rr.rerank_with_context("latest robot arm patent", patents, top_k=2, ctx=ctx)
     assert [p.publication_number for p in out] == ["new", "old"]
+
+
+@pytest.mark.parametrize("query", ["实时机器人专利", "前沿机器人专利"])
+def test_soft_freshness_terms_reach_reranking_context(query):
+    assert build_rerank_context(query, time_sensitive=True).wants_recent is True
 
 
 if __name__ == "__main__":

@@ -14,13 +14,25 @@ from src.domain.search import SearchPlan
 
 MAX_QUERY_LEN = 512
 
-_RECENCY_RULES = [
+_DURATION_COUNT = r"(?:\d{1,2}|[一二两三四五六七八九十]{1,3})"
+_HARD_RECENCY_RULES = [
     (re.compile(r"今天|今日|\btoday\b", re.I), "day"),
     (re.compile(r"本周|这周|近.{0,2}周|过去.{0,2}周|最近几天|this week|past week", re.I), "week"),
     (re.compile(r"本月|近.{0,2}个?月|最近.{0,2}个?月|this month|past month", re.I), "month"),
-    (re.compile(r"今年|近.{0,2}年|过去.{0,2}年|this year", re.I), "year"),
-    (re.compile(r"最新|最近|近期|实时|latest|recent|newest", re.I), "month"),
+    (
+        re.compile(
+            rf"今年|近\s*{_DURATION_COUNT}\s*年|过去\s*{_DURATION_COUNT}\s*年|"
+            r"\bthis year\b|\bpast year\b",
+            re.I,
+        ),
+        "year",
+    ),
 ]
+_FRESHNESS_RULE = re.compile(
+    r"\b(latest|recent|newest|state of the art|sota)\b|"
+    r"最新|最近|近年|近期|实时|前沿",
+    re.I,
+)
 _YEAR = re.compile(r"\b20\d{2}\b")
 _ACADEMIC_RULES = re.compile(
     r"论文|文献|综述|预印本|期刊|学术|被引|引文|研究综述|发表|"
@@ -45,10 +57,16 @@ def normalize(query: str) -> str:
 
 
 def detect_recency(query: str) -> Optional[str]:
-    for pattern, bucket in _RECENCY_RULES:
+    """只返回应转成检索硬过滤的明确时间窗口。"""
+    for pattern, bucket in _HARD_RECENCY_RULES:
         if pattern.search(query):
             return bucket
     return None
+
+
+def detect_freshness(query: str) -> bool:
+    """识别排序偏新意图；它本身不得生成日期过滤。"""
+    return bool(_FRESHNESS_RULE.search(query))
 
 
 def detect_academic(query: str) -> bool:
@@ -155,7 +173,11 @@ def plan_query(
         normalized_query=normalized,
         rewritten_query=rewritten,
         recency=recency,
-        time_sensitive=recency is not None or bool(_YEAR.search(normalized)),
+        time_sensitive=(
+            recency is not None
+            or detect_freshness(normalized)
+            or bool(_YEAR.search(normalized))
+        ),
         academic=academic,
         patent=patent,
         providers=list(providers),

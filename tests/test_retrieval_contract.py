@@ -16,6 +16,7 @@ from src.application.search_service import SearchService
 from src.application.source_registry import SourceRegistry
 from src.application.trust_annotator import TrustAnnotator
 from src.config import Settings
+from src.l0 import plan_query
 from src.models import SearchPlan, SearchResult
 from src.providers.baidu import BaiduSearchProvider
 from src.providers.base import SearchProvider
@@ -33,6 +34,14 @@ class _InlineExecutor:
         except BaseException as exc:
             future.set_exception(exc)
         return future
+
+
+class _ForbiddenCache:
+    def get(self, key):
+        raise AssertionError(f"fresh query must not read cache: {key}")
+
+    def set(self, key, value, ttl):
+        raise AssertionError(f"fresh query must not write cache: {key}")
 
 
 class _Source(SearchProvider):
@@ -66,16 +75,18 @@ class _Source(SearchProvider):
         ]
 
 
-def _settings() -> Settings:
-    return Settings(
-        openalex_enabled=False,
-        patent_es_enabled=False,
-        ranking_profile="fast",
-        rerank_threshold_mode="off",
-        per_provider_k=4,
-        cache_enabled=False,
-        mcp_mode="false",
-    )
+def _settings(**overrides) -> Settings:
+    values = {
+        "openalex_enabled": False,
+        "patent_es_enabled": False,
+        "ranking_profile": "fast",
+        "rerank_threshold_mode": "off",
+        "per_provider_k": 4,
+        "cache_enabled": False,
+        "mcp_mode": "false",
+    }
+    values.update(overrides)
+    return Settings(**values)
 
 
 def test_registry_routes_by_descriptor_kind_and_preserves_actual_boundary():
@@ -155,6 +166,50 @@ def test_registry_routes_by_descriptor_kind_and_preserves_actual_boundary():
     assert trust.search_boundary.source_snapshot["custom-web"] == (
         "snapshot:custom-web"
     )
+
+
+def test_soft_freshness_bypasses_cache_without_creating_hard_time_windows():
+    web = _Source("custom-web", "web")
+    academic = _Source("papers-v2", "academic")
+    patent = _Source("inventions-v3", "patent")
+    coordinator = RecallCoordinator(
+        _settings(cache_enabled=True),
+        SourceRegistry([web, academic, patent]),
+        _ForbiddenCache(),
+        _InlineExecutor(),
+        clock=lambda: datetime(2026, 7, 21, 12, 0, tzinfo=timezone.utc),
+    )
+    query = "固态电池硫化物电解质 界面稳定性 最新进展"
+    plan = plan_query(
+        query,
+        ["custom-web"],
+        force_academic=True,
+        force_patent=True,
+    )
+    planned = PlannedQuery(
+        plan=plan,
+        search_query=query,
+        academic_query="solid-state battery sulfide electrolyte interface stability",
+        active_provider_names=("custom-web",),
+        do_academic=True,
+        do_patent=True,
+    )
+
+    outcome = coordinator.recall(planned)
+
+    assert plan.recency is None
+    assert plan.time_sensitive is True
+    assert web.calls == [(query, 4, None)]
+    assert academic.calls == [(
+        "solid-state battery sulfide electrolyte interface stability",
+        4,
+        None,
+    )]
+    assert patent.calls == [(query, 4, None)]
+    for batch in outcome.batches:
+        actual = batch.actual_filters.to_dict()
+        assert actual["time_from"] is None
+        assert actual["time_to"] is None
 
 
 def test_registry_rejects_duplicate_ids_and_exposes_capabilities():
