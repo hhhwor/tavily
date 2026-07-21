@@ -1,15 +1,33 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import time
+from datetime import datetime, timezone
+from types import SimpleNamespace
 
 import pytest
 from fastapi.testclient import TestClient
 
-from src.application.ports.search_seed import SearchSeedIntegrityError
+from src.application.ports.search_seed import (
+    SearchSeedIntegrityError,
+    search_seed_snapshot_hash_matches,
+)
+from src.application.commands import ResearchCommand
+from src.application.research_service import ResearchService
 from src.api import create_app
 from src.bootstrap import build_container
 from src.config import Settings
+from src.domain.evidence import AnswerabilityGap
+from src.domain.research import ResearchScope
+from src.domain.search_api import (
+    RequestedFilters,
+    RetrievalAssessment,
+    RetrievalBoundary,
+    SearchQuery,
+    SearchSeedSnapshot,
+)
+from src.domain.trust import CandidateClaim, ClaimAssessment
 
 
 def _settings(path: str) -> Settings:
@@ -22,6 +40,113 @@ def _settings(path: str) -> Settings:
         state_db_path=path,
         research_max_workers=1,
     )
+
+
+def _seed_snapshot(**updates) -> SearchSeedSnapshot:
+    snapshot = SearchSeedSnapshot(
+        query=SearchQuery(
+            original="query",
+            effective="query",
+            filters_requested=RequestedFilters(),
+        ),
+        evidence=[],
+        retrieval_assessment=RetrievalAssessment(),
+        retrieval_boundary=RetrievalBoundary(
+            query_time=datetime.now(timezone.utc),
+            deadline_ms=30_000,
+        ),
+    )
+    return snapshot.model_copy(update=updates)
+
+
+def test_research_scope_prefers_requested_then_planned_sources_and_supports_old_seeds():
+    requested = _seed_snapshot(
+        requested_source_types=["web", "academic", "patent"],
+        planned_source_types=["web"],
+    )
+    scope = ResearchService._resolve_scope(
+        ResearchCommand(search_id="srch_requested"),
+        SimpleNamespace(snapshot=requested),
+    )
+    assert scope.source_types == ["web", "academic", "patent"]
+
+    planned = _seed_snapshot(planned_source_types=["academic", "patent"])
+    scope = ResearchService._resolve_scope(
+        ResearchCommand(search_id="srch_planned"),
+        SimpleNamespace(snapshot=planned),
+    )
+    assert scope.source_types == ["academic", "patent"]
+
+    legacy = _seed_snapshot(
+        retrieval_assessment=RetrievalAssessment(gaps=[
+            AnswerabilityGap(
+                code="NO_ACADEMIC_EVIDENCE",
+                message="missing academic",
+                type="academic",
+            ),
+            AnswerabilityGap(
+                code="NO_PATENT_EVIDENCE",
+                message="missing patent",
+                type="patent",
+            ),
+        ]),
+    )
+    scope = ResearchService._resolve_scope(
+        ResearchCommand(search_id="srch_legacy"),
+        SimpleNamespace(snapshot=legacy),
+    )
+    assert scope.source_types == ["academic", "patent"]
+
+    explicit = ResearchScope(source_types=["web"])
+    scope = ResearchService._resolve_scope(
+        ResearchCommand(search_id="srch_explicit", scope=explicit),
+        SimpleNamespace(snapshot=requested),
+    )
+    assert scope is explicit
+
+
+def test_legacy_seed_hash_is_accepted_only_when_source_intent_fields_were_absent():
+    payload = _seed_snapshot().model_dump(mode="json")
+    payload.pop("requested_source_types")
+    payload.pop("planned_source_types")
+    canonical = json.dumps(
+        payload,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    legacy_hash = "sha256:" + hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+    legacy = SearchSeedSnapshot.model_validate(payload)
+    assert search_seed_snapshot_hash_matches(legacy, legacy_hash) is True
+
+    payload["requested_source_types"] = ["web"]
+    tampered = SearchSeedSnapshot.model_validate(payload)
+    assert search_seed_snapshot_hash_matches(tampered, legacy_hash) is False
+
+
+def test_counterevidence_gap_is_removed_only_for_searched_claims():
+    assessments = [
+        ClaimAssessment(
+            claim=CandidateClaim(id="claim_1", text="claim one"),
+            gaps=["NO_SUPPORTING_EVIDENCE", "COUNTEREVIDENCE_NOT_SEARCHED"],
+        ),
+        ClaimAssessment(
+            claim=CandidateClaim(id="claim_2", text="claim two"),
+            gaps=["COUNTEREVIDENCE_NOT_SEARCHED"],
+        ),
+    ]
+
+    updated = ResearchService._apply_counterevidence_status(
+        assessments,
+        {"claim_1"},
+    )
+
+    assert updated[0].counterevidence_searched is True
+    assert updated[0].gaps == ["NO_SUPPORTING_EVIDENCE"]
+    assert updated[1].counterevidence_searched is False
+    assert updated[1].gaps == ["COUNTEREVIDENCE_NOT_SEARCHED"]
+    assert assessments[0].counterevidence_searched is False
 
 
 def test_search_seed_to_research_dossier_lifecycle(tmp_path):
@@ -63,6 +188,7 @@ def test_search_seed_to_research_dossier_lifecycle(tmp_path):
         fixed_seed = container.research_store.get_seed(research_id)
         assert fixed_seed.query.original == request["objective"]["question"]
         assert len(fixed_seed.evidence) == search_body["research_seed"]["evidence_count"]
+        assert fixed_seed.requested_source_types == ["web"]
 
         # 同一 key + 同一请求返回同一资源，不重复创建任务。
         repeated = client.post(
@@ -102,6 +228,11 @@ def test_search_seed_to_research_dossier_lifecycle(tmp_path):
         assert task["dossier"]["assessment"]["overall"] == "insufficient"
         assert "trust_score" not in task["dossier"]["assessment"]
         assert task["progress"]["rounds_completed"] == 1
+        assert len(task["dossier"]["query_trace"]) == 2
+        finding = task["dossier"]["findings"][0]["assessment"]
+        assert finding["counterevidence_searched"] is False
+        assert "COUNTEREVIDENCE_NOT_SEARCHED" in finding["gaps"]
+        assert task["stop"]["reason"] == "information_gain_saturated"
 
         assert container.research_store.cancel_requested(research_id) is False
         stale_cancel = client.post(

@@ -13,6 +13,7 @@ from src.application.ports.search_seed import (
     SearchSeedNotFound,
     StoredSearchSeed,
     search_seed_snapshot_hash,
+    search_seed_snapshot_hash_matches,
 )
 from src.domain.search_api import SearchSeed, SearchSeedSnapshot
 
@@ -98,7 +99,7 @@ class SqliteSearchSeedStore:
                 )
             raise SearchSeedExpired(search_id)
         snapshot = SearchSeedSnapshot.model_validate_json(row["payload"])
-        if search_seed_snapshot_hash(snapshot) != row["snapshot_hash"]:
+        if not search_seed_snapshot_hash_matches(snapshot, row["snapshot_hash"]):
             raise SearchSeedIntegrityError(search_id)
         return StoredSearchSeed(
             seed=SearchSeed(

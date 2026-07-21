@@ -22,7 +22,7 @@ from src.application.ports.runtime import Clock, Deadline
 from src.application.ports.search_seed import (
     SearchSeedIntegrityError,
     SearchSeedStore,
-    search_seed_snapshot_hash,
+    search_seed_snapshot_hash_matches,
 )
 from src.application.research_dispatcher import ResearchDispatcher
 from src.application.trust_annotator import TrustAnnotator
@@ -153,7 +153,21 @@ class ResearchService:
                 from_date=filters.published_from,
                 to_date=filters.published_to,
             )
-        source_types = list(dict.fromkeys(item.type for item in seed.snapshot.evidence))
+        snapshot = seed.snapshot
+        if snapshot.requested_source_types is not None:
+            source_types = list(snapshot.requested_source_types)
+        elif snapshot.planned_source_types:
+            source_types = list(snapshot.planned_source_types)
+        else:
+            # 兼容没有来源意图字段的旧 seed。缺失来源 gap 代表该来源原本被
+            # 规划过，不能因为最终 Top-K 没留下该类型就把 research 锁死。
+            source_types = [item.type for item in snapshot.evidence]
+            source_types.extend(
+                gap.type
+                for gap in snapshot.retrieval_assessment.gaps
+                if gap.type is not None
+            )
+        source_types = list(dict.fromkeys(source_types))
         return ResearchScope(
             source_types=source_types or None,
             time=time_scope,
@@ -404,6 +418,26 @@ class ResearchService:
         )]
 
     @staticmethod
+    def _apply_counterevidence_status(
+        assessments: Sequence[ClaimAssessment],
+        searched_claim_ids: set[str],
+    ) -> list[ClaimAssessment]:
+        updated: list[ClaimAssessment] = []
+        for item in assessments:
+            searched = item.claim.id in searched_claim_ids
+            gaps = list(item.gaps)
+            if searched:
+                gaps = [
+                    gap for gap in gaps
+                    if gap != "COUNTEREVIDENCE_NOT_SEARCHED"
+                ]
+            updated.append(item.model_copy(update={
+                "counterevidence_searched": searched,
+                "gaps": gaps,
+            }))
+        return updated
+
+    @staticmethod
     def _search_filters(scope: ResearchScope) -> SearchFilters:
         return SearchFilters(
             published_from=scope.time.from_date if scope.time else None,
@@ -611,7 +645,10 @@ class ResearchService:
             resolved = task.resolved
             assert resolved is not None
             seed_snapshot = self._task_store.get_seed(research_id)
-            if search_seed_snapshot_hash(seed_snapshot) != task.seed_snapshot_hash:
+            if not search_seed_snapshot_hash_matches(
+                seed_snapshot,
+                task.seed_snapshot_hash,
+            ):
                 raise SearchSeedIntegrityError(task.seed_search_id)
             evidence = [
                 item for item in seed_snapshot.evidence
@@ -621,7 +658,7 @@ class ResearchService:
             query_trace = [seed_snapshot.query.effective]
             snapshots = dict(seed_snapshot.retrieval_boundary.source_snapshot)
             failures: list[SearchFailure] = []
-            rounds = 1
+            rounds_completed = 0
             deep_reads = 0
             budget = resolved.budget
             assert budget.max_rounds and budget.max_candidates is not None
@@ -629,13 +666,18 @@ class ResearchService:
             deadline = Deadline.after(budget.deadline_ms, self._clock)
             claims = self._claims(resolved)
             expansion_queries = [
-                f"{claim.text} 反例 争议 limitation counter evidence"
+                (
+                    f"{claim.text} 反例 争议 limitation counter evidence",
+                    claim.id,
+                )
                 for claim in claims if claim.importance == "key"
             ]
             if resolved.objective.question:
-                expansion_queries.append(resolved.objective.question)
-            for query in dict.fromkeys(expansion_queries):
-                if rounds >= budget.max_rounds or deadline.expired:
+                expansion_queries.append((resolved.objective.question, None))
+            counterevidence_searched: set[str] = set()
+            information_gain_saturated = False
+            for query, counter_claim_id in dict.fromkeys(expansion_queries):
+                if rounds_completed >= budget.max_rounds or deadline.expired:
                     break
                 if self._task_store.cancel_requested(research_id):
                     return
@@ -655,8 +697,11 @@ class ResearchService:
                 deep_reads += read_count
                 snapshots.update(round_snapshots)
                 query_trace.append(query)
-                rounds += 1
+                rounds_completed += 1
+                if counter_claim_id is not None and round_snapshots:
+                    counterevidence_searched.add(counter_claim_id)
                 if added == 0:
+                    information_gain_saturated = not round_failures
                     break
 
             if self._task_store.cancel_requested(research_id):
@@ -667,7 +712,7 @@ class ResearchService:
                 languages=list(resolved.scope.languages),
                 jurisdictions=list(resolved.scope.jurisdictions),
                 license_scope=list(seed_snapshot.retrieval_boundary.license_scope),
-                max_rounds=rounds,
+                max_rounds=budget.max_rounds,
                 max_candidates=budget.max_candidates,
                 deadline_ms=budget.deadline_ms,
                 limitations=list(seed_snapshot.retrieval_boundary.limitations),
@@ -680,10 +725,10 @@ class ResearchService:
                 search_boundary=verify_boundary,
             )
             failures.extend(verification.failures)
-            assessments = [
-                item.model_copy(update={"counterevidence_searched": rounds > 1})
-                for item in verification.assessments
-            ]
+            assessments = self._apply_counterevidence_status(
+                verification.assessments,
+                counterevidence_searched,
+            )
             coverage = self._coverage(resolved, evidence, assessments)
             assessment = self._assessment(evidence, assessments, coverage)
             identities = {self._identity(item) for item in evidence}
@@ -715,10 +760,12 @@ class ResearchService:
             )
             if deadline.expired:
                 stop_reason = "deadline_reached"
-            elif rounds >= budget.max_rounds and coverage.gaps:
-                stop_reason = "max_rounds_reached"
-            elif assessment.overall in {"sufficient", "sufficient_with_limitations"}:
+            elif assessment.overall == "sufficient":
                 stop_reason = "objective_satisfied"
+            elif information_gain_saturated:
+                stop_reason = "information_gain_saturated"
+            elif rounds_completed >= budget.max_rounds and coverage.gaps:
+                stop_reason = "max_rounds_reached"
             else:
                 stop_reason = "information_gain_saturated"
             state = (
@@ -736,7 +783,7 @@ class ResearchService:
                 "task_revision": current.task_revision + 1,
                 "updated_at": self._clock.now(),
                 "progress": ResearchProgress(
-                    rounds_completed=rounds,
+                    rounds_completed=rounds_completed,
                     raw_candidates=raw_candidates,
                     independent_works=len(identities),
                     patent_families=len(families),
@@ -747,7 +794,10 @@ class ResearchService:
                 "dossier": dossier,
                 "stop": ResearchStop(
                     reason=stop_reason,
-                    message=f"研究在 {rounds} 轮后停止；结论状态为 {assessment.overall}。",
+                    message=(
+                        f"研究在 {rounds_completed} 轮扩展后停止；"
+                        f"结论状态为 {assessment.overall}。"
+                    ),
                     remaining_gap_refs=[item.id for item in coverage.gaps],
                 ),
                 "failures": failures,

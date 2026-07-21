@@ -172,6 +172,7 @@ def test_ranking_failure_falls_back_per_domain(monkeypatch):
 
 def test_search_service_owns_stage_order_and_failure_order():
     trace = []
+    saved_snapshots = []
     failures = [
         SearchFailure(stage=stage, code=stage.upper())
         for stage in ("plan", "recall", "rank")
@@ -180,6 +181,8 @@ def test_search_service_owns_stage_order_and_failure_order():
         plan=SearchPlan(raw_query="q", normalized_query="q", top_k=2),
         search_query="q",
         academic_query="q",
+        active_provider_names=("web",),
+        do_academic=True,
         failures=(failures[0],),
     )
     recalled = RecallOutcome(failures=(failures[1],))
@@ -221,6 +224,7 @@ def test_search_service_owns_stage_order_and_failure_order():
             from src.domain.search_api import SearchSeed
 
             trace.append("seed")
+            saved_snapshots.append(snapshot)
             now = SystemClock().now()
             return SearchSeed(
                 search_id="srch_test",
@@ -246,6 +250,8 @@ def test_search_service_owns_stage_order_and_failure_order():
     assert [failure.code for failure in response.failures] == [
         "PLAN", "RECALL", "RANK"
     ]
+    assert saved_snapshots[0].requested_source_types is None
+    assert saved_snapshots[0].planned_source_types == ["web", "academic"]
 
 
 def test_engine_is_only_a_compatibility_facade():

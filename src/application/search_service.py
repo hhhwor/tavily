@@ -201,7 +201,20 @@ class SearchService:
             limitations=sorted(set(batch_limitations)),
         )
         public_failures = [self._failure(item) for item in failures]
+        planned_source_types = []
+        if outcome.planned.active_provider_names:
+            planned_source_types.append("web")
+        if outcome.planned.do_academic:
+            planned_source_types.append("academic")
+        if outcome.planned.do_patent:
+            planned_source_types.append("patent")
         snapshot = SearchSeedSnapshot(
+            requested_source_types=(
+                list(command.source_types)
+                if command.source_types is not None
+                else None
+            ),
+            planned_source_types=planned_source_types,
             query=query,
             evidence=evidence,
             retrieval_assessment=assessment,

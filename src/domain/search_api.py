@@ -7,6 +7,7 @@ from typing import Any, Literal
 from pydantic import BaseModel, ConfigDict, Field
 
 from src.domain.evidence import AnswerabilityGap, Evidence
+from src.domain.documents import DocumentKind
 
 
 class SearchApiModel(BaseModel):
@@ -102,6 +103,8 @@ class SearchResponse(SearchApiModel):
 class SearchSeedSnapshot(SearchApiModel):
     """服务端持有的不可变证据与边界；不接受客户端回传。"""
 
+    requested_source_types: list[DocumentKind] | None = None
+    planned_source_types: list[DocumentKind] = Field(default_factory=list)
     query: SearchQuery
     evidence: list[Evidence]
     retrieval_assessment: RetrievalAssessment
