@@ -98,7 +98,11 @@ class SerpApiProvider(SearchProvider):
         }
 
         try:
-            resp = self._http.get(_ENDPOINT, params=params, timeout=self.timeout)
+            resp = self._http.get(
+                _ENDPOINT,
+                params=params,
+                timeout=self.request_timeout(request),
+            )
             resp.raise_for_status()
             data = resp.json()
             if "error" in data:

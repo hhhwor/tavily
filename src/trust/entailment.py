@@ -13,6 +13,8 @@ from src.domain.evidence import Evidence
 from src.domain.trust import CandidateClaim
 
 EntailmentPair = Tuple[str, CandidateClaim, Evidence]
+_BATCH_SIZE = 12
+_MAX_BATCH_ATTEMPTS = 2
 _LABELS = {"supports", "contradicts", "mentions", "unclear", "irrelevant"}
 _NEGATION = re.compile(r"不|未|无|没有|并非|不能|not\b|no\b|never\b|without\b", re.I)
 _NUMBER = re.compile(r"[-+]?\d[\d,]*(?:\.\d+)?")
@@ -26,6 +28,31 @@ class EntailmentDecision:
     confidence: str
     reason: str
     quote: str = ""
+
+
+class PartialEntailmentFailure(RuntimeError):
+    """A classifier failure that preserves successful decisions and failed pairs."""
+
+    def __init__(
+        self,
+        *,
+        decisions: Dict[str, EntailmentDecision],
+        failed_pairs: Sequence[EntailmentPair],
+        failed_batches: int,
+        total_batches: int,
+        error_codes: Sequence[str],
+        recoverable: bool,
+    ) -> None:
+        self.decisions = dict(decisions)
+        self.failed_pairs = tuple(failed_pairs)
+        self.failed_batches = failed_batches
+        self.total_batches = total_batches
+        self.error_codes = tuple(dict.fromkeys(error_codes))
+        self.recoverable = recoverable
+        super().__init__(
+            f"{len(self.failed_pairs)} entailment pairs failed in "
+            f"{failed_batches}/{total_batches} batches"
+        )
 
 
 def normalize_text(text: str) -> str:
@@ -52,6 +79,31 @@ def best_quote(claim: CandidateClaim, evidence: Evidence, max_chars: int = 600) 
         key=lambda sentence: len(claim_tokens & text_tokens(sentence)),
     )
     return best[:max_chars]
+
+
+def _decode_json_rows(content: str) -> List[Any]:
+    """Decode a JSON array from plain JSON, a wrapper object, or fenced prose."""
+    stripped = (content or "").strip()
+    try:
+        parsed = json.loads(stripped)
+    except (json.JSONDecodeError, TypeError):
+        parsed = None
+    if isinstance(parsed, list):
+        return parsed
+    if isinstance(parsed, dict):
+        for key in ("results", "decisions", "items"):
+            if isinstance(parsed.get(key), list):
+                return parsed[key]
+
+    decoder = json.JSONDecoder()
+    for match in re.finditer(r"\[", stripped):
+        try:
+            parsed, _ = decoder.raw_decode(stripped[match.start():])
+        except json.JSONDecodeError:
+            continue
+        if isinstance(parsed, list):
+            return parsed
+    raise ValueError("蕴含模型未返回 JSON 数组")
 
 
 class RuleEntailmentClassifier:
@@ -116,10 +168,60 @@ class SiliconFlowEntailmentClassifier:
     def classify_pairs(self, pairs: Sequence[EntailmentPair]) -> Dict[str, EntailmentDecision]:
         if not pairs:
             return {}
+        pair_list = list(pairs)
         decisions: Dict[str, EntailmentDecision] = {}
-        # 控制单次上下文；任一批失败由上层整体降级为保守规则。
-        for start in range(0, len(pairs), 12):
-            decisions.update(self._classify_batch(pairs[start:start + 12]))
+        failed_pairs: List[EntailmentPair] = []
+        error_codes: List[str] = []
+        failed_batches = 0
+        recoverable = True
+        total_batches = (len(pair_list) + _BATCH_SIZE - 1) // _BATCH_SIZE
+        for start in range(0, len(pair_list), _BATCH_SIZE):
+            pending = pair_list[start:start + _BATCH_SIZE]
+            last_error: BaseException | None = None
+            for attempt in range(_MAX_BATCH_ATTEMPTS):
+                try:
+                    batch_decisions = self._classify_batch(pending)
+                except Exception as exc:
+                    last_error = exc
+                    if (
+                        attempt + 1 < _MAX_BATCH_ATTEMPTS
+                        and bool(getattr(exc, "recoverable", True))
+                    ):
+                        continue
+                    break
+                decisions.update(batch_decisions)
+                pending = [
+                    pair for pair in pending if pair[0] not in batch_decisions
+                ]
+                if not pending:
+                    break
+                last_error = ValueError(
+                    f"蕴含模型遗漏 {len(pending)} 个 pair"
+                )
+            if pending:
+                failed_batches += 1
+                failed_pairs.extend(pending)
+                recoverable = recoverable and bool(
+                    getattr(last_error, "recoverable", True)
+                )
+                error_codes.append(
+                    str(
+                        getattr(
+                            last_error,
+                            "code",
+                            "ENTAILMENT_INCOMPLETE_RESPONSE",
+                        )
+                    )
+                )
+        if failed_pairs:
+            raise PartialEntailmentFailure(
+                decisions=decisions,
+                failed_pairs=failed_pairs,
+                failed_batches=failed_batches,
+                total_batches=total_batches,
+                error_codes=error_codes,
+                recoverable=recoverable,
+            )
         return decisions
 
     def _classify_batch(self, pairs: Sequence[EntailmentPair]) -> Dict[str, EntailmentDecision]:
@@ -154,15 +256,14 @@ class SiliconFlowEntailmentClassifier:
             )
             response.raise_for_status()
             content = response.json()["choices"][0]["message"]["content"].strip()
-            match = re.search(r"\[.*\]", content, re.S)
-            if not match:
-                raise ValueError("蕴含模型未返回 JSON 数组")
-            rows = json.loads(match.group(0))
+            rows = _decode_json_rows(content)
         except Exception as exc:
             raise external_http_error("siliconflow", "entailment", exc) from exc
         decisions: Dict[str, EntailmentDecision] = {}
         pair_ids = {pair_id for pair_id, _, _ in pairs}
         for row in rows:
+            if not isinstance(row, dict):
+                continue
             pair_id = str(row.get("id", ""))
             relation = str(row.get("relation", "unclear")).lower()
             confidence = str(row.get("confidence", "none")).lower()
@@ -175,10 +276,5 @@ class SiliconFlowEntailmentClassifier:
                 confidence=confidence,
                 reason=str(row.get("reason", ""))[:500],
                 quote=str(row.get("quote", ""))[:600],
-            )
-        for pair_id, claim, evidence in pairs:
-            decisions.setdefault(
-                pair_id,
-                EntailmentDecision("unclear", "none", "模型未返回该 pair", best_quote(claim, evidence)),
             )
         return decisions

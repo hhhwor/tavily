@@ -25,6 +25,7 @@ from src.engine import SearchEngine
 from src.infrastructure.cache import InMemoryCache, build_cache
 from src.infrastructure.openalex_pdf import OpenAlexPdfGateway
 from src.infrastructure.query_rewriter import SiliconFlowQueryRewriter
+from src.infrastructure.resilience import ResilienceManager
 from src.infrastructure.runtime import SystemClock
 from src.infrastructure.sqlite_research_store import SqliteResearchStore
 from src.infrastructure.sqlite_seed_store import SqliteSearchSeedStore
@@ -32,6 +33,21 @@ from src.providers.base import SearchProvider
 from src.ranking.factory import build_text_scorer
 from src.ranking.ports import Reranker
 from src.trust import build_claim_verifier
+
+
+def _shutdown_executors(*executors: ThreadPoolExecutor) -> None:
+    first_error: BaseException | None = None
+    closed: set[int] = set()
+    for executor in executors:
+        if id(executor) in closed:
+            continue
+        closed.add(id(executor))
+        try:
+            executor.shutdown(wait=True, cancel_futures=True)
+        except BaseException as exc:
+            first_error = first_error or exc
+    if first_error is not None:
+        raise first_error
 
 
 def _web_providers(
@@ -56,7 +72,30 @@ def _web_providers(
             timeout=settings.provider_timeout,
             http_session=http,
         ))
-    if settings.serpapi_api_key:
+    if settings.doubao_api_key:
+        from src.providers.doubao import DoubaoSearchProvider
+
+        providers.append(DoubaoSearchProvider(
+            api_key=settings.doubao_api_key,
+            timeout=settings.provider_timeout,
+            uvx_path=settings.doubao_uvx_path,
+        ))
+    if (
+        settings.aliyun_web_search_enabled
+        and settings.aliyun_access_key_id
+        and settings.aliyun_access_key_secret
+    ):
+        from src.providers.aliyun import AliyunWebSearchProvider
+
+        providers.append(AliyunWebSearchProvider(
+            access_key_id=settings.aliyun_access_key_id,
+            access_key_secret=settings.aliyun_access_key_secret,
+            timeout=settings.provider_timeout,
+            search_type=settings.aliyun_web_search_type,
+            region=settings.aliyun_web_search_region,
+            http_session=http,
+        ))
+    if settings.serpapi_enabled and settings.serpapi_api_key:
         from src.providers.serpapi import SerpApiProvider
 
         providers.append(SerpApiProvider(
@@ -148,7 +187,10 @@ class Container:
     settings: Settings
     engine: SearchEngine
     http_session: requests.Session
-    executor: ThreadPoolExecutor
+    recall_executor: ThreadPoolExecutor
+    ranking_executor: ThreadPoolExecutor
+    pdf_executor: ThreadPoolExecutor
+    resilience: ResilienceManager
     research_dispatcher: ResearchDispatcher
     seed_store: SqliteSearchSeedStore
     research_store: SqliteResearchStore
@@ -163,6 +205,11 @@ class Container:
     @property
     def closed(self) -> bool:
         return self._closed
+
+    @property
+    def executor(self) -> ThreadPoolExecutor:
+        """Backward-compatible alias for the recall executor."""
+        return self.recall_executor
 
     @asynccontextmanager
     async def lifespan(self) -> AsyncIterator["Container"]:
@@ -194,7 +241,11 @@ class Container:
                         self.research_store.close()
                     finally:
                         try:
-                            self.executor.shutdown(wait=True, cancel_futures=True)
+                            _shutdown_executors(
+                                self.recall_executor,
+                                self.ranking_executor,
+                                self.pdf_executor,
+                            )
                         finally:
                             self.http_session.close()
 
@@ -207,10 +258,19 @@ def build_container(
     """创建完整运行时；调用方必须进入 ``Container.lifespan`` 或显式 close。"""
     config = settings or Settings.from_env()
     clock = SystemClock()
+    resilience = ResilienceManager(config, clock)
     http = requests.Session()
-    executor = ThreadPoolExecutor(
+    recall_executor = ThreadPoolExecutor(
         max_workers=config.executor_max_workers,
-        thread_name_prefix="search-worker",
+        thread_name_prefix="search-recall",
+    )
+    ranking_executor = ThreadPoolExecutor(
+        max_workers=config.ranking_executor_max_workers,
+        thread_name_prefix="search-ranking",
+    )
+    pdf_executor = ThreadPoolExecutor(
+        max_workers=config.pdf_executor_max_workers,
+        thread_name_prefix="search-pdf",
     )
     engine: Optional[SearchEngine] = None
     scorer: Any = None
@@ -252,11 +312,12 @@ def build_container(
             config,
             scorer,
             scorer_factory,
-            executor,
+            ranking_executor,
             clock=clock,
+            resilience=resilience,
         )
         pdf_gateway = OpenAlexPdfGateway(
-            config, http, executor, monotonic=clock.monotonic
+            config, http, pdf_executor, monotonic=clock.monotonic
         )
         query_rewriter = SiliconFlowQueryRewriter(
             config.siliconflow_api_key,
@@ -268,13 +329,18 @@ def build_container(
             ),
             http_session=http,
         )
-        query_planner = QueryPlanner(config, query_rewriter)
+        query_planner = QueryPlanner(
+            config,
+            query_rewriter,
+            resilience=resilience,
+        )
         recall = RecallCoordinator(
             config,
             registry,
             cache,
-            executor,
+            recall_executor,
             clock=clock.now,
+            resilience=resilience,
         )
         discovery = DiscoveryService(
             query_planner=query_planner,
@@ -347,7 +413,10 @@ def build_container(
             settings=config,
             engine=engine,
             http_session=http,
-            executor=executor,
+            recall_executor=recall_executor,
+            ranking_executor=ranking_executor,
+            pdf_executor=pdf_executor,
+            resilience=resilience,
             research_dispatcher=research_dispatcher,
             seed_store=seed_store,
             research_store=research_store,
@@ -390,7 +459,11 @@ def build_container(
         finally:
             try:
                 try:
-                    executor.shutdown(wait=True, cancel_futures=True)
+                    _shutdown_executors(
+                        recall_executor,
+                        ranking_executor,
+                        pdf_executor,
+                    )
                 except BaseException:
                     pass
             finally:

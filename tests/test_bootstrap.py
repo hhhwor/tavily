@@ -17,6 +17,7 @@ from src.api import SearchRequest, create_app
 from src.bootstrap import build_container
 from src.config import Settings
 from src.providers.baidu import BaiduSearchProvider
+from src.providers.doubao import DoubaoSearchProvider
 
 
 def _safe_settings(**overrides) -> Settings:
@@ -76,6 +77,63 @@ def test_settings_from_env_is_frozen_and_does_not_mutate_process_env(monkeypatch
         configured.default_top_k = 20  # type: ignore[misc]
 
 
+def test_qwen3_0_6b_is_the_default_rerank_model():
+    expected = "Qwen/Qwen3-Reranker-0.6B"
+
+    assert Settings().rerank_model == expected
+    assert Settings.from_env({}).rerank_model == expected
+
+
+def test_doubao_credentials_enable_provider_without_leaking_from_repr():
+    configured = Settings.from_env({
+        "ASK_ECHO_SEARCH_INFINITY_API_KEY": "doubao-test-key",
+        "DOUBAO_UVX_PATH": "/opt/bin/uvx",
+        "OPENALEX_ENABLED": "false",
+    })
+
+    assert configured.doubao_api_key == "doubao-test-key"
+    assert configured.doubao_uvx_path == "/opt/bin/uvx"
+    assert configured.enabled_providers == ("doubao",)
+    assert "doubao-test-key" not in repr(configured)
+
+
+def test_serpapi_requires_explicit_opt_in():
+    disabled = Settings.from_env({
+        "SERPAPI_API_KEY": "serpapi-test-key",
+        "OPENALEX_ENABLED": "false",
+    })
+    enabled = Settings.from_env({
+        "SERPAPI_API_KEY": "serpapi-test-key",
+        "SERPAPI_ENABLED": "true",
+        "OPENALEX_ENABLED": "false",
+    })
+
+    assert disabled.enabled_providers == ()
+    assert enabled.enabled_providers == ("serpapi",)
+    with pytest.raises(ValueError, match="SERPAPI_API_KEY"):
+        Settings.from_env({"SERPAPI_ENABLED": "true"})
+
+
+def test_resilience_settings_are_explicit_and_validated():
+    configured = Settings.from_env({
+        "OPENALEX_ENABLED": "false",
+        "PATENT_ES_ENABLED": "false",
+        "RESILIENCE_MAX_ATTEMPTS": "3",
+        "RESILIENCE_BACKOFF_BASE_MS": "50",
+        "RESILIENCE_BACKOFF_MAX_MS": "500",
+        "CIRCUIT_FAILURE_THRESHOLD": "4",
+        "CIRCUIT_OPEN_SECONDS": "20",
+    })
+
+    assert configured.resilience_max_attempts == 3
+    assert configured.resilience_backoff_base_ms == 50
+    assert configured.resilience_backoff_max_ms == 500
+    assert configured.circuit_failure_threshold == 4
+    assert configured.circuit_open_seconds == 20
+    with pytest.raises(ValueError, match="RESILIENCE_MAX_ATTEMPTS"):
+        Settings.from_env({"RESILIENCE_MAX_ATTEMPTS": "0"})
+
+
 def test_vertical_provider_flags_have_explicit_tristate_semantics():
     assert Settings.from_env({"OPENALEX_ENABLED": "false"}).academic_enabled is False
     assert Settings.from_env({"PATENT_ES_URL": "https://example.invalid"}).patent_enabled is True
@@ -88,8 +146,81 @@ def test_provider_does_not_fall_back_to_process_environment(monkeypatch):
     with pytest.raises(ValueError, match="QIANFAN_API_KEY"):
         BaiduSearchProvider(api_key="")
 
+    monkeypatch.setenv(
+        "ASK_ECHO_SEARCH_INFINITY_API_KEY",
+        "must-not-be-read",
+    )
+    with pytest.raises(ValueError, match="ASK_ECHO_SEARCH_INFINITY_API_KEY"):
+        DoubaoSearchProvider(api_key="")
 
-def test_container_injects_shared_session_and_executor():
+
+def test_container_registers_doubao_as_a_web_provider():
+    container = build_container(
+        _safe_settings(
+            doubao_api_key="test-key",
+            doubao_uvx_path="/bin/true",
+        ),
+        include_mcp=False,
+    )
+    try:
+        assert [provider.descriptor.id for provider in container.engine.providers] == [
+            "doubao"
+        ]
+        assert container.engine.source_registry.ids("web") == ("doubao",)
+    finally:
+        container.close()
+
+
+def test_container_excludes_serpapi_until_explicitly_enabled():
+    disabled = build_container(
+        _safe_settings(serpapi_api_key="test-key"),
+        include_mcp=False,
+    )
+    enabled = build_container(
+        _safe_settings(
+            serpapi_api_key="test-key",
+            serpapi_enabled=True,
+        ),
+        include_mcp=False,
+    )
+    try:
+        assert disabled.engine.providers == []
+        assert [
+            provider.descriptor.id for provider in enabled.engine.providers
+        ] == ["serpapi"]
+    finally:
+        disabled.close()
+        enabled.close()
+
+
+def test_container_registers_aliyun_by_default_and_supports_kill_switch():
+    credentials = {
+        "aliyun_access_key_id": "test-id",
+        "aliyun_access_key_secret": "test-secret",
+    }
+    enabled = build_container(
+        _safe_settings(**credentials),
+        include_mcp=False,
+    )
+    disabled = build_container(
+        _safe_settings(
+            **credentials,
+            aliyun_web_search_enabled=False,
+        ),
+        include_mcp=False,
+    )
+    try:
+        assert disabled.engine.providers == []
+        assert [
+            provider.descriptor.id for provider in enabled.engine.providers
+        ] == ["aliyun"]
+        assert enabled.engine.providers[0]._http is enabled.http_session
+    finally:
+        disabled.close()
+        enabled.close()
+
+
+def test_container_injects_shared_session_and_isolated_executors():
     container = build_container(
         _safe_settings(qianfan_api_key="test-key"),
         include_mcp=False,
@@ -97,16 +228,26 @@ def test_container_injects_shared_session_and_executor():
     try:
         service = container.engine._search_service
         discovery = service._discovery
-        assert discovery._recall._executor is container.executor
-        assert discovery._ranking._executor is container.executor
+        assert discovery._recall._executor is container.recall_executor
+        assert discovery._ranking._executor is container.ranking_executor
         pdf = container.engine._research_service._pdf_gateway
-        assert pdf._executor is container.executor
+        assert pdf._executor is container.pdf_executor
+        assert len({
+            id(container.recall_executor),
+            id(container.ranking_executor),
+            id(container.pdf_executor),
+        }) == 3
+        assert container.executor is container.recall_executor
         assert discovery._query_planner._rewriter._http is container.http_session
         assert pdf._http is container.http_session
         assert container.engine.providers[0]._http is container.http_session
         assert "test-key" not in repr(container.settings)
     finally:
         container.close()
+
+    assert container.recall_executor._shutdown is True
+    assert container.ranking_executor._shutdown is True
+    assert container.pdf_executor._shutdown is True
 
 
 def test_create_app_defers_factory_and_closes_runtime():
@@ -129,6 +270,10 @@ def test_create_app_defers_factory_and_closes_runtime():
         health = client.get("/health")
         assert health.status_code == 200
         assert health.json()["mcp"] is False
+        assert health.json()["resilience"] == {
+            "max_attempts": 2,
+            "dependencies": {},
+        }
         assert client.post("/mcp").status_code == 404
         response = client.post(
             "/search",

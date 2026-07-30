@@ -6,6 +6,7 @@ from typing import Any, List, Sequence
 import requests
 
 from src.infrastructure.http_errors import external_http_error
+from src.infrastructure.http_timeout import bounded_http_timeout
 from src.domain.search import SearchResult
 from src.pipeline.chunk import chunk_text
 from src.ranking.ports import Reranker, clamp01
@@ -18,9 +19,10 @@ class SiliconFlowReranker(Reranker):
         self,
         api_key: str,
         base_url: str = "https://api.siliconflow.cn/v1",
-        model: str = "BAAI/bge-reranker-v2-m3",
+        model: str = "Qwen/Qwen3-Reranker-0.6B",
         chunk_max_chars: int = 400,
         chunk_overlap: int = 50,
+        timeout: float = 30,
         http_session: Any = None,
     ) -> None:
         self._api_key = api_key
@@ -29,9 +31,19 @@ class SiliconFlowReranker(Reranker):
         self.name = f"siliconflow:{model.split('/')[-1]}"
         self._chunk_max_chars = chunk_max_chars
         self._chunk_overlap = chunk_overlap
+        self._timeout = timeout
         self._http = http_session or requests
 
     def score(self, query: str, texts: Sequence[str]) -> List[float]:
+        return self.score_with_timeout(query, texts)
+
+    def score_with_timeout(
+        self,
+        query: str,
+        texts: Sequence[str],
+        *,
+        timeout_seconds: float | None = None,
+    ) -> List[float]:
         if not texts:
             return []
         pairs = [
@@ -57,7 +69,7 @@ class SiliconFlowReranker(Reranker):
                     "top_n": len(pairs),
                     "return_documents": False,
                 },
-                timeout=30,
+                timeout=bounded_http_timeout(self._timeout, timeout_seconds),
             )
             response.raise_for_status()
             data = response.json()

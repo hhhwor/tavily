@@ -9,7 +9,8 @@ from src.application.commands import SearchCommand
 from src.application.failures import search_failure
 from src.application.outcomes import PlannedQuery, RankingOutcome, RecallOutcome
 from src.application.ports.runtime import Clock
-from src.application.ports.runtime import Deadline
+from src.application.ports.runtime import Deadline, DeadlineExceededError
+from src.application.ports.resilience import ResiliencePolicy
 from src.domain.documents import (
     DocumentKind,
     RankedDocument,
@@ -37,6 +38,47 @@ class RankingSettings(Protocol):
     rerank_enabled: bool
 
 
+class _ResilientDeadlineBoundScorer:
+    """Bind one ranking invocation's remaining budget to external scorers."""
+
+    def __init__(
+        self,
+        inner: Reranker,
+        deadline: Deadline | None,
+        resilience: ResiliencePolicy | None,
+    ) -> None:
+        self._inner = inner
+        self._deadline = deadline
+        self._resilience = resilience
+        self.name = inner.name
+        self.supports_text_scoring = inner.supports_text_scoring
+
+    def score(self, query: str, texts) -> list[float]:
+        def invoke() -> list[float]:
+            remaining = None
+            if self._deadline is not None:
+                remaining = self._deadline.remaining_seconds()
+                if remaining <= 0:
+                    raise DeadlineExceededError("search deadline exceeded")
+            score_with_timeout = getattr(self._inner, "score_with_timeout", None)
+            if callable(score_with_timeout):
+                return list(score_with_timeout(
+                    query,
+                    texts,
+                    timeout_seconds=remaining,
+                ))
+            return list(self._inner.score(query, texts))
+
+        if self._resilience is None:
+            return invoke()
+        return self._resilience.call(
+            self._inner.name,
+            "rerank",
+            invoke,
+            deadline=self._deadline,
+        )
+
+
 class RankingService:
     """选择文本 scorer，并对三个来源域进行可独立降级的重排。"""
 
@@ -48,12 +90,14 @@ class RankingService:
         executor: Executor,
         *,
         clock: Clock,
+        resilience: ResiliencePolicy | None = None,
     ) -> None:
         self._settings = settings
         self.text_scorer = text_scorer
         self._factory = text_scorer_factory
         self._executor = executor
         self._clock = clock
+        self._resilience = resilience
         self._scorer_cache: dict[tuple[bool, str, str], Reranker] = {}
         self._scorer_lock = RLock()
         self._closed = False
@@ -135,9 +179,18 @@ class RankingService:
             "threshold": options.threshold,
             "threshold_mode": options.threshold_mode,
         }
-        web_reranker = WebReranker(scorer, **reranker_options)
-        academic_reranker = AcademicReranker(scorer, **reranker_options)
-        patent_reranker = PatentReranker(scorer, **reranker_options)
+        deadline_scorer = (
+            _ResilientDeadlineBoundScorer(
+                scorer,
+                deadline,
+                self._resilience,
+            )
+            if deadline is not None or self._resilience is not None
+            else scorer
+        )
+        web_reranker = WebReranker(deadline_scorer, **reranker_options)
+        academic_reranker = AcademicReranker(deadline_scorer, **reranker_options)
+        patent_reranker = PatentReranker(deadline_scorer, **reranker_options)
         context = build_rerank_context(
             planned.search_query,
             time_sensitive=planned.plan.time_sensitive,
@@ -201,6 +254,23 @@ class RankingService:
         ranked_academic: list[RankedDocument] = []
         ranked_patent: list[RankedDocument] = []
         failures = []
+
+        def ranking_failure(kind: DocumentKind, exc: Exception):
+            return search_failure(
+                stage="rerank",
+                source=f"{kind}_reranker",
+                source_type=kind,
+                code=(
+                    "SEARCH_DEADLINE_EXCEEDED"
+                    if isinstance(exc, DeadlineExceededError)
+                    else "RERANK_FAILED"
+                ),
+                message=(
+                    "search deadline exceeded"
+                    if isinstance(exc, DeadlineExceededError)
+                    else exc
+                ),
+            )
 
         def source_documents(kind: DocumentKind) -> list[RetrievedDocument]:
             if kind == "academic":
@@ -290,13 +360,7 @@ class RankingService:
                 try:
                     assign(kind, future.result())
                 except Exception as exc:
-                    failures.append(search_failure(
-                        stage="rerank",
-                        source=f"{kind}_reranker",
-                        source_type=kind,
-                        code="RERANK_FAILED",
-                        message=exc,
-                    ))
+                    failures.append(ranking_failure(kind, exc))
                     assign(kind, fallback(kind), already_immutable=True)
             try:
                 for future in as_completed(
@@ -327,26 +391,14 @@ class RankingService:
                 try:
                     assign(kind, future.result())
                 except Exception as exc:
-                    failures.append(search_failure(
-                        stage="rerank",
-                        source=f"{kind}_reranker",
-                        source_type=kind,
-                        code="RERANK_FAILED",
-                        message=exc,
-                    ))
+                    failures.append(ranking_failure(kind, exc))
                     assign(kind, fallback(kind), already_immutable=True)
         else:
             for kind, function in jobs:
                 try:
                     assign(kind, function())
                 except Exception as exc:
-                    failures.append(search_failure(
-                        stage="rerank",
-                        source=f"{kind}_reranker",
-                        source_type=kind,
-                        code="RERANK_FAILED",
-                        message=exc,
-                    ))
+                    failures.append(ranking_failure(kind, exc))
                     assign(kind, fallback(kind), already_immutable=True)
 
         return RankingOutcome(

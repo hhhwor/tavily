@@ -43,10 +43,24 @@ class SearchQuery(SearchApiModel):
     filter_execution: dict[str, SourceFilterExecution] = Field(default_factory=dict)
 
 
+class SourceTypeCounts(SearchApiModel):
+    web: int = Field(0, ge=0)
+    academic: int = Field(0, ge=0)
+    patent: int = Field(0, ge=0)
+
+
+class SearchStageCounts(SearchApiModel):
+    recalled: SourceTypeCounts = Field(default_factory=SourceTypeCounts)
+    ranked: SourceTypeCounts = Field(default_factory=SourceTypeCounts)
+    assembled: SourceTypeCounts = Field(default_factory=SourceTypeCounts)
+    selected: SourceTypeCounts = Field(default_factory=SourceTypeCounts)
+
+
 class SearchResultSet(SearchApiModel):
     returned: int
     limit: int
     counts_by_type: dict[str, int] = Field(default_factory=dict)
+    counts_by_stage: SearchStageCounts = Field(default_factory=SearchStageCounts)
 
 
 class QualityMix(SearchApiModel):
@@ -73,6 +87,20 @@ class RetrievalBoundary(SearchApiModel):
     limitations: list[str] = Field(default_factory=list)
 
 
+class DegradationDetail(SearchApiModel):
+    action: Literal[
+        "none",
+        "use_original_query",
+        "continue_available_sources",
+        "use_unreranked_results",
+        "omit_research_seed",
+        "use_abstract_or_metadata",
+        "use_rule_verification",
+    ] = "none"
+    impact: Literal["none", "quality", "coverage", "feature"] = "none"
+    retry_owner: Literal["none", "server", "caller"] = "none"
+
+
 class FailureDetail(SearchApiModel):
     stage: str
     source: str = ""
@@ -80,6 +108,8 @@ class FailureDetail(SearchApiModel):
     code: str = ""
     message: str = ""
     retryable: bool = True
+    retry_after_ms: int | None = Field(None, ge=0)
+    degradation: DegradationDetail = Field(default_factory=DegradationDetail)
 
 
 class SearchMeta(SearchApiModel):

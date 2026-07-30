@@ -77,3 +77,18 @@ def test_last_resort_redaction_removes_urls_headers_and_secret_pairs():
     )
     assert generic.message == "operation failed; see failure code"
     assert "private" not in generic.message
+
+
+def test_rate_limit_retry_after_is_preserved_without_exposing_response():
+    response = requests.Response()
+    response.status_code = 429
+    response.headers["Retry-After"] = "2.5"
+    error = requests.HTTPError("rate limited", response=response)
+
+    from src.infrastructure.http_errors import external_http_error
+
+    mapped = external_http_error("provider", "search", error)
+
+    assert mapped.code == "SEARCH_RATE_LIMITED"
+    assert mapped.recoverable is True
+    assert mapped.retry_after_seconds == 2.5

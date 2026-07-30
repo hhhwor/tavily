@@ -269,8 +269,10 @@ E2E/Agent/Tool Eval 已使用 search.v1 字段，但部分 Runner 仍从 `src.mo
 ### Phase C：工程化与质量基线
 
 - [ ] 建立 `pyproject.toml`、依赖 extras 和可复现锁定方案。
-- [ ] 建立 CI：unit、contract、integration、lint、type-check、coverage 和 secret scan。
-- [ ] 建立固定 corpus 的路由、排序和 Evidence golden baseline。
+- [x] 建立质量 Golden Gate、20/50 并发 Gate 及对应 CI 阻断。
+- [ ] 补齐 lint、type-check、coverage 和 secret scan 等完整 CI 门槛。
+- [x] 建立固定 corpus 的 Web、Academic、Patent 排序质量 golden baseline。
+- [ ] 补充路由和 Evidence 公共契约 golden snapshots。
 - [ ] 评测缓存 key 纳入 git/config/data/model/rubric 指纹。
 - [ ] 在全新 Python 3.11 环境运行 REST+MCP Smoke。
 
@@ -279,9 +281,11 @@ E2E/Agent/Tool Eval 已使用 search.v1 字段，但部分 Runner 仍从 `src.mo
 ### Phase D：运行治理
 
 - [ ] 增加 `/livez`、`/readyz` 和 Provider canary。
-- [ ] 引入统一 retry/backoff、circuit breaker 和 rate limiter。
+- [x] 引入统一 retry/backoff 和 circuit breaker。
+- [ ] 增加 rate limiter。
 - [ ] 增加结构化日志、request id、指标和追踪字段。
-- [ ] 压测 20–50 个并发请求下的 Executor、Scorer cache、rewrite cache、连接池和内存。
+- [x] 建立 20/50 并发的 SearchService 受控压力门槛，覆盖召回/排序 Executor、Deadline、重试恢复和 SQLite seed。
+- [ ] 在目标部署环境补充真实 Provider、连接池、rewrite cache 和内存的长时间 soak test。
 - [ ] 建立外部 LLM 数据分类、脱敏和 egress policy。
 
 退出条件：并发、超时、降级、恢复和资源上限都有可观察、可测试的预算。
@@ -299,10 +303,10 @@ E2E/Agent/Tool Eval 已使用 search.v1 字段，但部分 Runner 仍从 `src.mo
 | REST 请求契约 | 通过 | strict search、seed→research、幂等、轮询、ETag 和旧路由删除已覆盖 |
 | MCP 合同 | 通过 | 只暴露 search/research，search.v1 identity projection 已覆盖 |
 | MCP 真实协议集成 | 部分完成 | 仍需 initialize、tools/list、search/research call 和 Host/Origin Smoke |
-| 固定检索质量基线 | 未完成 | 尚无 corpus NDCG/Recall/Evidence golden gate |
+| 固定检索质量基线 | 通过 | 9 条三领域固定 corpus；NDCG/Recall/Precision/MRR 下降超过 0.02 阻断 |
 | Coverage/type/lint | 未完成 | 尚无标准配置和 CI 门槛 |
 | 全新环境安装与部署 Smoke | 未完成 | 依赖未完整声明和锁定 |
-| 并发与资源预算 | 未完成 | 仅有局部并发/Deadline 测试，尚无系统压测 |
+| 并发与资源预算 | 通过（受控） | 20/50 并发覆盖完整 SearchService 链路、重试、Deadline 和 16/4 隔离池上限；生产 soak 待补 |
 
 ### 7.2 建议合并门槛
 

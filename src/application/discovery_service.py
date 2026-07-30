@@ -44,6 +44,7 @@ class DiscoveryService:
             self._source_registry.ids("web"),
             academic_available=self._source_registry.has_kind("academic"),
             patent_available=self._source_registry.has_kind("patent"),
+            deadline=active_deadline,
         )
         recalled = self._recall.recall(
             planned,

@@ -166,7 +166,9 @@ class PatentEsProvider(SearchProvider):
         try:
             resp = self._http.post(
                 f"{self.base_url}/{self.index}/_search",
-                json=body, timeout=self.timeout, verify=self.verify_tls,
+                json=body,
+                timeout=self.request_timeout(request),
+                verify=self.verify_tls,
             )
             resp.raise_for_status()
             hits = resp.json().get("hits", {}).get("hits", [])

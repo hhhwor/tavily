@@ -12,6 +12,7 @@ from src.application.ports.retrieval import (
 )
 from src.domain.documents import FrozenMap, RetrievedDocument
 from src.domain.search import SearchResult
+from src.infrastructure.http_timeout import bounded_http_timeout
 
 
 class SearchProvider(ABC):
@@ -31,6 +32,13 @@ class SearchProvider(ABC):
 
     def actual_query(self, request: RetrievalRequest) -> str:
         return request.query
+
+    def request_timeout(self, request: RetrievalRequest | None = None):
+        """Cap adapter I/O by both its configured timeout and request budget."""
+        return bounded_http_timeout(
+            getattr(self, "timeout", 15),
+            request.timeout_seconds if request is not None else None,
+        )
 
     def actual_filters(self, request: RetrievalRequest) -> Mapping[str, Any]:
         return {"recency": request.recency} if request.recency else {}

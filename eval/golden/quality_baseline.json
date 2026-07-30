@@ -1,0 +1,39 @@
+{
+  "schema_version": "quality-baseline.v1",
+  "runner_version": "quality-golden.v1",
+  "corpus_sha256": "98162110e5fcb891d0d791faa83924b1169b3227d06912841299893da2eb3015",
+  "query_count": 9,
+  "k": 5,
+  "max_drop": {
+    "ndcg_at_k": 0.02,
+    "recall_at_k": 0.02,
+    "precision_at_k": 0.02,
+    "mrr": 0.02
+  },
+  "metrics": {
+    "overall": {
+      "ndcg_at_k": 0.9755211342979445,
+      "recall_at_k": 1.0,
+      "precision_at_k": 0.39999999999999997,
+      "mrr": 1.0
+    },
+    "academic": {
+      "ndcg_at_k": 0.9383164948979564,
+      "recall_at_k": 1.0,
+      "precision_at_k": 0.4000000000000001,
+      "mrr": 1.0
+    },
+    "patent": {
+      "ndcg_at_k": 0.9907070732709772,
+      "recall_at_k": 1.0,
+      "precision_at_k": 0.4000000000000001,
+      "mrr": 1.0
+    },
+    "web": {
+      "ndcg_at_k": 0.9975398347249006,
+      "recall_at_k": 1.0,
+      "precision_at_k": 0.4000000000000001,
+      "mrr": 1.0
+    }
+  }
+}

@@ -1,0 +1,702 @@
+{
+  "version": 1,
+  "config": {
+    "model": "deepseek-v4-flash",
+    "search_source": "baidu_search_v2",
+    "search_mode": "required",
+    "enable_deep_search": false
+  },
+  "queries": {
+    "三星堆遗址在哪个省": {
+      "type": "factual",
+      "standard": {
+        "ok": false,
+        "status": 200,
+        "headers_ms": 3098.0,
+        "elapsed_ms": 3137.4,
+        "first_event_ms": 3136.9,
+        "first_reference_ms": 3136.9,
+        "first_token_ms": null,
+        "event_count": 2,
+        "request_id": "fdf7a0f1-6b04-4e54-b94b-7da8a29cb63c",
+        "references": [
+          {
+            "id": 1,
+            "icon": "https://mbs1.bdstatic.com/searchbox/mappconsole/image/20220307/88eb511c-5c51-448a-a9b5-df6b24cda8c7.png",
+            "title": "达州宣汉罗家坝遗址丨四川安逸如画 ",
+            "url": "https://k.sina.cn/article_7857201856_1d45362c001908f6h8.html",
+            "web_anchor": "",
+            "content": " 坐落于达州宣汉的罗家坝遗址,地处古代巴人活动腹心地带,是国内规模最大、保存最完整、内涵最丰富的巴文化中心遗址。该遗址历经多轮发掘,出土文物三千余件,与金沙遗址、古蜀船棺葬遗址并称并称为“继三星堆之后巴蜀文化的三颗璀璨明珠”。2023年罗家坝遗址博物馆开馆,展出百余件珍贵文物,为研究巴国历史文化提供了核心实物支撑。",
+            "date": "2026-07-25 10:42:00",
+            "type": "web",
+            "website": "无",
+            "image": null,
+            "video": null
+          },
+          {
+            "id": 2,
+            "icon": "https://ss1.baidu.com/6ONXsjip0QIZ8tyhnq/it/u=1534926245,1016405979&fm=195&app=88&f=JPEG?w=200&h=200",
+            "title": "三星堆为何停挖?三大科学真相揭开,不是禁忌而是敬畏!",
+            "url": "https://www.163.com/dy/article/L2LA4863055616YO.html",
+            "web_anchor": "",
+            "content": "三星堆为何停挖?三大科学真相揭开,不是禁忌而是敬畏! “里面肯定还有更震撼的东西!”——这是无数关注三星堆的人共同的心声。 青铜神树、黄金面具、纵目人像,每一件文物的面世都在刷新人们对古蜀文明的认知。然而就在公众期待新一轮大发掘时,考古队却按下了暂停键。网络上各种猜测甚嚣尘上:有人说是触碰了禁忌,有人说是发现了不可解释的力量。但真相远比传言更朴素,也更严肃。三大科学瓶颈,解释了为何“停挖”不是退缩...",
+            "date": "2026-07-25 02:20:57",
+            "type": "web",
+            "website": "网易",
+            "image": null,
+            "video": null
+          },
+          {
+            "id": 3,
+            "icon": "https://mbs1.bdstatic.com/searchbox/mappconsole/image/20220307/88eb511c-5c51-448a-a9b5-df6b24cda8c7.png",
+            "title": "宋新潮:三星堆是中国考古发掘中最具社会意义的一项",
+            "url": "https://news.sina.cn/2026-07-25/detail-iniizkxc4342265.d.html",
+            "web_anchor": "",
+            "content": " 封面新闻记者 刘可欣 图据活动方 “从国内外影响力的层面来看,三星堆是中国考古发掘中最具有社会意义的一项。”7月25日的“纪念三星堆遗址祭祀坑发现40周年暨古象牙研究与保护学术研讨会”上,中国古迹遗址保护协会理事长宋新潮说道。 宋新潮 1986年的夏天,三星堆1号、2号祭祀坑的发掘,让世界的目光汇聚到了广汉。2020年,三星堆新一轮祭祀坑的发掘,更被公认为新时代践行“中国特色、中国风格、中国气派...",
+            "date": "2026-07-25 19:28:00",
+            "type": "web",
+            "website": "新浪网",
+            "image": null,
+            "video": null
+          },
+          {
+            "id": 4,
+            "icon": "https://ss1.baidu.com/6ONXsjip0QIZ8tyhnq/it/u=1534926245,1016405979&fm=195&app=88&f=JPEG?w=200&h=200",
+            "title": "全是信息量 三星堆研究又有新成果",
+            "url": "https://www.163.com/dy/article/L2MNCPKD0553TDUQ.html",
+            "web_anchor": "",
+            "content": " 1986年,三星堆一、二号祭祀坑相继被发现,沉睡数千年的古蜀文明“一醒惊天下”。7月24日,在纪念三星堆遗址祭祀坑发现40周年暨古象牙研究与保护学术研讨会“考古发现与研究”分论坛中,专家学者围绕三星堆古城格局及水资源管理体系复原研究、三星堆祭祀坑年代关系与祭祀坑性质再认识、三星堆手工业体系技术特征再阐释、三星堆跨区域资源交流与多元文化互动新视野等方向产出多项标志性学术新观点。 三星堆古城的选址与...",
+            "date": "2026-07-25 15:32:03",
+            "type": "web",
+            "website": "网易",
+            "image": null,
+            "video": null
+          },
+          {
+            "id": 5,
+            "icon": "https://mbs1.bdstatic.com/searchbox/mappconsole/image/20220307/88eb511c-5c51-448a-a9b5-df6b24cda8c7.png",
+            "title": "三星堆“祭祀坑”中发现丝绸 ",
+            "url": "https://k.sina.cn/article_7857201856_1d45362c001908ex6o.html",
+            "web_anchor": "",
+            "content": " 四川省文物考古研究院近日在四川广汉市公布了三星堆遗址的最新考古成果,除了大量青铜器、玉器、金器、象牙等,考古学家还通过微痕分析等科技手段,在三星堆“祭祀坑”中找到了丝绸。 自2020年以来,四川省文物考古研究院、北京大学、四川大学等科研机构和高校组成联合考古队,启动对祭祀区的深入发掘研究,在1、2号“祭祀坑”旁边,相继发现、发掘了距今约3000年的3号至8号6个“祭祀坑”。 四川省文物考古研究院...",
+            "date": "2026-07-25 04:54:00",
+            "type": "web",
+            "website": "无",
+            "image": null,
+            "video": null
+          },
+          {
+            "id": 6,
+            "icon": "http://t8.baidu.com/it/u=2190351010,2010623832&fm=195&app=88&f=JPEG?w=200&h=200&s=52F72C72CDC86CC04A5CD0D600007033",
+            "title": "三星堆青铜面具撞脸石家河玉神人像 ",
+            "url": "https://m.gmw.cn/2026-07/25/content_1304537731.htm",
+            "web_anchor": "",
+            "content": "三星堆青铜面具撞脸石家河玉神人像 三星堆青铜面具以其神奇独特的造型给人留下深刻印象,网友发现,这些面具与湖北石家河遗址出土的玉神人像造型看上去有些相似。跨越时空,二者的相似说明了什么?7月24日,纪念三星堆遗址祭祀坑发现40周年暨古象牙研究与保护学术研讨会在广汉举行。湖北省文物考古研究院院长方勤在会上给出答案,“这说明二者之间存在艺术的传承,也充分说明了三星堆是一个包容性很强的文明。正是对外来文化...",
+            "date": "2026-07-25 08:33:00",
+            "type": "web",
+            "website": "光明网",
+            "image": null,
+            "video": null
+          },
+          {
+            "id": 7,
+            "icon": "https://search-operate.cdn.bcebos.com/ba26ecece89a484211d94d351868efa3.jpeg",
+            "title": "三星堆考古新进展:专家排除人为破坏 与金沙遗址一脉相承",
+            "url": "https://www.chinanews.com.cn/cul/shipin/cns/2026/07-24/news1063151.shtml",
+            "web_anchor": "",
+            "content": " 7月24日,纪念三星堆遗址祭祀坑发现40周年暨古象牙研究与保护学术研讨会在四川广汉举行。记者从研讨会获悉,三星堆遗址袁家院祭祀区被废弃原因可能与祭祀场所偶然失火被毁有关,一号至四号,七号、八号这6个“祭祀坑”也因此出现。 四川省文物考古研究院(三星堆研究院)研究馆员冉宏林介绍,袁家院祭祀区年代为商代晚期,距今约3200-3000年,属于整个古蜀地区等级最高的祭祀遗存,应该是古蜀国固定举行祭祀活动...",
+            "date": "2026-07-24 20:32:00",
+            "type": "web",
+            "website": "中国新闻网",
+            "image": null,
+            "video": null
+          },
+          {
+            "id": 8,
+            "icon": "https://baijiahao.baidu.com/favicon.ico",
+            "title": "三星堆600余根象牙“搬新家” 独家揭秘科学守护之路",
+            "url": "https://baijiahao.baidu.com/s?id=1871731015281924026&wfr=spider&for=pc",
+            "web_anchor": "",
+            "content": " 央视网消息:1986年7月,三星堆遗址祭祀坑被发现,四十年来,古蜀文明的密码不断破译。近日,纪念三星堆遗址祭祀坑发现四十周年暨古象牙研究与保护学术研讨会正在四川广汉召开,其中,三星堆遗址袁家院祭祀区考古研究新进展引发关注。四川省文物考古研究院团队通过剖析祭祀坑形制与埋藏特征,更新了祭祀坑性质的学术认知。最新青铜器溯源研究也证实,三星堆文明不仅具备本土铸铜能力,还与长江中下游地区存在紧密文化交流。...",
+            "date": "2026-07-26 07:12:59",
+            "type": "web",
+            "website": "百家号",
+            "image": null,
+            "video": null
+          },
+          {
+            "id": 9,
+            "icon": "https://baijiahao.baidu.com/favicon.ico",
+            "title": "四川:三苏祠、翠云廊蜀道、三星堆等保护研究工作取得阶段性成效",
+            "url": "https://baijiahao.baidu.com/s?id=1871563413243556586&wfr=spider&for=pc",
+            "web_anchor": "",
+            "content": " 中新网成都7月24日电 (记者 岳依桐)记者23日从四川省文物局获悉,近年来四川稳步推进三苏祠系统性保护、翠云廊蜀道整体性保护、三星堆遗址考古研究等多项重点工作,已取得阶段性成效。 在三苏祠系统性保护工作中,四川出台全国唯一以三苏遗址遗迹为主题的地方性法规《眉山市三苏遗址遗迹保护条例》,夯实法治保障与规划引领基础;有序推进三苏祠博物馆提档升级,持续深化三苏文化研究阐释与传播推广;扎实推进“东坡行...",
+            "date": "2026-07-24 10:56:26",
+            "type": "web",
+            "website": "百家号",
+            "image": null,
+            "video": null
+          },
+          {
+            "id": 10,
+            "icon": "https://mbs1.bdstatic.com/searchbox/mappconsole/image/20200630/db4d874a-872b-4b27-931d-775a91ed0003.png",
+            "title": "三星堆国家考古遗址公园",
+            "url": "https://baike.baidu.com/item/三星堆国家考古遗址公园/12572459",
+            "web_anchor": "",
+            "content": " 三星堆国家考古遗址公园位于四川省德阳市广汉市南兴镇境内三星堆遗址核心区。 三星堆遗址于1980年起发掘,因有三座突兀在成都平原上的黄土堆而得名,有“三星伴月”之美名。遗址公园主要由“西城墙遗迹”、“燕家院子·月亮湾”及“三星堆·祭祀坑·考古工作站”三大展区和三星堆博物馆组成。",
+            "date": "2026-03-15 14:55:10",
+            "type": "web",
+            "website": "百度百科",
+            "image": null,
+            "video": null
+          },
+          {
+            "id": 11,
+            "icon": "https://mbs1.bdstatic.com/searchbox/mappconsole/image/20230906/3096e08a-869d-46a7-8d30-5e32adb66fdc.png",
+            "title": "【材料一】三星堆遗址位于四川省广汉市城西鸭子河畔,遗址分布面积约12平方千米,其核心区域面积约3.6平方千米,是四川盆地目前发现的夏商时期规模最大、等级最高的中心性遗址。_百度教育",
+            "url": "https://easylearn.baidu.com/edu-page/tiangong/questiondetail?id=1871673573931210363&fr=search",
+            "web_anchor": "",
+            "content": "①三星堆遗址位于四川省,分布面积约3.6平方千米。",
+            "date": "2026-07-25 00:00:00",
+            "type": "web",
+            "website": "百度教育",
+            "image": null,
+            "video": null
+          },
+          {
+            "id": 12,
+            "icon": "https://mbs1.bdstatic.com/searchbox/mappconsole/image/20200630/db4d874a-872b-4b27-931d-775a91ed0003.png",
+            "title": "三星堆遗址",
+            "url": "https://baike.baidu.com/item/三星堆遗址/304608",
+            "web_anchor": "",
+            "content": " 地理位置:四川省广汉市三星堆镇西北的鸭子河南岸",
+            "date": "2026-07-10 14:18:18",
+            "type": "web",
+            "website": "百度百科",
+            "image": null,
+            "video": null
+          },
+          {
+            "id": 13,
+            "icon": "https://mbs1.bdstatic.com/searchbox/mappconsole/image/20230906/3096e08a-869d-46a7-8d30-5e32adb66fdc.png",
+            "title": "三星堆遗址位于四川省广汉市,是迄今西南地区发现的范围最大、延续时间最长、文化内涵最丰富的古城、古国、古蜀文化遗址。地理小组想知道它在四川省的位置,需要用到( ▲)A.四川省交通图B.四川省行政区划图C.四川省人口分布图D.四川省地形图;",
+            "url": "https://easylearn.baidu.com/edu-page/tiangong/questiondetail?id=1854664371349664245&fr=search",
+            "web_anchor": "",
+            "content": "三星堆遗址位于四川省广汉市,是迄今西南地区发现的范围最大、延续时间最长、文化内涵最丰富的古城、古国、古蜀文化遗址。地理小组想知道它在四川省的位置,需要用到( ▲ ) A.四川省交通图 B.四川省行政区划图 C.四川省人口分布图 D.四川省地形图; B; A选项四川省交通图主要呈现交通线路等信息,无法直接确定三星堆在四川省的位置,不符合要求;B选项四川省行政区划图能清晰展示行政区域划分及区域内各类地...",
+            "date": "2026-01-18 22:16:28",
+            "type": "web",
+            "website": "百度教育",
+            "image": null,
+            "video": null
+          },
+          {
+            "id": 14,
+            "icon": "https://mbs1.bdstatic.com/searchbox/mappconsole/image/20230906/3096e08a-869d-46a7-8d30-5e32adb66fdc.png",
+            "title": "关于三星堆遗址的说法正确的是?A 三星堆遗址和成都金沙遗址是一脉相承的整体。B 三星堆遗址最早被发现是1929年。C 三星堆遗址位于中国四川省广汉市西北的鸭子河南岸,南距_百度教育",
+            "url": "https://easylearn.baidu.com/edu-page/tiangong/questiondetail?id=1849888916710281864&fr=search",
+            "web_anchor": "",
+            "content": "A 三星堆遗址和成都金沙遗址是一脉相承的整体。B 三星堆遗址最早被发现是1929年。C 三星堆遗址位于中国四川省广汉市西北的鸭子河南岸,南距成都40公里,东距广汉市区7公里,是一座由众多古文化遗存分布点所组成的一个庞大的遗址群。D 三星堆的标志性文物有金杖、青铜神树、青铜大立人、青铜面具等。; BCD; A项:三星堆遗址与成都金沙遗址分属古蜀文化不同发展阶段,二者存在文化传承关联但并非“一脉相承的...",
+            "date": "2025-11-27 05:12:38",
+            "type": "web",
+            "website": "百度教育",
+            "image": null,
+            "video": null
+          },
+          {
+            "id": 15,
+            "icon": "https://m.map.360.cn/favicon.ico",
+            "title": "三星堆遗址",
+            "url": "https://map.360.cn/site/detail/ba147cdddc1de092",
+            "web_anchor": "",
+            "content": "三星堆遗址 地址(在哪里):三星堆遗址位于德阳市广汉市三星堆镇 介绍: 推荐菜: 电话: 评论(怎么样,怎样,好不好,口碑): 评分: 营业时间(几点关门,几点开门,什么时候关门,什么时候开门,几点营业,什么时候营业): 人均消费: 分类:风景名胜;scenic;景点;休闲娱乐;旅游;观光景点 星级: 景区特色: 建议游玩时长: 门票价格:",
+            "date": "2024-01-13 23:50:16",
+            "type": "web",
+            "website": "无",
+            "image": null,
+            "video": null
+          },
+          {
+            "id": 16,
+            "icon": "",
+            "title": "阅读模式",
+            "url": "https://gd.huatu.com/tiku/2641072.html",
+            "web_anchor": "",
+            "content": "三星堆遗址位于() 题目 三星堆遗址位于() A、四川 B、湖北 C、河南 D、陕西 优质答案 正确答案 三星堆遗址位于四川省广汉市的鸭子河南岸。南距四川省省会成都40公里,东距广汉市区7公里。遗址群平面呈南宽北窄的不规则梯形,沿河一带东西长5～6千米,南北宽2～3千米,是四川古代最大最重要的一处古文化遗存。 三星堆遗址依托鸭子河,横跨马牧河,地理位置和自然环境优越,形成了经东、西、南三面城墙及北...",
+            "date": "2022-01-09 06:53:45",
+            "type": "web",
+            "website": "北京华图宏阳网络科技有限公司",
+            "image": null,
+            "video": null
+          },
+          {
+            "id": 17,
+            "icon": "",
+            "title": "2022三支一扶公共基础知识之三星堆遗址与三星堆文化",
+            "url": "https://jl.huatu.com/2022/0719/2320359.html",
+            "web_anchor": "",
+            "content": " 三星堆遗址位于四川省广汉市区西北约7千米的鸭子河畔,行政区划地跨南兴镇和三星镇,南距成都市区40千米,地理坐标为北纬30°59′38″、东经104°11′58″(图1)。",
+            "date": "2022-07-19 15:37:59",
+            "type": "web",
+            "website": "北京华图宏阳网络科技有限公司",
+            "image": null,
+            "video": null
+          },
+          {
+            "id": 18,
+            "icon": "",
+            "title": "三星堆遗址",
+            "url": "https://www.kemingbaike.com/baike/2025061963121.html",
+            "web_anchor": "",
+            "content": "四川省广汉市第三批全国重点文物保护单位 三星堆遗址(sanxingdui site),原名兴古遗址,位于四川省广汉市三星堆镇鸭子河南岸,是新石器时代至商周的蜀文化遗址.总面积约12平方千米,核心区域古蜀国都城面积约3.6平方千米,是中国西南地区至2022年为止发现的分布范围最广,延续时间最长,文化内涵最丰富的古文化遗址. 中文名 三星堆遗址 地理位置 四川省广汉市三星堆镇西北的鸭子河南岸 所处时代...",
+            "date": "2025-06-12 00:00:00",
+            "type": "web",
+            "website": "可名百科",
+            "image": null,
+            "video": null
+          },
+          {
+            "id": 19,
+            "icon": "https://ss1.baidu.com/6ONXsjip0QIZ8tyhnq/it/u=1534926245,1016405979&fm=195&app=88&f=JPEG?w=200&h=200",
+            "title": "三星堆遗址,发现谜样的城墙,专家经过研究,发现它有神秘的用途",
+            "url": "https://www.163.com/dy/article/GQRHV73T05239K5F.html",
+            "web_anchor": "",
+            "content": " 三星堆遗址位于四川省广汉市鸭子河畔,是一处距今4800年至3100年左右的古蜀文化遗址,占地面积达12平方公里,是中国20世纪重大的考古发现之一。",
+            "date": "2021-12-10 08:58:42",
+            "type": "web",
+            "website": "网易",
+            "image": null,
+            "video": null
+          },
+          {
+            "id": 20,
+            "icon": "",
+            "title": "广汉三星堆遗址",
+            "url": "https://www.sckg.com/shangzhou/1575.html",
+            "web_anchor": "",
+            "content": " ●三星堆遗址位于四川省广汉市南兴镇,1929年发现,1934年首次发掘,中华人民共和国成立后尤其是1980年以来,以四川省文物考古研究院为主的多家文博单位对遗址、鸭子河上游至龙门山脉东麓区域开展了7次考古调查,共计调查面积近500平方千米。在遗址重点保护范围和一般保护范围开展了6次考古勘探,面积13平方千米。开展发掘42次,面积近2万平方米。根据现有认识,遗址分布面积约12平方千米,其中城址面积...",
+            "date": "2023-05-30 15:54:30",
+            "type": "web",
+            "website": "四川省文物考古研究院",
+            "image": null,
+            "video": null
+          }
+        ],
+        "answer": "",
+        "reasoning": "",
+        "usage": {},
+        "processing_states": [],
+        "embedded_errors": [
+          {
+            "code": "account_overdue",
+            "message": "Access denied due to overdue account"
+          }
+        ],
+        "finish_reasons": [],
+        "parse_errors": [],
+        "model": "deepseek-v4-flash",
+        "stream": true,
+        "error": {
+          "message": "SSE 未完整返回 references 与 answer"
+        }
+      },
+      "siliconflow_scores": {
+        "//baijiahao.baidu.com/s?id=1871227541702553932": 0.9820246696472168,
+        "//baijiahao.baidu.com/s?id=1871207535594414349": 0.94398432970047,
+        "//finance.sina.com.cn/jjxw/2026-07-20/doc-iniimeaq8096902.shtml": 2.1572121113422327e-05,
+        "//baijiahao.baidu.com/s?id=1870681735802257902": 0.999714195728302,
+        "//history.sohu.com/a/1048037902_121165739": 0.9989088773727417,
+        "//baijiahao.baidu.com/s?id=1870628581999187199": 0.9692622423171997,
+        "//baijiahao.baidu.com/s?id=1863790743673225174": 0.7538436651229858,
+        "//new.qq.com/rain/a/20260708A065YQ00": 0.644775390625,
+        "//163.com/dy/article/L2A8K6QA0552M20P.html": 0.41299954056739807,
+        "//history.sohu.com/a/1049302856_552502": 0.9991273283958435,
+        "//baike.baidu.com/item/三星堆遗址/304608": 0.9993984699249268,
+        "//baike.baidu.com/item/三星堆国家考古遗址公园/12572459": 0.9997392296791077,
+        "//wwj.sc.gov.cn/scwwj/zskgswm/2025/10/9/1b41dd264673414cb1ae7398594b1291.shtml": 0.9997884631156921,
+        "//sc.gov.cn/10462/c112144/dscxay.shtml": 0.9994909763336182,
+        "//sckg.com/shangzhou/1575.html": 0.9995480179786682,
+        "//baike.baidu.com/item/三星堆古城/13475234": 0.9939923882484436,
+        "//icppcc.cn/newsDetail_1132218": 0.9990115165710449,
+        "//baike.baidu.com/item/四川广汉三星堆遗址祭祀区/60173283": 0.9994569420814514,
+        "//sxd.cn/Guide?classify=100&type=102": 0.974734365940094,
+        "//wwj.sc.gov.cn/scwwj/flxzfg/2021/9/2/429f935e1a9a4709842448c293a81ea6.shtml": 0.9991391897201538,
+        "//finance.sina.cn/2026-07-20/detail-iniimqsk8125501.d.html": 0.9438542127609253,
+        "//cj.sina.com.cn/articles/view/7879776444/1d5abd8bc0190b28vi": 0.11101603507995605,
+        "//new.qq.com/rain/a/20260710A04T5O00": 0.9908140301704407,
+        "//ncha.gov.cn/art/2022/5/26/art_2622_174555.html": 0.9993875026702881,
+        "//sc.gov.cn/10462/c112004/zjsc2024.shtml": 0.9995598196983337,
+        "//wlt.sc.gov.cn/scwlt/wlyw/2021/4/23/d068c61739c14c739e3eb54b8766e23e.shtml": 0.997635006904602,
+        "//k.sina.cn/article_7857201856_1d45362c001908f6h8.html": 0.884964644908905,
+        "//163.com/dy/article/L2LA4863055616YO.html": 0.00029781163902953267,
+        "//news.sina.cn/2026-07-25/detail-iniizkxc4342265.d.html": 0.29487326741218567,
+        "//163.com/dy/article/L2MNCPKD0553TDUQ.html": 0.016348499804735184,
+        "//k.sina.cn/article_7857201856_1d45362c001908ex6o.html": 0.9970878958702087,
+        "//m.gmw.cn/2026-07/25/content_1304537731.htm": 0.9256165027618408,
+        "//chinanews.com.cn/cul/shipin/cns/2026/07-24/news1063151.shtml": 0.9867861866950989,
+        "//baijiahao.baidu.com/s?id=1871731015281924026": 0.9856480360031128,
+        "//baijiahao.baidu.com/s?id=1871563413243556586": 0.9729371666908264,
+        "//easylearn.baidu.com/edu-page/tiangong/questiondetail?id=1871673573931210363&fr=search": 0.9997276663780212,
+        "//easylearn.baidu.com/edu-page/tiangong/questiondetail?id=1854664371349664245&fr=search": 0.9993619322776794,
+        "//easylearn.baidu.com/edu-page/tiangong/questiondetail?id=1849888916710281864&fr=search": 0.9985332489013672,
+        "//map.360.cn/site/detail/ba147cdddc1de092": 0.9949486255645752,
+        "//gd.huatu.com/tiku/2641072.html": 0.9993618130683899,
+        "//jl.huatu.com/2022/0719/2320359.html": 0.9997491240501404,
+        "//kemingbaike.com/baike/2025061963121.html": 0.99980229139328,
+        "//163.com/dy/article/GQRHV73T05239K5F.html": 0.9997629523277283
+      },
+      "relevance_labels": {
+        "//baijiahao.baidu.com/s?id=1871227541702553932": 2,
+        "//baijiahao.baidu.com/s?id=1871207535594414349": 3,
+        "//finance.sina.com.cn/jjxw/2026-07-20/doc-iniimeaq8096902.shtml": 0,
+        "//baijiahao.baidu.com/s?id=1870681735802257902": 3,
+        "//history.sohu.com/a/1048037902_121165739": 3,
+        "//baijiahao.baidu.com/s?id=1870628581999187199": 2,
+        "//baijiahao.baidu.com/s?id=1863790743673225174": 2,
+        "//new.qq.com/rain/a/20260708A065YQ00": 2,
+        "//163.com/dy/article/L2A8K6QA0552M20P.html": 2,
+        "//history.sohu.com/a/1049302856_552502": 3,
+        "//baike.baidu.com/item/三星堆遗址/304608": 3,
+        "//baike.baidu.com/item/三星堆国家考古遗址公园/12572459": 3,
+        "//wwj.sc.gov.cn/scwwj/zskgswm/2025/10/9/1b41dd264673414cb1ae7398594b1291.shtml": 3,
+        "//sc.gov.cn/10462/c112144/dscxay.shtml": 3,
+        "//sckg.com/shangzhou/1575.html": 3,
+        "//baike.baidu.com/item/三星堆古城/13475234": 2,
+        "//icppcc.cn/newsDetail_1132218": 3,
+        "//baike.baidu.com/item/四川广汉三星堆遗址祭祀区/60173283": 2,
+        "//sxd.cn/Guide?classify=100&type=102": 2,
+        "//wwj.sc.gov.cn/scwwj/flxzfg/2021/9/2/429f935e1a9a4709842448c293a81ea6.shtml": 2,
+        "//finance.sina.cn/2026-07-20/detail-iniimqsk8125501.d.html": 3,
+        "//cj.sina.com.cn/articles/view/7879776444/1d5abd8bc0190b28vi": 2,
+        "//new.qq.com/rain/a/20260710A04T5O00": 2,
+        "//ncha.gov.cn/art/2022/5/26/art_2622_174555.html": 2,
+        "//sc.gov.cn/10462/c112004/zjsc2024.shtml": 3,
+        "//wlt.sc.gov.cn/scwlt/wlyw/2021/4/23/d068c61739c14c739e3eb54b8766e23e.shtml": 2,
+        "//k.sina.cn/article_7857201856_1d45362c001908f6h8.html": 1,
+        "//163.com/dy/article/L2LA4863055616YO.html": 1,
+        "//news.sina.cn/2026-07-25/detail-iniizkxc4342265.d.html": 1,
+        "//163.com/dy/article/L2MNCPKD0553TDUQ.html": 1,
+        "//k.sina.cn/article_7857201856_1d45362c001908ex6o.html": 1,
+        "//m.gmw.cn/2026-07/25/content_1304537731.htm": 1,
+        "//chinanews.com.cn/cul/shipin/cns/2026/07-24/news1063151.shtml": 1,
+        "//baijiahao.baidu.com/s?id=1871731015281924026": 1,
+        "//baijiahao.baidu.com/s?id=1871563413243556586": 1,
+        "//easylearn.baidu.com/edu-page/tiangong/questiondetail?id=1871673573931210363&fr=search": 3,
+        "//easylearn.baidu.com/edu-page/tiangong/questiondetail?id=1854664371349664245&fr=search": 3,
+        "//easylearn.baidu.com/edu-page/tiangong/questiondetail?id=1849888916710281864&fr=search": 3,
+        "//map.360.cn/site/detail/ba147cdddc1de092": 3,
+        "//gd.huatu.com/tiku/2641072.html": 3,
+        "//jl.huatu.com/2022/0719/2320359.html": 3,
+        "//kemingbaike.com/baike/2025061963121.html": 3,
+        "//163.com/dy/article/GQRHV73T05239K5F.html": 3
+      },
+      "standard_answer": "三星堆遗址位于**四川省**广汉市 [1][2]。\n\n具体位置在四川省广汉市三星堆镇西北的鸭子河南岸 [1][7]，距成都市区约40千米 [3]。",
+      "answer_judge": {
+        "current_sf": {
+          "score": 10,
+          "correctness": 2,
+          "completeness": 2,
+          "grounding": 2,
+          "freshness": 2
+        },
+        "standard_sf": {
+          "score": 9,
+          "correctness": 2,
+          "completeness": 2,
+          "grounding": 2,
+          "freshness": 2
+        },
+        "highperf": {
+          "score": 7,
+          "correctness": 2,
+          "completeness": 1,
+          "grounding": 2,
+          "freshness": 2
+        },
+        "winner": "current_sf",
+        "positions": {
+          "A": "current_sf",
+          "B": "standard_sf",
+          "C": "highperf"
+        }
+      },
+      "analysis": {
+        "metrics_triple_union_pool": {
+          "current_source": {
+            "ndcg": 0.5999316009839416,
+            "recall": 0.2727272727272727,
+            "precision": 0.9,
+            "mrr": 1.0
+          },
+          "current_sf": {
+            "ndcg": 0.9155260051911699,
+            "recall": 0.30303030303030304,
+            "precision": 1.0,
+            "mrr": 1.0
+          },
+          "high_baidu": {
+            "ndcg": 0.7246286625570539,
+            "recall": 0.30303030303030304,
+            "precision": 1.0,
+            "mrr": 1.0
+          },
+          "high_sf": {
+            "ndcg": 0.8838634664270282,
+            "recall": 0.30303030303030304,
+            "precision": 1.0,
+            "mrr": 1.0
+          },
+          "standard_source": {
+            "ndcg": 0.19738924702767288,
+            "recall": 0.030303030303030304,
+            "precision": 0.1,
+            "mrr": 0.1
+          },
+          "standard_sf": {
+            "ndcg": 1.0,
+            "recall": 0.30303030303030304,
+            "precision": 1.0,
+            "mrr": 1.0
+          }
+        },
+        "metrics_standard_pool": {
+          "standard_source": {
+            "ndcg": 0.19738924702767288,
+            "recall": 0.09090909090909091,
+            "precision": 0.1,
+            "mrr": 0.1
+          },
+          "standard_sf": {
+            "ndcg": 1.0,
+            "recall": 0.9090909090909091,
+            "precision": 1.0,
+            "mrr": 1.0
+          }
+        },
+        "url_jaccard_standard_current": 0.08108108108108109,
+        "url_jaccard_standard_high": 0.08108108108108109
+      }
+    }
+  },
+  "qps_probe": [],
+  "generation_block": {
+    "code": "account_overdue",
+    "message": "Access denied due to overdue account"
+  },
+  "summary": {
+    "generated_at_utc": "2026-07-28T01:52:47Z",
+    "comparison_base_generated_at_utc": "2026-07-23T02:23:43Z",
+    "query_count": 1,
+    "metric_k": 10,
+    "model": "deepseek-v4-flash",
+    "metrics_triple_union_pool": {
+      "current_source": {
+        "ndcg": 0.5999316009839416,
+        "recall": 0.2727272727272727,
+        "precision": 0.9,
+        "mrr": 1.0
+      },
+      "current_sf": {
+        "ndcg": 0.9155260051911699,
+        "recall": 0.30303030303030304,
+        "precision": 1.0,
+        "mrr": 1.0
+      },
+      "high_baidu": {
+        "ndcg": 0.7246286625570539,
+        "recall": 0.30303030303030304,
+        "precision": 1.0,
+        "mrr": 1.0
+      },
+      "high_sf": {
+        "ndcg": 0.8838634664270282,
+        "recall": 0.30303030303030304,
+        "precision": 1.0,
+        "mrr": 1.0
+      },
+      "standard_source": {
+        "ndcg": 0.19738924702767288,
+        "recall": 0.030303030303030304,
+        "precision": 0.1,
+        "mrr": 0.1
+      },
+      "standard_sf": {
+        "ndcg": 1.0,
+        "recall": 0.30303030303030304,
+        "precision": 1.0,
+        "mrr": 1.0
+      }
+    },
+    "metrics_standard_pool": {
+      "standard_source": {
+        "ndcg": 0.19738924702767288,
+        "recall": 0.09090909090909091,
+        "precision": 0.1,
+        "mrr": 0.1
+      },
+      "standard_sf": {
+        "ndcg": 1.0,
+        "recall": 0.9090909090909091,
+        "precision": 1.0,
+        "mrr": 1.0
+      }
+    },
+    "statistical_checks": {
+      "standard_sf_minus_current_sf_ndcg": {
+        "mean_delta": 0.08447399480883011,
+        "ci95": [
+          0.08447399480883011,
+          0.08447399480883011
+        ],
+        "wins_ties_losses": [
+          1,
+          0,
+          0
+        ]
+      },
+      "standard_sf_minus_current_sf_recall": {
+        "mean_delta": 0.0,
+        "ci95": [
+          0.0,
+          0.0
+        ],
+        "wins_ties_losses": [
+          0,
+          1,
+          0
+        ]
+      },
+      "standard_sf_minus_high_sf_ndcg": {
+        "mean_delta": 0.11613653357297182,
+        "ci95": [
+          0.11613653357297182,
+          0.11613653357297182
+        ],
+        "wins_ties_losses": [
+          1,
+          0,
+          0
+        ]
+      },
+      "standard_source_minus_standard_sf_ndcg": {
+        "mean_delta": -0.8026107529723271,
+        "ci95": [
+          -0.8026107529723271,
+          -0.8026107529723271
+        ],
+        "wins_ties_losses": [
+          0,
+          0,
+          1
+        ]
+      }
+    },
+    "latency_ms": {
+      "standard_first_reference_p50": 3136.9,
+      "standard_first_reference_p95": 3136.9,
+      "standard_first_token_p50": null,
+      "standard_first_token_p95": null,
+      "standard_total_p50": null,
+      "standard_total_p95": null,
+      "high_first_reference_p50": 2075.8,
+      "high_first_reference_p95": 2075.8,
+      "high_total_p50": 2076.4,
+      "high_total_p95": 2076.4
+    },
+    "url_overlap": {
+      "standard_current_jaccard_mean": 0.08108108108108109,
+      "standard_high_jaccard_mean": 0.08108108108108109
+    },
+    "content": {
+      "standard": {
+        "count": 20,
+        "mean_content_chars": 165.8,
+        "median_content_chars": 203.0,
+        "p95_content_chars": 203.0,
+        "max_content_chars": 203,
+        "mean_snippet_chars": 0.0,
+        "content_longer_than_snippet": 20,
+        "content_equals_snippet": 0
+      },
+      "current": {
+        "count": 20,
+        "mean_content_chars": 321.2,
+        "median_content_chars": 175.5,
+        "p95_content_chars": 1009.0,
+        "max_content_chars": 1015,
+        "mean_snippet_chars": 321.2,
+        "content_longer_than_snippet": 0,
+        "content_equals_snippet": 20
+      },
+      "highperf": {
+        "count": 20,
+        "mean_content_chars": 289.55,
+        "median_content_chars": 196.0,
+        "p95_content_chars": 982.0,
+        "max_content_chars": 1009,
+        "mean_snippet_chars": 289.55,
+        "content_longer_than_snippet": 0,
+        "content_equals_snippet": 20
+      }
+    },
+    "usage": {
+      "prompt_tokens": {
+        "total": 0,
+        "mean_successful": 0.0
+      },
+      "completion_tokens": {
+        "total": 0,
+        "mean_successful": 0.0
+      },
+      "total_tokens": {
+        "total": 0,
+        "mean_successful": 0.0
+      },
+      "cached_prompt_tokens": 0,
+      "estimated_model_cost_rmb": 0.0,
+      "price_rmb_per_1k": {
+        "input": 0.001,
+        "cached_input": 0.0002,
+        "output": 0.002
+      }
+    },
+    "generation": {
+      "successes": 0,
+      "failures": 1,
+      "blocked_code": "account_overdue",
+      "blocked_message": "Access denied due to overdue account"
+    },
+    "answer_quality": {
+      "current_sf": {
+        "score": 10.0,
+        "correctness": 2.0,
+        "completeness": 2.0,
+        "grounding": 2.0,
+        "freshness": 2.0
+      },
+      "highperf": {
+        "score": 7.0,
+        "correctness": 2.0,
+        "completeness": 1.0,
+        "grounding": 2.0,
+        "freshness": 2.0
+      },
+      "standard_sf": {
+        "score": 9.0,
+        "correctness": 2.0,
+        "completeness": 2.0,
+        "grounding": 2.0,
+        "freshness": 2.0
+      },
+      "wins": {
+        "current_sf": 1,
+        "highperf": 0,
+        "standard_sf": 0,
+        "tie": 0
+      }
+    },
+    "native_answer_quality": {
+      "query_count": 0
+    },
+    "qps_probe": []
+  }
+}

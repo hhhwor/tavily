@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from concurrent.futures import Executor, TimeoutError, as_completed
+from dataclasses import replace
 from datetime import datetime, timedelta
 from typing import Callable, Optional, Protocol
 
@@ -9,7 +10,8 @@ from src.application.failures import search_failure
 from src.application.commands import SearchFilters
 from src.application.outcomes import PlannedQuery, RecallOutcome
 from src.application.ports.cache import CacheBackend
-from src.application.ports.runtime import Deadline
+from src.application.ports.resilience import ResiliencePolicy
+from src.application.ports.runtime import Deadline, DeadlineExceededError
 from src.application.ports.retrieval import (
     RetrievalBatch,
     RetrievalRequest,
@@ -23,6 +25,7 @@ class RecallSettings(Protocol):
     cache_enabled: bool
     cache_ttl: int
     per_provider_k: int
+    provider_timeout: int
 
 
 class RecallCoordinator:
@@ -36,21 +39,38 @@ class RecallCoordinator:
         executor: Executor,
         *,
         clock: Callable[[], datetime],
+        resilience: ResiliencePolicy | None = None,
     ) -> None:
         self._settings = settings
         self._registry = registry
         self._cache = cache
         self._executor = executor
         self._clock = clock
+        self._resilience = resilience
 
     def _cached_retrieve(
         self,
         source: RetrievalSource,
         request: RetrievalRequest,
         use_cache: bool,
+        deadline: Deadline | None,
     ) -> RetrievalBatch:
+        def retrieve() -> RetrievalBatch:
+            bounded = self._bound_request_timeout(request, deadline)
+            return source.retrieve(bounded)
+
+        def resilient_retrieve() -> RetrievalBatch:
+            if self._resilience is None:
+                return retrieve()
+            return self._resilience.call(
+                source.descriptor.id,
+                "search",
+                retrieve,
+                deadline=deadline,
+            )
+
         if not use_cache or self._cache is None:
-            return source.retrieve(request)
+            return resilient_retrieve()
         key = "|".join((
             source.descriptor.id,
             str(request.candidate_budget),
@@ -66,9 +86,22 @@ class RecallCoordinator:
             if not isinstance(cached, RetrievalBatch):
                 raise TypeError("retrieval cache value must be RetrievalBatch")
             return cached
-        batch = source.retrieve(request)
+        batch = resilient_retrieve()
         self._cache.set(key, batch, self._settings.cache_ttl)
         return batch
+
+    def _bound_request_timeout(
+        self,
+        request: RetrievalRequest,
+        deadline: Deadline | None,
+    ) -> RetrievalRequest:
+        timeout_seconds = float(self._settings.provider_timeout)
+        if deadline is not None:
+            remaining = deadline.remaining_seconds()
+            if remaining <= 0:
+                raise DeadlineExceededError("search deadline exceeded")
+            timeout_seconds = min(timeout_seconds, remaining)
+        return replace(request, timeout_seconds=max(0.001, timeout_seconds))
 
     @staticmethod
     def _language(query: str) -> str | None:
@@ -157,6 +190,7 @@ class RecallCoordinator:
                 source,
                 request,
                 use_cache,
+                deadline,
             ): source.descriptor
             for source, request in tasks
         }
@@ -177,6 +211,14 @@ class RecallCoordinator:
                     web.extend(items)
                 if items or descriptor.count_empty_as_used:
                     providers_used.append(descriptor.id)
+            except DeadlineExceededError:
+                failures.append(search_failure(
+                    stage="provider_search",
+                    source=descriptor.id,
+                    source_type=descriptor.kind,
+                    code="SEARCH_DEADLINE_EXCEEDED",
+                    message="search deadline exceeded",
+                ))
             except Exception as exc:
                 failures.append(search_failure(
                     stage="provider_search",

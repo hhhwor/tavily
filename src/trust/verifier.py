@@ -22,6 +22,7 @@ from src.trust.claims import decompose_claims
 from src.trust.entailment import (
     EntailmentDecision,
     EntailmentPair,
+    PartialEntailmentFailure,
     RuleEntailmentClassifier,
     SiliconFlowEntailmentClassifier,
     best_quote,
@@ -249,6 +250,24 @@ class ClaimVerifier:
         model_name = getattr(self.classifier, "name", "unknown")
         try:
             decisions = self.classifier.classify_pairs(pair_rows)
+        except PartialEntailmentFailure as exc:
+            decisions = dict(exc.decisions)
+            decisions.update(self.rule_fallback.classify_pairs(exc.failed_pairs))
+            if exc.decisions:
+                model_name = f"{model_name}+{self.rule_fallback.name}"
+            else:
+                model_name = self.rule_fallback.name
+            codes = ",".join(exc.error_codes) or "unknown"
+            failures.append(SearchFailure(
+                stage="claim_entailment",
+                source=getattr(self.classifier, "name", "unknown"),
+                code="ENTAILMENT_BACKEND_FAILED",
+                message=(
+                    f"蕴含后端局部降级: {len(exc.failed_pairs)}/{len(pair_rows)} 个 pair, "
+                    f"{exc.failed_batches}/{exc.total_batches} 个 batch; codes={codes}"
+                ),
+                recoverable=exc.recoverable,
+            ))
         except Exception as exc:
             decisions = self.rule_fallback.classify_pairs(pair_rows)
             model_name = self.rule_fallback.name
@@ -257,6 +276,7 @@ class ClaimVerifier:
                 source=getattr(self.classifier, "name", "unknown"),
                 code="ENTAILMENT_BACKEND_FAILED",
                 message=public_error_message(exc),
+                recoverable=bool(getattr(exc, "recoverable", True)),
             ))
 
         assessments = [
@@ -399,6 +419,8 @@ class ClaimVerifier:
         warnings = ["COUNTEREVIDENCE_NOT_SEARCHED"]
         if failures:
             warnings.append("ENTAILMENT_BACKEND_FALLBACK")
+            if "+" in model_name:
+                warnings.append("ENTAILMENT_BACKEND_PARTIAL_FALLBACK")
         return TrustAssessment(
             status=status,
             claims_total=total,

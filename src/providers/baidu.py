@@ -99,6 +99,24 @@ class BaiduSearchProvider(SearchProvider):
         return filters
 
     def search(self, query: str, top_k: int = 10, recency: Optional[str] = None) -> List[SearchResult]:
+        return self._search(query, top_k, recency, request=None)
+
+    def search_request(self, request: RetrievalRequest) -> List[SearchResult]:
+        return self._search(
+            request.query,
+            request.candidate_budget,
+            request.recency,
+            request=request,
+        )
+
+    def _search(
+        self,
+        query: str,
+        top_k: int,
+        recency: Optional[str],
+        *,
+        request: Optional[RetrievalRequest],
+    ) -> List[SearchResult]:
         body: Dict[str, Any] = {
             "messages": [{"role": "user", "content": trim_query(query)}],
             "search_source": "baidu_search_v2",
@@ -113,7 +131,12 @@ class BaiduSearchProvider(SearchProvider):
             "Content-Type": "application/json",
         }
         try:
-            resp = self._http.post(_ENDPOINT, headers=headers, json=body, timeout=self.timeout)
+            resp = self._http.post(
+                _ENDPOINT,
+                headers=headers,
+                json=body,
+                timeout=self.request_timeout(request),
+            )
             resp.raise_for_status()
             data = resp.json()
             if "references" not in data:

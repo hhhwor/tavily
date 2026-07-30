@@ -188,7 +188,9 @@ class OpenAlexProvider(SearchProvider):
         try:
             resp = self._http.post(
                 f"{self.base_url}{_SEARCH_PATH}",
-                json=body, headers=headers, timeout=self.timeout,
+                json=body,
+                headers=headers,
+                timeout=self.request_timeout(request),
             )
             resp.raise_for_status()
             hits = resp.json().get("results", [])

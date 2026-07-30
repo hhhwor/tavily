@@ -148,7 +148,10 @@ class TencentSearchProvider(SearchProvider):
 
         try:
             resp = self._http.post(
-                _ENDPOINT, headers=headers, data=payload.encode("utf-8"), timeout=self.timeout
+                _ENDPOINT,
+                headers=headers,
+                data=payload.encode("utf-8"),
+                timeout=self.request_timeout(request),
             )
             resp.raise_for_status()
             data = resp.json().get("Response", {})

@@ -13,3 +13,4 @@ class SearchFailure(BaseModel):
     code: str = ""
     message: str = ""
     recoverable: bool = True
+    retry_after_ms: Optional[int] = None

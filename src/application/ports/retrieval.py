@@ -55,12 +55,15 @@ class RetrievalRequest:
     time_to: datetime | None = None
     languages: tuple[str, ...] = ()
     jurisdictions: tuple[str, ...] = ()
+    timeout_seconds: float | None = None
 
     def __post_init__(self) -> None:
         if not self.query.strip():
             raise ValueError("RetrievalRequest.query 不能为空")
         if self.candidate_budget <= 0:
             raise ValueError("RetrievalRequest.candidate_budget 必须大于 0")
+        if self.timeout_seconds is not None and self.timeout_seconds <= 0:
+            raise ValueError("RetrievalRequest.timeout_seconds 必须大于 0")
         if self.time_from and self.time_to and self.time_from > self.time_to:
             raise ValueError("RetrievalRequest.time_from 不能晚于 time_to")
         object.__setattr__(self, "languages", tuple(self.languages))

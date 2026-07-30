@@ -9,6 +9,7 @@ import requests
 from src.application.ports.cache import CacheBackend
 from src.domain.errors import ExternalServiceError
 from src.infrastructure.cache import InMemoryCache
+from src.infrastructure.http_timeout import bounded_http_timeout
 from src.infrastructure.http_errors import external_http_error
 from src.domain.failures import SearchFailure
 
@@ -52,6 +53,15 @@ class SiliconFlowQueryRewriter:
         self._timeout = timeout
 
     def rewrite(self, query: str, *, academic: bool = False) -> str:
+        return self.rewrite_with_timeout(query, academic=academic)
+
+    def rewrite_with_timeout(
+        self,
+        query: str,
+        *,
+        academic: bool = False,
+        timeout_seconds: float | None = None,
+    ) -> str:
         mode = "academic" if academic else "general"
         key = f"rewrite:{self._model}:{mode}:{query}"
         cached = self._cache.get(key)
@@ -76,7 +86,7 @@ class SiliconFlowQueryRewriter:
                     "max_tokens": 64 if academic else 128,
                     "temperature": 0.0 if academic else 0.1,
                 },
-                timeout=self._timeout,
+                timeout=bounded_http_timeout(self._timeout, timeout_seconds),
             )
             response.raise_for_status()
             rewritten = response.json()["choices"][0]["message"]["content"].strip()

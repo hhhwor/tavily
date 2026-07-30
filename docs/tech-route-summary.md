@@ -3,7 +3,7 @@
 > 对象:本项目(面向 AI Agent / LLM 的通用 Web 搜索引擎,Tavily 路线)**当前已落地的真实实现**。
 > 一句话:**元搜索聚合**——包装现成搜索源 + 跨源去重/融合 + cross-encoder 段落级重排,以结构化 JSON 返回 LLM-ready 内容,**不自建全网爬虫与倒排索引**。另接入 **OpenAlex 学术检索(经本地 Chukonu 检索系统)** 与 **专利检索(houdutech 只读 ES)** 作为两条独立能力支线(学术论文 / 专利结果各自单独成块)。
 > 代码:[src/](../src/) ｜ 调研与选型对比:[agent-search-engine-tech-research.md](./agent-search-engine-tech-research.md) ｜ 学术引擎可行性:[academic-search-engine-feasibility.md](./academic-search-engine-feasibility.md) ｜ 评测体系:[eval-methodology.md](./eval-methodology.md)
-> 编写日期:2026-06-10 ｜ 更新:2026-06-11(接入 OpenAlex 学术检索 + provider 召回缓存)｜ 2026-06-16(接入专利检索 ES 支线)｜ 2026-06-17(专利源切换到 epo_docdb_v2 多语种索引;引擎升级 Python 3.11 + FastAPI 进程内挂载 MCP server `/mcp`)｜ 2026-06-21(专利索引切到读别名 `epo_docdb_read`→`epo_docdb_v2_20260620`)｜ 2026-07-17(统一 Ranking Profile、composition root、应用服务、不可变文档管线、外部错误边界与 Source Registry)
+> 编写日期:2026-06-10 ｜ 更新:2026-06-11(接入 OpenAlex 学术检索 + provider 召回缓存)｜ 2026-06-16(接入专利检索 ES 支线)｜ 2026-06-17(专利源切换到 epo_docdb_v2 多语种索引;引擎升级 Python 3.11 + FastAPI 进程内挂载 MCP server `/mcp`)｜ 2026-06-21(专利索引切到读别名 `epo_docdb_read`→`epo_docdb_v2_20260620`)｜ 2026-07-17(统一 Ranking Profile、composition root、应用服务、不可变文档管线、外部错误边界与 Source Registry)｜ 2026-07-29(豆包搜索作为正式 Web provider 接入多源聚合)
 
 本篇只讲**现在到底怎么做的**:分层、选型、默认开关、评测结论、运行方式。选型「为什么这么选 / 和谁对比过」见调研文档;评测「指标怎么算」见评测文档。
 
@@ -15,7 +15,7 @@ Agent 需要的不是给人导航的 SERP(标题+链接),而是**正文内容本
 
 落地路线的三条务实取舍:
 
-1. **不自建抓取层** —— 选用**自带正文摘要**的搜索源(腾讯/百度),省掉独立的 L2 正文抓取。
+1. **不自建抓取层** —— 选用**自带正文摘要**的搜索源(腾讯/百度/豆包),省掉独立的 L2 正文抓取。
 2. **重排 API 化** —— 用 SiliconFlow 云端 BGE 重排,零 GPU 依赖,延迟从本地 CPU 的数十秒降到 ~2.7s。
 3. **只做文本** —— 不碰视频/音频/图片,换取速度与 LLM 契合度。
 
@@ -34,14 +34,14 @@ POST /search {query, top_k, ranking_profile?, rerank_threshold_mode?, ...}
  L1 多源并发检索(ThreadPoolExecutor) ── web 源 + (命中学术意图时)OpenAlex + (命中专利意图时)专利 ES 同池并发
       │   SourceRegistry 按 descriptor.kind 选源;RetrievalRequest 明确时间区间/语言/辖区/预算
       │   ★ 召回缓存:命中则跳过该源 API 调用(时效查询 time_sensitive 不缓存)
-      │   web: 腾讯 SearchPro · 百度千帆 · SerpAPI(按 .env 凭证自动启用)
+      │   web 默认: 腾讯 SearchPro · 百度千帆 · 豆包 Search Infinity；SerpAPI 仅显式开关启用
       │   学术: OpenAlex /works(自带 relevance_score;摘要倒排索引重建为正文)
       │   专利: houdutech 只读 ES /{index}/_search(multi_match patent_name^3/abstract^2/title_zh^2/abstract_zh;中英文皆可)
       │   时效下传各源原生过滤(腾讯 FromTime/ToTime · 百度 search_recency_filter
-      │        · SerpAPI tbs · OpenAlex from_publication_date · 专利 ES range(application_date))
+      │        · 豆包 TimeRange · SerpAPI tbs · OpenAlex from_publication_date · 专利 ES range(application_date))
       │   返回不可变 RetrievalBatch + RetrievedDocument(实际查询/过滤/snapshot/限制/诊断)
       ▼
- L2 正文抓取  ── 省略(腾讯/百度直接返回正文;SerpAPI 用 snippet 充当;OpenAlex 用摘要;专利用摘要)
+ L2 正文抓取  ── 省略(腾讯/百度/豆包直接返回正文;SerpAPI 用 snippet 充当;OpenAlex 用摘要;专利用摘要)
       │
       ▼
  L3 + L4 跨源处理(由 RANKING_PROFILE 决定) ── web/学术/专利三路独立排序
@@ -78,7 +78,7 @@ POST /search {query, top_k, ranking_profile?, rerank_threshold_mode?, ...}
 | **组合根/生命周期** | 冻结 `Settings.from_env()` + `Container`;lifespan 统一创建/关闭 Engine、HTTP Session、Executor、MCP | [bootstrap.py](../src/bootstrap.py) · [config.py](../src/config.py) | ✅ |
 | **应用用例** | `SearchCommand` + `SearchService`;规划、召回、排序、PDF、Evidence、Trust、Answerability 通过不可变阶段 Outcome 协作 | [application/](../src/application/) · [domain/documents.py](../src/domain/documents.py) · [engine.py](../src/engine.py) | ✅ |
 | **L0 查询理解** | 规则版(NFKC 规范化 + 时效识别 + 学术意图识别 + 专利意图识别 + 输入校验)+ 可选 LLM 改写(SiliconFlow Qwen2.5-7B,LRU+TTL 缓存) | [l0.py](../src/l0.py) | ✅ 规则;LLM 改写默认关 |
-| **L1 搜索源** | `SourceDescriptor + RetrievalRequest/Batch + SourceRegistry`;腾讯 SearchPro + 百度千帆 + SerpAPI,凭证驱动自动注册,并发检索 | [application/ports/retrieval.py](../src/application/ports/retrieval.py) · [application/source_registry.py](../src/application/source_registry.py) · [providers/](../src/providers/) | ✅ |
+| **L1 搜索源** | `SourceDescriptor + RetrievalRequest/Batch + SourceRegistry`;默认腾讯 SearchPro + 百度千帆 + 豆包 Search Infinity；SerpAPI 保留为显式 opt-in 来源 | [application/ports/retrieval.py](../src/application/ports/retrieval.py) · [application/source_registry.py](../src/application/source_registry.py) · [providers/](../src/providers/) | ✅ |
 | **L1′ 学术源** | OpenAlex `/works`(独立能力支线;摘要倒排索引重建;凭证驱动启用) | [providers/openalex.py](../src/providers/openalex.py) | ✅ 需 `OPENALEX_API_KEY` |
 | **L1″ 专利源** | houdutech 只读 ES `/{index}/_search`(独立能力支线;multi_match 中文检索;URL 驱动启用) | [providers/patent_es.py](../src/providers/patent_es.py) | ✅ 需 `PATENT_ES_URL` |
 | **L2 抓取** | 省略(源自带正文) | — | ⏸ 不需要 |
@@ -108,9 +108,11 @@ POST /search {query, top_k, ranking_profile?, rerank_threshold_mode?, ...}
 |----|------|------|---------|---------|
 | **腾讯 SearchPro** | TC3-HMAC-SHA256(SecretId+Key,纯标准库) | ✅ `content`/`passage`/`score` | `FromTime`/`ToTime`(Unix 时间戳) | 中文强、英文弱 |
 | **百度千帆** | Bearer(单 key) | ✅ `content` | `search_recency_filter`(week/month/year 枚举) | 查询限 **72 字符**(汉字算 2),`trim_query()` 先剥口语前缀再硬截断 |
-| **SerpAPI** | api_key 查询参数 | ❌ 仅 snippet(用 snippet 充当 content) | Google `tbs`(qdr:d/w/m/y) | 100 次/月免费;补英文/全球覆盖 |
+| **豆包 Search Infinity** | API Key(仅注入子进程环境) | ✅ `Content`/`Summary`/`RankScore` | `OneDay`/`OneWeek`/`OneMonth`/`OneYear` 或日期区间 | 官方 MCP stdio；查询限 100 字符；惰性启动并复用持久会话；服务端固定到已验证 commit |
+| **Aliyun WebSearch** | ACS3-HMAC-SHA256(AccessKey,纯标准库) | ❌ snippet | `startTime`/`endTime`(日期) | 默认 `pro/global`；配置 AK/SK 后自动注册；可用 `ALIYUN_WEB_SEARCH_ENABLED=false` 紧急关闭 |
+| **SerpAPI（非默认）** | api_key 查询参数 | ❌ 仅 snippet(用 snippet 充当 content) | Google `tbs`(qdr:d/w/m/y) | 只有 `SERPAPI_ENABLED=true` 且有 Key 时注册；用于临时对照/补英文覆盖 |
 
-启用逻辑(`settings.enabled_providers`):**有哪家凭证就由 composition root 注册哪家**。`RecallCoordinator` 只依赖 `SourceRegistry`，按 descriptor.kind 使用共享 Executor 并发查询；结果在 Provider 边界即转为不可变文档并显式记录 source attribution、源内排名、实际过滤和 snapshot。
+启用逻辑(`settings.enabled_providers`):腾讯、百度、豆包、Aliyun 按凭证自动注册；Aliyun 可显式配置 `ALIYUN_WEB_SEARCH_ENABLED=false` 关闭。SerpAPI 即使存在 Key 也默认不注册，必须额外配置 `SERPAPI_ENABLED=true`。`RecallCoordinator` 只依赖 `SourceRegistry`，按 descriptor.kind 使用共享 Executor 并发查询；结果在 Provider 边界即转为不可变文档并显式记录 source attribution、源内排名、实际过滤和 snapshot。
 
 ### L3 — 去重 + 分块
 
@@ -157,7 +159,7 @@ POST /search {query, top_k, ranking_profile?, rerank_threshold_mode?, ...}
 
 ### 缓存 — provider 召回级([cache.py](../src/cache.py))
 
-目的:**避免重复调用搜索源 API**(腾讯/百度/SerpAPI/OpenAlex)。缓存的是每个 source 的不可变 `RetrievalBatch`，不是整体响应。
+目的:**避免重复调用搜索源 API**(腾讯/百度/豆包/SerpAPI/OpenAlex)。缓存的是每个 source 的不可变 `RetrievalBatch`，不是整体响应。
 
 - **粒度**:source 召回级。key 包含 `source_id|candidate_budget|recency|language|jurisdiction|query`。**改最终 `top_k` / 重排参数仍命中**召回缓存(只省搜索源 API,重排仍每次走);source 自身配置进程内不变,故不入 key。
 - **后端**:`CacheBackend` 抽象接口 + 进程内 `InMemoryCache`(`OrderedDict` LRU + 按 key TTL,带 `threading.Lock` 线程安全,记录命中率)。**接口化预留 Redis**:将来新增 `RedisCache(CacheBackend)` 并在 `build_cache` 加分支即可,engine 无感。单进程 uvicorn 进程内已足够;重启即清空。
@@ -177,7 +179,7 @@ POST /search {query, top_k, ranking_profile?, rerank_threshold_mode?, ...}
 |------|--------|------|----------------|
 | `RANKING_PROFILE` | **`quality`** | `quality`=文本+领域信号；`semantic`=纯文本；`fast`=无文本模型 | `quality`，低延迟场景用 `fast` |
 | `RERANK_BACKEND` | `siliconflow` | `siliconflow`/`bge`/`flashrank`/`none`；仅部署配置，请求不可覆盖 | `siliconflow`(零 GPU、~2.7s) |
-| `RERANK_MODEL` | `BAAI/bge-reranker-v2-m3` | 重排模型；仅部署配置，请求不可覆盖 | 同默认 |
+| `RERANK_MODEL` | `Qwen/Qwen3-Reranker-0.6B` | 重排模型；仅部署配置，请求不可覆盖 | 同默认 |
 | `RERANK_THRESHOLD` | `0.3` | 融合前的文本相关性门槛；`0` 等同关闭 | 同默认 |
 | `RERANK_THRESHOLD_MODE` | **`prefer`** | `off`=关闭；`prefer`=达标优先并回填；`strict`=硬过滤 | `prefer`；只在确需空结果时使用 `strict` |
 | `RERANK_ENABLED` | 兼容字段 | `false → fast`；`true` 使用非 fast 默认档 | 新调用改用 `RANKING_PROFILE` |
@@ -185,7 +187,14 @@ POST /search {query, top_k, ranking_profile?, rerank_threshold_mode?, ...}
 | `FUSION_ENABLED` | 兼容字段 | 非 fast 场景中 `true → quality`、`false → semantic` | 新调用改用 `RANKING_PROFILE` |
 | `CHUNK_MAX_CHARS` / `CHUNK_OVERLAP` | `400` / `50` | 分块大小与重叠 | 同默认 |
 | `SEARCH_TOP_K` / `SEARCH_PER_PROVIDER_K` | `10` / `10` | 返回条数 / 每源召回数 | 同默认 |
-| `SEARCH_PROVIDER_TIMEOUT` | `15` | 单源超时(秒) | 同默认 |
+| `SEARCH_PROVIDER_TIMEOUT` | `15` | 单源超时(秒)，包含豆包 MCP 首次启动与工具调用预算 | 同默认 |
+| `ASK_ECHO_SEARCH_INFINITY_API_KEY` | 空 | 豆包搜索 API Key；配置后自动注册 `doubao` Web 源 | 通过 `.env`/密钥管理注入，勿提交 |
+| `DOUBAO_UVX_PATH` | 自动探测 | 可选 `uvx` 可执行文件路径；依次查 PATH、`.venv311/bin`、`.venv/bin` | 部署路径不标准时显式配置 |
+| `ALIBABA_CLOUD_ACCESS_KEY_ID` / `ALIBABA_CLOUD_ACCESS_KEY_SECRET` | 空 | Aliyun WebSearch 凭证；成对配置后自动注册 `aliyun` Web 源 | 通过 `.env`/密钥管理注入，勿提交 |
+| `ALIYUN_WEB_SEARCH_ENABLED` | 未设置=`auto` | 未设置时随完整 AK/SK 自动启用；`false` 强制关闭；`true` 要求完整 AK/SK | 默认不设置 |
+| `ALIYUN_WEB_SEARCH_TYPE` / `ALIYUN_WEB_SEARCH_REGION` | `pro` / `global` | Aliyun 搜索规格与区域 | 默认值 |
+| `SERPAPI_ENABLED` | **`false`** | SerpAPI 显式启用开关；仅 `true` 且同时有 Key 时注册 | 保持 `false` |
+| `SERPAPI_API_KEY` | 空 | SerpAPI 凭证；单独配置 Key 不会启用来源 | 仅临时对照时配置 |
 | `OPENALEX_API_URL` | `http://localhost:9001` | 学术数据源 = 本地 Chukonu 检索系统基址(其 ES 灌了 5 万条 OpenAlex);配了即启用学术检索 | 指回全量服务可扩覆盖 |
 | `OPENALEX_API_KEY` | 空 | 可选 `X-API-Key`(Chukonu 服务未配 `SE4AI_API_KEYS` 时全部放行,留空即可) | 服务开鉴权时再配 |
 | `OPENALEX_ENABLED` | 未设置=`auto` | `false` 强制关；`true` 要求 URL；未设置按 URL 自动启用 | 需要临时停用时显式 `false` |
@@ -203,17 +212,23 @@ POST /search {query, top_k, ranking_profile?, rerank_threshold_mode?, ...}
 | `CACHE_BACKEND` | `memory` | 进程内 LRU+TTL(预留 `redis`,未实现时回退 memory) | 多实例/持久化再换 redis |
 | `CACHE_TTL` | `21600` | 非时效结果缓存 TTL(秒,默认 6h) | 同默认 |
 | `CACHE_MAX_SIZE` | `512` | 进程内缓存条目上限(LRU 淘汰) | 同默认 |
-| `EXECUTOR_MAX_WORKERS` | `16` | 召回、排序与 PDF 共用的有界线程池 | 按并发与外部限流调整 |
+| `EXECUTOR_MAX_WORKERS` | `16` | Provider 召回线程池；保留原变量名以兼容现有部署 | 按搜索并发与来源数调整 |
+| `RANKING_EXECUTOR_MAX_WORKERS` | `4` | 独立重排线程池，避免慢模型占用召回槽位 | 按模型并发限制调整 |
+| `PDF_EXECUTOR_MAX_WORKERS` | `4` | 独立 PDF 富化线程池，避免下载阻塞召回/重排 | 按 PDF 服务容量调整 |
+| `RESILIENCE_MAX_ATTEMPTS` | `2` | 可恢复外部错误的总尝试次数（含首次） | `2`，避免放大尾延迟 |
+| `RESILIENCE_BACKOFF_BASE_MS` / `RESILIENCE_BACKOFF_MAX_MS` | `100` / `1000` | 指数退避区间，自动加入 jitter 并服从 deadline | 同默认 |
+| `CIRCUIT_FAILURE_THRESHOLD` | `3` | 连续最终失败达到该值后打开依赖熔断器 | 同默认 |
+| `CIRCUIT_OPEN_SECONDS` | `30` | 熔断保持时间，之后放行单个 half-open 探针 | 同默认 |
 | `MCP_ENABLED` | `auto` | `false`=仅 REST；`true`=MCP 依赖失败则启动失败；`auto`=缺依赖时降级 | 部署已安装 MCP 时保留 `auto` |
 | `API_AUTH_TOKEN` | 空 | API 鉴权 token(可逗号分隔多个);配了即对 `/search` 与 `/mcp` 强制 Bearer/X-API-Key | 对外暴露时**必配** |
 
-凭证(任一组齐全即自动启用对应源):`TENCENT_SECRET_ID`+`TENCENT_SECRET_KEY` · `QIANFAN_API_KEY` · `SERPAPI_API_KEY`;`SILICONFLOW_API_KEY`(重排/改写共用);`OPENALEX_API_URL`(学术检索数据源 = 本地 Chukonu 服务,有默认值;独立于 web 源);`PATENT_ES_URL`(专利检索,独立于 web 源,缺失则专利能力静默关闭)。
+凭证驱动自动启用的 Web 源:`TENCENT_SECRET_ID`+`TENCENT_SECRET_KEY` · `QIANFAN_API_KEY` · `ASK_ECHO_SEARCH_INFINITY_API_KEY` · `ALIBABA_CLOUD_ACCESS_KEY_ID`+`ALIBABA_CLOUD_ACCESS_KEY_SECRET`。Aliyun 可用 `ALIYUN_WEB_SEARCH_ENABLED=false` 关闭。SerpAPI 例外：必须同时配置 `SERPAPI_ENABLED=true` 与 `SERPAPI_API_KEY`。其他凭证:`SILICONFLOW_API_KEY`(重排/改写共用);`OPENALEX_API_URL`(学术检索数据源 = 本地 Chukonu 服务,有默认值;独立于 web 源);`PATENT_ES_URL`(专利检索,独立于 web 源,缺失则专利能力静默关闭)。
 
 ---
 
 ## 6. 评测结论(IR,30 查询,Claude LLM-as-judge,k=10)
 
-> 完整方法论(指标公式、pooling、判分缓存)见 [eval-methodology.md](./eval-methodology.md);最新数据见 [eval/report.md](../eval/report.md)。
+> 完整方法论(指标公式、pooling、判分缓存)见 [eval-methodology.md](./eval-methodology.md);最新数据见 [eval/report.md](../eval/report.md)。下表是豆包接入前的历史三源 IR 实验，不能直接当作当前四源聚合分数；豆包 FreshQA 对照见 [正式评测报告](./chukonu-web-search-evaluation-report.md)。
 
 | 配置 | NDCG@10 | Recall@10 | P@10 | MRR | 重排延迟 |
 |------|---------|-----------|------|-----|---------|
@@ -345,7 +360,7 @@ PY
 ```
 
 - **网页端**:`GET /` 返回单文件搜索界面([static/index.html](../src/static/index.html)),无构建依赖。
-- **召回缓存**:默认开(`CACHE_ENABLED=true`)。同一非时效查询第二次命中可省搜索源 API;`GET /health` 的 `cache` 字段看命中率。设 `CACHE_ENABLED=false` 关闭。
+- **召回缓存**:默认开(`CACHE_ENABLED=true`)。同一非时效查询第二次命中可省搜索源 API;`GET /health` 的 `cache` 字段看命中率，`resilience.dependencies` 查看各依赖熔断状态、重试与拒绝计数。设 `CACHE_ENABLED=false` 关闭。
 - **从本地访问**:EC2 无公网 IP,用 SSH 隧道 `ssh -i <key.pem> -N -L 8000:localhost:8000 ec2-user@<EC2>`,浏览器开 `http://localhost:8000/`;MCP 也走同一隧道(`http://localhost:8000/mcp`)。
 
 ### 鉴权(API token)
@@ -363,20 +378,20 @@ TOKEN=$(grep ^API_AUTH_TOKEN= .env | cut -d= -f2)
 curl -s -X POST localhost:8000/search -H "Authorization: Bearer $TOKEN" \
   -H 'Content-Type: application/json' -d '{"query":"...","top_k":3}'
 ```
-- **依赖**:`.venv311`(Python 3.11,`uv` 建)= `requirements.txt` + `mcp`;**未装** torch/sentence-transformers(本地 `RERANK_BACKEND=bge` 才需,默认 siliconflow API 不需要)。磁盘在 `/`(500G,充足)。
+- **依赖**:`.venv311`(Python 3.11,`uv` 建)= `requirements.txt`；豆包来源额外通过其中的 `uv/uvx` 拉起固定版本 MCP server；**未装** torch/sentence-transformers(本地 `RERANK_BACKEND=bge` 才需,默认 siliconflow API 不需要)。磁盘在 `/`(500G,充足)。
 
 ---
 
 ## 8. 现状与待办
 
-**已落地(相对调研文档的新增)**:L0 LLM 查询改写、SerpAPI 第三源，以及统一的 `quality/semantic/fast` 排序 Profile 和 `off/prefer/strict` 阈值策略。旧 `FusionReranker` 仅保留历史评测兼容。**OpenAlex 学术检索**与**专利检索(houdutech 只读 ES)**已作为 descriptor 驱动的垂直来源注册并通过端到端验证；应用层不再为两者保留镜像式专用召回槽位。**source 召回级缓存**保存不可变 `RetrievalBatch`，避免重复调用搜索源 API。
+**已落地(相对调研文档的新增)**:L0 LLM 查询改写、豆包 Search Infinity 与 Aliyun WebSearch 正式 Web 来源，以及统一的 `quality/semantic/fast` 排序 Profile 和 `off/prefer/strict` 阈值策略。SerpAPI 适配器仍保留，但已从默认来源移除，仅在显式配置 `SERPAPI_ENABLED=true` 时注册。四个默认 Web provider 并发召回，进入同一去重、融合和重排链路；豆包 MCP stdio 会话由 provider 惰性启动、进程内复用并随 Engine 关闭。旧 `FusionReranker` 仅保留历史评测兼容。**OpenAlex 学术检索**与**专利检索(houdutech 只读 ES)**已作为 descriptor 驱动的垂直来源注册并通过端到端验证；应用层不再为两者保留镜像式专用召回槽位。**source 召回级缓存**保存不可变 `RetrievalBatch`，避免重复调用搜索源 API。
 
 **与调研的关键差异**:
 
 | 调研建议 | 实际落地 | 理由 |
 |---------|---------|------|
-| Brave 作主搜索源 | 腾讯 + 百度 + SerpAPI | Brave 取消免费层且中文弱;腾讯/百度免新成本、中文强、自带正文 |
-| Trafilatura/Crawl4AI 抓正文(L2) | 省略 | 腾讯/百度接口直接返回正文 |
+| Brave 作主搜索源 | 默认腾讯 + 百度 + 豆包 + Aliyun；SerpAPI 仅 opt-in | Brave 取消免费层且中文弱；四源覆盖互补，Aliyun 由融合与重排控制 |
+| Trafilatura/Crawl4AI 抓正文(L2) | 省略 | 腾讯/百度/豆包接口直接返回正文 |
 | 自托管 BGE 重排 | SiliconFlow API(同模型权重) | 质量持平、零 GPU、延迟降一个数量级 |
 | 学术检索自建向量库 | OpenAlex API 召回 + 复用现有 cross-encoder 重排 | MVP 零新增基础设施;先接 API 补垂直能力,向量索引列为演进 |
 | 专利检索自建索引 | 接现成只读专利 ES + 复用现有 cross-encoder 重排 | 既有集群数据现成;镜像学术支线范式,零新增基础设施 |
@@ -405,3 +420,4 @@ curl -s -X POST localhost:8000/search -H "Authorization: Bearer $TOKEN" \
 | [academic-search-engine-feasibility.md](./academic-search-engine-feasibility.md) | **学术引擎可行性** —— 数据源全景、自建可行性、OpenAlex 接入定位 |
 | [eval-methodology.md](./eval-methodology.md) | **评测体系** —— 指标公式、LLM-as-judge、pooling、复现 |
 | [mcp-usage.md](./mcp-usage.md) | **MCP 使用文档** —— `chukonu-web-search` 工具说明、鉴权、接入(Claude Code/Desktop/Inspector)、本地/外网 |
+| [agent-search-stability-summary.md](./agent-search-stability-summary.md) | **稳定性改造总览** —— Deadline、资源隔离、重试/熔断、降级矩阵与质量/并发门槛 |

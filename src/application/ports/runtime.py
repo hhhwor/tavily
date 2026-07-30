@@ -12,6 +12,10 @@ class Clock(Protocol):
     def monotonic(self) -> float: ...
 
 
+class DeadlineExceededError(TimeoutError):
+    """Raised before external work starts when its request budget is exhausted."""
+
+
 @dataclass(frozen=True, slots=True)
 class Deadline:
     expires_at: float

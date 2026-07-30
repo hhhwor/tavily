@@ -7,6 +7,7 @@ from pydantic import ValidationError
 from src.interfaces.presenters import McpSearchPresenter
 from src.interfaces.schemas import SearchRequest
 from src.domain.search_api import (
+    FailureDetail,
     QualityMix,
     RequestedFilters,
     RetrievalAssessment,
@@ -79,7 +80,40 @@ def test_mcp_presenter_is_lossless_search_v1_identity_projection():
     restored = McpSearchPresenter.restore(payload)
 
     assert payload["schema_version"] == "search.v1"
+    assert payload["result_set"]["counts_by_stage"] == {
+        "recalled": {"web": 0, "academic": 0, "patent": 0},
+        "ranked": {"web": 0, "academic": 0, "patent": 0},
+        "assembled": {"web": 0, "academic": 0, "patent": 0},
+        "selected": {"web": 0, "academic": 0, "patent": 0},
+    }
     assert restored == response
+
+
+def test_search_failure_exposes_machine_readable_degradation():
+    response = _response().model_copy(update={
+        "status": "partial",
+        "failures": [
+            FailureDetail(
+                stage="rerank",
+                source="web_reranker",
+                code="RERANK_TIMEOUT",
+                retryable=True,
+                degradation={
+                    "action": "use_unreranked_results",
+                    "impact": "quality",
+                    "retry_owner": "server",
+                },
+            )
+        ],
+    })
+
+    payload = McpSearchPresenter.present(response)
+
+    assert payload["failures"][0]["degradation"] == {
+        "action": "use_unreranked_results",
+        "impact": "quality",
+        "retry_owner": "server",
+    }
 
 
 def test_mcp_presenter_rejects_unknown_contract_version():

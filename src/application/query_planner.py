@@ -7,6 +7,8 @@ from src.application.commands import SearchCommand
 from src.application.failures import search_failure
 from src.application.outcomes import PlannedQuery
 from src.application.ports.query_rewriter import QueryRewriter
+from src.application.ports.resilience import ResiliencePolicy
+from src.application.ports.runtime import Deadline, DeadlineExceededError
 from src.l0 import plan_query
 from src.domain.failures import SearchFailure
 from src.domain.search import SearchPlan
@@ -36,10 +38,12 @@ class QueryPlanner:
         rewriter: QueryRewriter | None = None,
         *,
         plan_query_fn: PlanQuery = plan_query,
+        resilience: ResiliencePolicy | None = None,
     ) -> None:
         self._settings = settings
         self._rewriter = rewriter
         self._plan_query = plan_query_fn
+        self._resilience = resilience
 
     def plan(
         self,
@@ -48,6 +52,7 @@ class QueryPlanner:
         *,
         academic_available: bool,
         patent_available: bool,
+        deadline: Deadline | None = None,
     ) -> PlannedQuery:
         """规划 Web/Academic/Patent 查询，并保留原链路的失败语义。"""
         top_k = command.limit
@@ -71,7 +76,18 @@ class QueryPlanner:
         failures: list[SearchFailure] = list(plan.failures)
         if rewrite and self._settings.siliconflow_api_key and self._rewriter is not None:
             try:
-                rewritten = self._rewriter.rewrite(plan.normalized_query)
+                rewritten = self._rewrite(
+                    plan.normalized_query,
+                    deadline=deadline,
+                )
+            except DeadlineExceededError:
+                failures.append(search_failure(
+                    stage="query_rewrite",
+                    source="siliconflow",
+                    code="SEARCH_DEADLINE_EXCEEDED",
+                    message="search deadline exceeded",
+                ))
+                rewritten = plan.normalized_query
             except Exception as exc:
                 failures.append(search_failure(
                     stage="query_rewrite",
@@ -116,9 +132,19 @@ class QueryPlanner:
         ):
             if self._rewriter is not None:
                 try:
-                    academic_query = self._rewriter.rewrite(
-                        search_query, academic=True
+                    academic_query = self._rewrite(
+                        search_query,
+                        academic=True,
+                        deadline=deadline,
                     )
+                except DeadlineExceededError:
+                    failures.append(search_failure(
+                        stage="academic_query_rewrite",
+                        source="siliconflow",
+                        source_type="academic",
+                        code="SEARCH_DEADLINE_EXCEEDED",
+                        message="search deadline exceeded",
+                    ))
                 except Exception as exc:
                     failures.append(search_failure(
                         stage="academic_query_rewrite",
@@ -136,4 +162,42 @@ class QueryPlanner:
             do_academic=do_academic,
             do_patent=do_patent,
             failures=tuple(failures),
+        )
+
+    def _rewrite(
+        self,
+        query: str,
+        *,
+        academic: bool = False,
+        deadline: Deadline | None = None,
+    ) -> str:
+        def invoke() -> str:
+            timeout_seconds = None
+            if deadline is not None:
+                timeout_seconds = deadline.remaining_seconds()
+                if timeout_seconds <= 0:
+                    raise DeadlineExceededError("search deadline exceeded")
+            rewrite_with_timeout = getattr(
+                self._rewriter, "rewrite_with_timeout", None
+            )
+            if callable(rewrite_with_timeout):
+                return rewrite_with_timeout(
+                    query,
+                    academic=academic,
+                    timeout_seconds=timeout_seconds,
+                )
+            return self._rewriter.rewrite(query, academic=academic)
+
+        if self._resilience is None:
+            return invoke()
+        dependency = (
+            "siliconflow:academic-rewrite"
+            if academic
+            else "siliconflow:query-rewrite"
+        )
+        return self._resilience.call(
+            dependency,
+            "rewrite",
+            invoke,
+            deadline=deadline,
         )

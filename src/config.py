@@ -104,7 +104,15 @@ class Settings:
     qianfan_api_key: str = field(default="", repr=False)
     tencent_secret_id: str = field(default="", repr=False)
     tencent_secret_key: str = field(default="", repr=False)
+    doubao_api_key: str = field(default="", repr=False)
+    doubao_uvx_path: str = ""
+    aliyun_access_key_id: str = field(default="", repr=False)
+    aliyun_access_key_secret: str = field(default="", repr=False)
+    aliyun_web_search_enabled: bool = True
+    aliyun_web_search_type: str = "pro"
+    aliyun_web_search_region: str = "global"
     serpapi_api_key: str = field(default="", repr=False)
+    serpapi_enabled: bool = False
 
     default_top_k: int = 10
     per_provider_k: int = 10
@@ -116,7 +124,7 @@ class Settings:
 
     ranking_profile: str = "quality"
     rerank_backend: str = "siliconflow"
-    rerank_model: str = "BAAI/bge-reranker-v2-m3"
+    rerank_model: str = "Qwen/Qwen3-Reranker-0.6B"
     rerank_device: Optional[str] = None
     rerank_cache_dir: str = "/data/.flashrank"
     rerank_threshold: float = 0.3
@@ -168,7 +176,16 @@ class Settings:
     cache_backend: str = "memory"
     cache_ttl: int = 21600
     cache_max_size: int = 512
+    # Recall keeps the legacy EXECUTOR_MAX_WORKERS budget. Ranking and PDF use
+    # dedicated pools so a slow external workload cannot consume recall slots.
     executor_max_workers: int = 16
+    ranking_executor_max_workers: int = 4
+    pdf_executor_max_workers: int = 4
+    resilience_max_attempts: int = 2
+    resilience_backoff_base_ms: int = 100
+    resilience_backoff_max_ms: int = 1000
+    circuit_failure_threshold: int = 3
+    circuit_open_seconds: int = 30
 
     api_auth_token: str = field(default="", repr=False)
     mcp_mode: str = "auto"
@@ -188,6 +205,38 @@ class Settings:
         if bool(env.get("TENCENT_SECRET_ID")) != bool(env.get("TENCENT_SECRET_KEY")):
             raise ValueError(
                 "TENCENT_SECRET_ID 与 TENCENT_SECRET_KEY 必须同时配置"
+            )
+        serpapi_enabled = _bool(env, "SERPAPI_ENABLED", False)
+        if serpapi_enabled and not env.get("SERPAPI_API_KEY"):
+            raise ValueError(
+                "SERPAPI_ENABLED=true 时必须配置 SERPAPI_API_KEY"
+            )
+        aliyun_id = env.get("ALIBABA_CLOUD_ACCESS_KEY_ID", "")
+        aliyun_secret = env.get("ALIBABA_CLOUD_ACCESS_KEY_SECRET", "")
+        if bool(aliyun_id) != bool(aliyun_secret):
+            raise ValueError(
+                "ALIBABA_CLOUD_ACCESS_KEY_ID 与 "
+                "ALIBABA_CLOUD_ACCESS_KEY_SECRET 必须同时配置"
+            )
+        aliyun_flag = _optional_bool(env, "ALIYUN_WEB_SEARCH_ENABLED")
+        aliyun_enabled = (
+            bool(aliyun_id and aliyun_secret)
+            if aliyun_flag is None
+            else aliyun_flag
+        )
+        if aliyun_enabled and not aliyun_id:
+            raise ValueError(
+                "ALIYUN_WEB_SEARCH_ENABLED=true 时必须配置阿里云 AccessKey"
+            )
+        aliyun_type = env.get("ALIYUN_WEB_SEARCH_TYPE", "pro").strip().lower()
+        if aliyun_type not in {"pro", "lite"}:
+            raise ValueError("ALIYUN_WEB_SEARCH_TYPE 仅支持 pro / lite")
+        aliyun_region = env.get(
+            "ALIYUN_WEB_SEARCH_REGION", "global"
+        ).strip().lower()
+        if aliyun_region not in {"global", "mainland_china"}:
+            raise ValueError(
+                "ALIYUN_WEB_SEARCH_REGION 仅支持 global / mainland_china"
             )
 
         rerank_backend = env.get("RERANK_BACKEND", "siliconflow")
@@ -220,7 +269,18 @@ class Settings:
             qianfan_api_key=env.get("QIANFAN_API_KEY", ""),
             tencent_secret_id=env.get("TENCENT_SECRET_ID", ""),
             tencent_secret_key=env.get("TENCENT_SECRET_KEY", ""),
+            doubao_api_key=env.get(
+                "ASK_ECHO_SEARCH_INFINITY_API_KEY",
+                "",
+            ),
+            doubao_uvx_path=env.get("DOUBAO_UVX_PATH", ""),
+            aliyun_access_key_id=aliyun_id,
+            aliyun_access_key_secret=aliyun_secret,
+            aliyun_web_search_enabled=aliyun_enabled,
+            aliyun_web_search_type=aliyun_type,
+            aliyun_web_search_region=aliyun_region,
             serpapi_api_key=env.get("SERPAPI_API_KEY", ""),
+            serpapi_enabled=serpapi_enabled,
             default_top_k=_int(env, "SEARCH_TOP_K", 10, minimum=1),
             per_provider_k=_int(env, "SEARCH_PER_PROVIDER_K", 10, minimum=1),
             provider_timeout=_int(env, "SEARCH_PROVIDER_TIMEOUT", 15, minimum=1),
@@ -236,7 +296,7 @@ class Settings:
             ),
             ranking_profile=ranking.profile,
             rerank_backend=rerank_backend,
-            rerank_model=env.get("RERANK_MODEL", "BAAI/bge-reranker-v2-m3"),
+            rerank_model=env.get("RERANK_MODEL", "Qwen/Qwen3-Reranker-0.6B"),
             rerank_device=env.get("RERANK_DEVICE", "") or None,
             rerank_cache_dir=env.get("RERANK_CACHE_DIR", "/data/.flashrank"),
             rerank_threshold=ranking.threshold,
@@ -286,6 +346,27 @@ class Settings:
             cache_ttl=_int(env, "CACHE_TTL", 21600, minimum=0),
             cache_max_size=_int(env, "CACHE_MAX_SIZE", 512, minimum=1),
             executor_max_workers=_int(env, "EXECUTOR_MAX_WORKERS", 16, minimum=1),
+            ranking_executor_max_workers=_int(
+                env, "RANKING_EXECUTOR_MAX_WORKERS", 4, minimum=1
+            ),
+            pdf_executor_max_workers=_int(
+                env, "PDF_EXECUTOR_MAX_WORKERS", 4, minimum=1
+            ),
+            resilience_max_attempts=_int(
+                env, "RESILIENCE_MAX_ATTEMPTS", 2, minimum=1
+            ),
+            resilience_backoff_base_ms=_int(
+                env, "RESILIENCE_BACKOFF_BASE_MS", 100, minimum=0
+            ),
+            resilience_backoff_max_ms=_int(
+                env, "RESILIENCE_BACKOFF_MAX_MS", 1000, minimum=0
+            ),
+            circuit_failure_threshold=_int(
+                env, "CIRCUIT_FAILURE_THRESHOLD", 3, minimum=1
+            ),
+            circuit_open_seconds=_int(
+                env, "CIRCUIT_OPEN_SECONDS", 30, minimum=1
+            ),
             api_auth_token=env.get("API_AUTH_TOKEN", ""),
             mcp_mode=_mcp_mode(env.get("MCP_ENABLED", "auto")),
             mcp_dns_rebinding_protection=_bool(
@@ -326,7 +407,15 @@ class Settings:
             names.append("tencent")
         if self.qianfan_api_key:
             names.append("baidu")
-        if self.serpapi_api_key:
+        if self.doubao_api_key:
+            names.append("doubao")
+        if (
+            self.aliyun_web_search_enabled
+            and self.aliyun_access_key_id
+            and self.aliyun_access_key_secret
+        ):
+            names.append("aliyun")
+        if self.serpapi_enabled and self.serpapi_api_key:
             names.append("serpapi")
         return tuple(names)
 

@@ -549,7 +549,7 @@ Canonical 请求：
 设计规则：
 
 - 最小请求只有 `query`；`limit` 默认 10、范围 1–20，是最终全局结果数，不复用旧 `top_k` 的“每分支上限”语义；
-- V1 不提供分页或类型配额，避免后续请求重新检索并改变 seed；需要更广覆盖时升级到 `/research`；
+- V1 不提供分页或调用方可配置的类型配额；显式请求多个 `source_types` 且 `limit` 足够时，最终选择为每个有候选的类型保留至少一条，其余名额继续按全局相关性填充；需要更广覆盖时升级到 `/research`；
 - `source_types` 缺省为自动路由，显式数组表示只检索这些类型；
 - 过滤器必须按 source 返回 `applied/post_filtered/unsupported/not_applicable`，不能用全局 applied 暗示所有来源都执行了同一过滤；
 - 排序由服务端固定为“相关性 + 来源可用性 + 基础 Evidence 质量”，只服务检索结果排序，不表示事实真实性；
@@ -649,7 +649,13 @@ Canonical 响应：
   "result_set": {
     "returned": 3,
     "limit": 10,
-    "counts_by_type": {"web": 1, "academic": 1, "patent": 1}
+    "counts_by_type": {"web": 1, "academic": 1, "patent": 1},
+    "counts_by_stage": {
+      "recalled": {"web": 8, "academic": 5, "patent": 5},
+      "ranked": {"web": 8, "academic": 5, "patent": 5},
+      "assembled": {"web": 8, "academic": 5, "patent": 5},
+      "selected": {"web": 1, "academic": 1, "patent": 1}
+    }
   },
   "retrieval_assessment": {
     "status": "usable",
@@ -1279,7 +1285,7 @@ SearchSeedStore 是 `/search` 的轻量基础依赖，与研究 worker/模型隔
 阶段降级遵循保守原则：
 
 - provenance/locator 解析失败时保留发现线索并标为 `discovery_only`，不伪造 locator；
-- entailment 模型超时后可降级到字面和结构化规则，规则不能直接证明时返回 `insufficient`；
+- entailment 模型按 batch 隔离故障：失败批次重试一次，仍失败时仅对缺失 pair 降级到字面和结构化规则，保留其他批次已经成功的模型判定；规则不能直接证明时返回 `insufficient`；
 - 反证检索失败、OCR/翻译失败或全文受限时保留现有 evidence，并写入 gap、failure 和 stop reason；
 - 单一研究阶段失败不得回写或改变原 `/search` 响应，只影响 ResearchTask；
 - source 恢复后重试必须从最后一个已提交的 `evidence_set_revision` 继续，避免重复计数和重复计费。

@@ -38,17 +38,20 @@ class ExternalServiceError(RuntimeError):
         code: str,
         recoverable: bool = True,
         cause: Optional[BaseException] = None,
+        retry_after_seconds: float | None = None,
     ) -> None:
         self.provider = provider
         self.code = code
         self.recoverable = recoverable
         self.cause = cause
+        self.retry_after_seconds = retry_after_seconds
         super().__init__(f"{provider} external service failed ({code})")
 
     def __repr__(self) -> str:
         return (
             f"ExternalServiceError(provider={self.provider!r}, code={self.code!r}, "
-            f"recoverable={self.recoverable!r})"
+            f"recoverable={self.recoverable!r}, "
+            f"retry_after_seconds={self.retry_after_seconds!r})"
         )
 
 

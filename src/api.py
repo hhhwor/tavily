@@ -144,6 +144,7 @@ def create_app(
             "auth": settings.auth_enabled,
             "mcp": current.mcp_available,
             "cache": engine.cache.stats() if engine.cache else {"enabled": False},
+            "resilience": current.resilience.snapshot(),
         }
 
     @application.post("/search", response_model=SearchResponse)

@@ -1,0 +1,114 @@
+{
+  "schema_version": "quality-corpus.v1",
+  "k": 5,
+  "queries": [
+    {
+      "id": "web_vector_database",
+      "track": "web",
+      "query": "vector database indexing benchmark",
+      "candidates": [
+        {"id": "w1", "relevance": 3, "title": "Vector database indexing benchmark", "content": "Comparative benchmark of HNSW and IVF vector database indexes.", "url": "https://golden.test/vector-benchmark", "source": "one", "provider_rank": 3},
+        {"id": "w2", "relevance": 2, "title": "HNSW indexing guide", "content": "Vector database indexing latency and recall tradeoffs.", "url": "https://golden.test/hnsw-guide", "source": "two", "provider_rank": 0},
+        {"id": "w3", "relevance": 1, "title": "Database benchmark", "content": "Relational database transaction benchmark.", "url": "https://golden.test/sql-benchmark", "source": "one", "provider_rank": 1},
+        {"id": "w4", "relevance": 0, "title": "Vector illustration tutorial", "content": "Create vector artwork with drawing software.", "url": "https://golden.test/vector-art", "source": "two", "provider_rank": 2},
+        {"id": "w5", "relevance": 0, "title": "Travel index", "content": "A city travel directory and hotel index.", "url": "https://golden.test/travel", "source": "one", "provider_rank": 0}
+      ]
+    },
+    {
+      "id": "web_sodium_battery",
+      "track": "web",
+      "query": "sodium ion battery cathode commercialization",
+      "candidates": [
+        {"id": "w6", "relevance": 3, "title": "Sodium ion battery cathode commercialization", "content": "Commercial deployment of layered oxide cathode materials for sodium ion batteries.", "url": "https://golden.test/sodium-commercial", "source": "one", "provider_rank": 4},
+        {"id": "w7", "relevance": 2, "title": "Sodium ion cathode materials", "content": "Prussian blue and layered oxide battery cathode supply chains.", "url": "https://golden.test/sodium-materials", "source": "two", "provider_rank": 0},
+        {"id": "w8", "relevance": 1, "title": "Lithium ion battery market", "content": "Commercial lithium cathode production capacity.", "url": "https://golden.test/lithium-market", "source": "one", "provider_rank": 1},
+        {"id": "w9", "relevance": 0, "title": "Sodium nutrition", "content": "Dietary sodium health guidance.", "url": "https://golden.test/nutrition", "source": "two", "provider_rank": 2},
+        {"id": "w10", "relevance": 0, "title": "Ion exchange water treatment", "content": "Industrial water purification resins.", "url": "https://golden.test/water", "source": "one", "provider_rank": 0}
+      ]
+    },
+    {
+      "id": "web_rag_evaluation",
+      "track": "web",
+      "query": "retrieval augmented generation evaluation metrics",
+      "candidates": [
+        {"id": "w11", "relevance": 3, "title": "RAG evaluation metrics", "content": "Retrieval augmented generation evaluation using recall faithfulness and answer accuracy.", "url": "https://golden.test/rag-metrics", "source": "one", "provider_rank": 2},
+        {"id": "w12", "relevance": 2, "title": "Retrieval evaluation", "content": "NDCG recall and precision metrics for information retrieval.", "url": "https://golden.test/retrieval-metrics", "source": "two", "provider_rank": 0},
+        {"id": "w13", "relevance": 1, "title": "Language generation metrics", "content": "BLEU and ROUGE for text generation evaluation.", "url": "https://golden.test/generation", "source": "one", "provider_rank": 1},
+        {"id": "w14", "relevance": 0, "title": "Augmented reality generation", "content": "Rendering metrics for augmented reality.", "url": "https://golden.test/ar", "source": "two", "provider_rank": 1},
+        {"id": "w15", "relevance": 0, "title": "Database operations", "content": "Transaction processing and storage.", "url": "https://golden.test/database", "source": "one", "provider_rank": 0}
+      ]
+    },
+    {
+      "id": "academic_solid_electrolyte",
+      "track": "academic",
+      "query": "sulfide solid electrolyte interface stability",
+      "candidates": [
+        {"id": "a1", "relevance": 3, "title": "Interface stability in sulfide solid electrolytes", "content": "Interfacial degradation mechanisms in sulfide solid electrolyte lithium batteries.", "url": "https://doi.org/10.1/a1", "source": "openalex_local", "score": 5.0, "citations": 80, "venue": "Nature Energy", "year": 2024, "is_oa": true, "oa_pdf_url": "https://golden.test/a1.pdf"},
+        {"id": "a2", "relevance": 2, "title": "Sulfide electrolyte processing", "content": "Solid electrolyte synthesis and battery interface engineering.", "url": "https://doi.org/10.1/a2", "source": "openalex_local", "score": 8.0, "citations": 200, "venue": "Energy Storage Materials", "year": 2022},
+        {"id": "a3", "relevance": 1, "title": "Oxide solid electrolyte review", "content": "Oxide electrolyte stability in solid state batteries.", "url": "https://doi.org/10.1/a3", "source": "openalex_local", "score": 9.0, "citations": 500, "venue": "Advanced Materials", "year": 2020},
+        {"id": "a4", "relevance": 0, "title": "Sulfur mineral interfaces", "content": "Geological sulfide mineral surface stability.", "url": "https://doi.org/10.1/a4", "source": "openalex_local", "score": 7.0, "citations": 900, "venue": "Geology", "year": 2018},
+        {"id": "a5", "relevance": 0, "title": "Liquid electrolyte additives", "content": "Organic liquid electrolyte additives for capacitors.", "url": "https://doi.org/10.1/a5", "source": "openalex_local", "score": 6.0, "citations": 50, "venue": "Electrochimica Acta", "year": 2021}
+      ]
+    },
+    {
+      "id": "academic_graph_ssl",
+      "track": "academic",
+      "query": "self supervised graph neural network limited labels",
+      "candidates": [
+        {"id": "a6", "relevance": 3, "title": "Self-supervised graph neural networks with limited labels", "content": "Graph representation learning under scarce labels using self supervised objectives.", "url": "https://doi.org/10.1/a6", "source": "openalex_local", "score": 4.0, "citations": 40, "venue": "NeurIPS", "year": 2024, "is_oa": true},
+        {"id": "a7", "relevance": 2, "title": "Graph contrastive learning", "content": "Self supervised contrastive learning for graph neural network encoders.", "url": "https://doi.org/10.1/a7", "source": "openalex_local", "score": 8.0, "citations": 600, "venue": "ICLR", "year": 2021},
+        {"id": "a8", "relevance": 1, "title": "Semi-supervised image classification", "content": "Limited labels for convolutional image networks.", "url": "https://doi.org/10.1/a8", "source": "openalex_local", "score": 9.0, "citations": 1000, "venue": "CVPR", "year": 2020},
+        {"id": "a9", "relevance": 0, "title": "Graph database transactions", "content": "Transactional graph storage and query processing.", "url": "https://doi.org/10.1/a9", "source": "openalex_local", "score": 7.0, "citations": 300, "venue": "VLDB", "year": 2019},
+        {"id": "a10", "relevance": 0, "title": "Network label printing", "content": "Industrial printing systems for product labels.", "url": "https://doi.org/10.1/a10", "source": "openalex_local", "score": 3.0, "citations": 10, "venue": "Manufacturing Letters", "year": 2023}
+      ]
+    },
+    {
+      "id": "academic_perovskite",
+      "track": "academic",
+      "query": "perovskite solar cell encapsulation reliability",
+      "candidates": [
+        {"id": "a11", "relevance": 3, "title": "Reliable encapsulation for perovskite solar cells", "content": "Moisture barrier encapsulation improves perovskite solar cell reliability.", "url": "https://doi.org/10.1/a11", "source": "openalex_local", "score": 5.0, "citations": 70, "venue": "Joule", "year": 2025, "is_oa": true, "oa_pdf_url": "https://golden.test/a11.pdf"},
+        {"id": "a12", "relevance": 2, "title": "Perovskite module stability", "content": "Accelerated reliability testing of perovskite photovoltaic modules.", "url": "https://doi.org/10.1/a12", "source": "openalex_local", "score": 8.0, "citations": 250, "venue": "Solar RRL", "year": 2023},
+        {"id": "a13", "relevance": 1, "title": "Silicon solar encapsulation", "content": "Encapsulation materials for silicon photovoltaic modules.", "url": "https://doi.org/10.1/a13", "source": "openalex_local", "score": 9.0, "citations": 600, "venue": "Progress in Photovoltaics", "year": 2020},
+        {"id": "a14", "relevance": 0, "title": "Perovskite crystal magnetism", "content": "Magnetic properties of oxide perovskite crystals.", "url": "https://doi.org/10.1/a14", "source": "openalex_local", "score": 7.0, "citations": 800, "venue": "Physical Review B", "year": 2018},
+        {"id": "a15", "relevance": 0, "title": "Food packaging reliability", "content": "Barrier packaging and shelf life testing.", "url": "https://doi.org/10.1/a15", "source": "openalex_local", "score": 4.0, "citations": 20, "venue": "Packaging Technology", "year": 2022}
+      ]
+    },
+    {
+      "id": "patent_foldable_hinge",
+      "track": "patent",
+      "query": "foldable display hinge mechanism",
+      "candidates": [
+        {"id": "p1", "relevance": 3, "title": "Foldable display hinge mechanism", "content": "A multi-link hinge mechanism supporting a flexible foldable display.", "url": "https://patents.google.com/patent/US1", "source": "patent_es", "score": 4.0, "citation_count": 8, "status": "active", "publication_date": "2025-02-01", "publication_number": "US-1-A1"},
+        {"id": "p2", "relevance": 2, "title": "Flexible screen hinge", "content": "Hinge assembly for folding electronic display devices.", "url": "https://patents.google.com/patent/US2", "source": "patent_es", "score": 8.0, "citation_count": 30, "status": "granted", "publication_date": "2022-03-01", "publication_number": "US-2-B2"},
+        {"id": "p3", "relevance": 1, "title": "Laptop hinge assembly", "content": "Rotating hinge for a rigid laptop display.", "url": "https://patents.google.com/patent/US3", "source": "patent_es", "score": 9.0, "citation_count": 80, "status": "active", "publication_date": "2020-01-01", "publication_number": "US-3-B2"},
+        {"id": "p4", "relevance": 0, "title": "Door hinge mechanism", "content": "Mechanical hinge for household doors.", "url": "https://patents.google.com/patent/US4", "source": "patent_es", "score": 7.0, "citation_count": 100, "status": "granted", "publication_date": "2018-01-01", "publication_number": "US-4-B2"},
+        {"id": "p5", "relevance": 0, "title": "Flexible packaging display", "content": "Printed product display for retail packaging.", "url": "https://patents.google.com/patent/US5", "source": "patent_es", "score": 3.0, "citation_count": 2, "status": "pending", "publication_date": "2024-01-01", "publication_number": "US-5-A1"}
+      ]
+    },
+    {
+      "id": "patent_lidar_fusion",
+      "track": "patent",
+      "query": "lidar camera sensor fusion autonomous driving",
+      "candidates": [
+        {"id": "p6", "relevance": 3, "title": "Lidar camera sensor fusion for autonomous driving", "content": "Fusion of lidar point clouds and camera images for autonomous vehicle perception.", "url": "https://patents.google.com/patent/US6", "source": "patent_es", "score": 5.0, "citation_count": 12, "status": "active", "publication_date": "2025-01-01", "publication_number": "US-6-A1"},
+        {"id": "p7", "relevance": 2, "title": "Multi sensor vehicle perception", "content": "Combining lidar radar and camera detections in autonomous vehicles.", "url": "https://patents.google.com/patent/US7", "source": "patent_es", "score": 8.0, "citation_count": 45, "status": "granted", "publication_date": "2022-01-01", "publication_number": "US-7-B2"},
+        {"id": "p8", "relevance": 1, "title": "Camera driver assistance", "content": "Monocular camera object detection for driver assistance.", "url": "https://patents.google.com/patent/US8", "source": "patent_es", "score": 9.0, "citation_count": 100, "status": "active", "publication_date": "2019-01-01", "publication_number": "US-8-B2"},
+        {"id": "p9", "relevance": 0, "title": "Lidar surveying instrument", "content": "Terrestrial mapping and construction surveying.", "url": "https://patents.google.com/patent/US9", "source": "patent_es", "score": 7.0, "citation_count": 60, "status": "granted", "publication_date": "2018-01-01", "publication_number": "US-9-B2"},
+        {"id": "p10", "relevance": 0, "title": "Image fusion printer", "content": "Combining print layers in an imaging device.", "url": "https://patents.google.com/patent/US10", "source": "patent_es", "score": 4.0, "citation_count": 3, "status": "pending", "publication_date": "2024-01-01", "publication_number": "US-10-A1"}
+      ]
+    },
+    {
+      "id": "patent_mrna_lipid",
+      "track": "patent",
+      "query": "mrna lipid nanoparticle delivery",
+      "candidates": [
+        {"id": "p11", "relevance": 3, "title": "mRNA lipid nanoparticle delivery composition", "content": "Ionizable lipid nanoparticles delivering messenger RNA therapeutics.", "url": "https://patents.google.com/patent/US11", "source": "patent_es", "score": 5.0, "citation_count": 20, "status": "active", "publication_date": "2025-01-01", "publication_number": "US-11-A1"},
+        {"id": "p12", "relevance": 2, "title": "Lipid particles for nucleic acid delivery", "content": "Lipid nanoparticle formulations for RNA delivery.", "url": "https://patents.google.com/patent/US12", "source": "patent_es", "score": 8.0, "citation_count": 120, "status": "granted", "publication_date": "2021-01-01", "publication_number": "US-12-B2"},
+        {"id": "p13", "relevance": 1, "title": "Polymer gene delivery", "content": "Polymer nanoparticles for nucleic acid transport.", "url": "https://patents.google.com/patent/US13", "source": "patent_es", "score": 9.0, "citation_count": 70, "status": "active", "publication_date": "2020-01-01", "publication_number": "US-13-B2"},
+        {"id": "p14", "relevance": 0, "title": "Lipid food emulsion", "content": "Edible lipid particles for beverage products.", "url": "https://patents.google.com/patent/US14", "source": "patent_es", "score": 7.0, "citation_count": 90, "status": "granted", "publication_date": "2017-01-01", "publication_number": "US-14-B2"},
+        {"id": "p15", "relevance": 0, "title": "Package delivery routing", "content": "Vehicle route optimization for parcel delivery.", "url": "https://patents.google.com/patent/US15", "source": "patent_es", "score": 4.0, "citation_count": 4, "status": "pending", "publication_date": "2024-01-01", "publication_number": "US-15-A1"}
+      ]
+    }
+  ]
+}

@@ -1,0 +1,2672 @@
+{
+  "version": 1,
+  "generated_at_utc": "2026-07-23T08:28:20Z",
+  "source": "eval/baidu_standard_ab_details.json",
+  "source_generated_at_utc": "2026-07-23T02:52:39Z",
+  "models": {
+    "bge": "BAAI/bge-reranker-v2-m3",
+    "qwen": "Qwen/Qwen3-Reranker-0.6B"
+  },
+  "qwen_instruction": "Given a web search query, rank passages by whether they directly, correctly, and sufficiently answer the query. For time-sensitive queries, prefer current information. Ignore keyword-only mentions.",
+  "candidate_limit": 20,
+  "query_count": 10,
+  "summary": {
+    "metrics": {
+      "bge": {
+        "ndcg_at_10": 0.8687048886198336,
+        "recall_at_10": 0.5000424523876537,
+        "precision_at_5": 0.8800000000000001,
+        "mrr": 1.0
+      },
+      "qwen": {
+        "ndcg_at_10": 0.8993836352259021,
+        "recall_at_10": 0.5394455389811427,
+        "precision_at_5": 0.9400000000000001,
+        "mrr": 1.0
+      }
+    },
+    "metric_delta": {
+      "ndcg_at_10": 0.030678746606068508,
+      "recall_at_10": 0.03940308659348901,
+      "precision_at_5": 0.05999999999999994,
+      "mrr": 0.0
+    },
+    "latency": {
+      "bge": {
+        "mean_ms": 844.0,
+        "p50_ms": 784.2,
+        "p95_ms": 1450.3799999999987
+      },
+      "qwen": {
+        "mean_ms": 765.6899999999999,
+        "p50_ms": 819.2,
+        "p95_ms": 855.125
+      }
+    },
+    "wins": {
+      "qwen": 5,
+      "tie": 2,
+      "bge": 3
+    },
+    "score_calibration": {
+      "bge": {
+        "score_mean": 0.6572442896425462,
+        "fraction_gte_0_9": 0.35678391959798994,
+        "fraction_gte_0_99": 0.10050251256281408,
+        "by_relevance": {
+          "0": {
+            "count": 4,
+            "mean": 0.1128373158571776,
+            "median": 0.11697257962077856
+          },
+          "1": {
+            "count": 35,
+            "mean": 0.3826429916213134,
+            "median": 0.27515944838523865
+          },
+          "2": {
+            "count": 55,
+            "mean": 0.5088943941243501,
+            "median": 0.5267024040222168
+          },
+          "3": {
+            "count": 105,
+            "mean": 0.8472244570652644,
+            "median": 0.9375627040863037
+          }
+        }
+      },
+      "qwen": {
+        "score_mean": 0.8496113331468095,
+        "fraction_gte_0_9": 0.7085427135678392,
+        "fraction_gte_0_99": 0.41708542713567837,
+        "by_relevance": {
+          "0": {
+            "count": 4,
+            "mean": 0.4863255265590851,
+            "median": 0.5003959015011787
+          },
+          "1": {
+            "count": 35,
+            "mean": 0.6261849627830088,
+            "median": 0.8735112547874451
+          },
+          "2": {
+            "count": 55,
+            "mean": 0.7886387535624884,
+            "median": 0.9128541350364685
+          },
+          "3": {
+            "count": 105,
+            "mean": 0.9698642671108246,
+            "median": 0.9955255389213562
+          }
+        }
+      }
+    },
+    "ndcg_bootstrap": {
+      "mean_delta": 0.030678746606068598,
+      "ci95": [
+        -0.010547364657299418,
+        0.07470036552947044
+      ]
+    }
+  },
+  "queries": [
+    {
+      "query": "三星堆遗址在哪个省",
+      "type": "factual",
+      "candidate_count": 20,
+      "label_distribution": {
+        "0": 0,
+        "1": 0,
+        "2": 6,
+        "3": 14
+      },
+      "ndcg_winner": "qwen",
+      "models": {
+        "bge": {
+          "elapsed_ms": 1964.1,
+          "scores": [
+            0.9445247054100037,
+            0.9756122827529907,
+            0.5774574875831604,
+            0.9927054047584534,
+            0.9924345016479492,
+            0.9315113425254822,
+            0.8450170159339905,
+            0.995963454246521,
+            0.9900218844413757,
+            0.9949092268943787,
+            0.9906682372093201,
+            0.9747739434242249,
+            0.966632604598999,
+            0.9683924913406372,
+            0.8985204696655273,
+            0.955207109451294,
+            0.9594684839248657,
+            0.9159976243972778,
+            0.9937506318092346,
+            0.6876050233840942
+          ],
+          "meta": {
+            "tokens": {
+              "input_tokens": 2991,
+              "output_tokens": 0,
+              "image_tokens": 0
+            },
+            "billed_units": {
+              "input_tokens": 2991,
+              "output_tokens": 0,
+              "image_tokens": 0,
+              "search_units": 0,
+              "classifications": 0
+            }
+          },
+          "request_id": "019f8e16ca857dd68edf04b086dca2e7",
+          "metrics": {
+            "ndcg_at_10": 0.9603250160361273,
+            "recall_at_10": 0.5,
+            "precision_at_5": 1.0,
+            "mrr": 1.0
+          },
+          "ranking": [
+            7,
+            9,
+            18,
+            3,
+            4,
+            10,
+            8,
+            1,
+            11,
+            13,
+            12,
+            16,
+            15,
+            0,
+            5,
+            17,
+            14,
+            6,
+            19,
+            2
+          ],
+          "top5": [
+            {
+              "rank": 1,
+              "candidate_index": 7,
+              "relevance": 3,
+              "score": 0.995963454246521,
+              "title": "三星堆遗址",
+              "url": "https://baike.baidu.com/item/三星堆遗址/304608"
+            },
+            {
+              "rank": 2,
+              "candidate_index": 9,
+              "relevance": 3,
+              "score": 0.9949092268943787,
+              "title": "古蜀文明",
+              "url": "https://wwj.sc.gov.cn/scwwj/zskgswm/2025/10/9/1b41dd264673414cb1ae7398594b1291.shtml"
+            },
+            {
+              "rank": 3,
+              "candidate_index": 18,
+              "relevance": 3,
+              "score": 0.9937506318092346,
+              "title": "走进四川2024 - 四川省人民政府网站 ",
+              "url": "https://www.sc.gov.cn/10462/c112004/zjsc2024.shtml"
+            },
+            {
+              "rank": 4,
+              "candidate_index": 3,
+              "relevance": 3,
+              "score": 0.9927054047584534,
+              "title": "三星堆青铜顶尊跪坐人像新发现 古蜀文明研究再获突破",
+              "url": "https://baijiahao.baidu.com/s?id=1870681735802257902&wfr=spider&for=pc"
+            },
+            {
+              "rank": 5,
+              "candidate_index": 4,
+              "relevance": 3,
+              "score": 0.9924345016479492,
+              "title": "三星堆为何无人破解?科学界给出这些猜测,但是遇到这些困难!",
+              "url": "https://history.sohu.com/a/1048037902_121165739"
+            }
+          ]
+        },
+        "qwen": {
+          "elapsed_ms": 816.0,
+          "scores": [
+            0.8221429586410522,
+            0.4604829251766205,
+            0.0055425530299544334,
+            0.9964099526405334,
+            0.9787333607673645,
+            0.7519381046295166,
+            0.9460135698318481,
+            0.993172824382782,
+            0.997273862361908,
+            0.9960935711860657,
+            0.9974830746650696,
+            0.9967137575149536,
+            0.9208068251609802,
+            0.9956303834915161,
+            0.9968096613883972,
+            0.9966877102851868,
+            0.6860246062278748,
+            0.9778297543525696,
+            0.9970111846923828,
+            0.9844840168952942
+          ],
+          "meta": {
+            "tokens": {
+              "input_tokens": 4983,
+              "output_tokens": 0,
+              "image_tokens": 0
+            },
+            "billed_units": {
+              "input_tokens": 4983,
+              "output_tokens": 0,
+              "image_tokens": 0,
+              "search_units": 0,
+              "classifications": 0
+            }
+          },
+          "request_id": "019f8e16cd9f7ae28100d1a59c53b51b",
+          "metrics": {
+            "ndcg_at_10": 1.0,
+            "recall_at_10": 0.5,
+            "precision_at_5": 1.0,
+            "mrr": 1.0
+          },
+          "ranking": [
+            10,
+            8,
+            18,
+            14,
+            11,
+            15,
+            3,
+            9,
+            13,
+            7,
+            19,
+            4,
+            17,
+            6,
+            12,
+            0,
+            5,
+            16,
+            1,
+            2
+          ],
+          "top5": [
+            {
+              "rank": 1,
+              "candidate_index": 10,
+              "relevance": 3,
+              "score": 0.9974830746650696,
+              "title": "到四川学安逸 - 四川省人民政府网站 ",
+              "url": "https://www.sc.gov.cn/10462/c112144/dscxay.shtml"
+            },
+            {
+              "rank": 2,
+              "candidate_index": 8,
+              "relevance": 3,
+              "score": 0.997273862361908,
+              "title": "三星堆国家考古遗址公园",
+              "url": "https://baike.baidu.com/item/三星堆国家考古遗址公园/12572459"
+            },
+            {
+              "rank": 3,
+              "candidate_index": 18,
+              "relevance": 3,
+              "score": 0.9970111846923828,
+              "title": "走进四川2024 - 四川省人民政府网站 ",
+              "url": "https://www.sc.gov.cn/10462/c112004/zjsc2024.shtml"
+            },
+            {
+              "rank": 4,
+              "candidate_index": 14,
+              "relevance": 3,
+              "score": 0.9968096613883972,
+              "title": "四川广汉三星堆遗址祭祀区",
+              "url": "http://www.ncha.gov.cn/art/2022/5/26/art_2622_174555.html"
+            },
+            {
+              "rank": 5,
+              "candidate_index": 11,
+              "relevance": 3,
+              "score": 0.9967137575149536,
+              "title": "广汉三星堆遗址",
+              "url": "https://www.sckg.com/shangzhou/1575.html"
+            }
+          ]
+        }
+      },
+      "labels": [
+        2,
+        2,
+        2,
+        3,
+        3,
+        3,
+        2,
+        3,
+        3,
+        3,
+        3,
+        3,
+        3,
+        3,
+        3,
+        3,
+        2,
+        2,
+        3,
+        3
+      ]
+    },
+    {
+      "query": "光合作用的基本过程是什么",
+      "type": "factual",
+      "candidate_count": 20,
+      "label_distribution": {
+        "0": 0,
+        "1": 5,
+        "2": 5,
+        "3": 10
+      },
+      "ndcg_winner": "qwen",
+      "models": {
+        "qwen": {
+          "elapsed_ms": 831.3,
+          "scores": [
+            0.004977936390787363,
+            0.02673463150858879,
+            0.9917600750923157,
+            0.9992280006408691,
+            0.9993465542793274,
+            0.9994564652442932,
+            0.9986318945884705,
+            0.9985707998275757,
+            0.9955990314483643,
+            0.9980583786964417,
+            0.993887722492218,
+            0.9959734082221985,
+            0.8319301605224609,
+            0.9010733366012573,
+            0.8285012245178223,
+            0.5973492860794067,
+            0.5326895713806152,
+            0.9328875541687012,
+            0.9905979037284851,
+            0.26329535245895386
+          ],
+          "meta": {
+            "tokens": {
+              "input_tokens": 5371,
+              "output_tokens": 0,
+              "image_tokens": 0
+            },
+            "billed_units": {
+              "input_tokens": 5371,
+              "output_tokens": 0,
+              "image_tokens": 0,
+              "search_units": 0,
+              "classifications": 0
+            }
+          },
+          "request_id": "019f8e16d0d2799196421aae861c67aa",
+          "metrics": {
+            "ndcg_at_10": 1.0,
+            "recall_at_10": 0.6666666666666666,
+            "precision_at_5": 1.0,
+            "mrr": 1.0
+          },
+          "ranking": [
+            5,
+            4,
+            3,
+            6,
+            7,
+            9,
+            11,
+            8,
+            10,
+            2,
+            18,
+            17,
+            13,
+            12,
+            14,
+            15,
+            16,
+            19,
+            1,
+            0
+          ],
+          "top5": [
+            {
+              "rank": 1,
+              "candidate_index": 5,
+              "relevance": 3,
+              "score": 0.9994564652442932,
+              "title": "请简述光合作用的基本过程。",
+              "url": "https://easylearn.baidu.com/edu-page/tiangong/questiondetail?id=1785200799990028719&fr=search"
+            },
+            {
+              "rank": 2,
+              "candidate_index": 4,
+              "relevance": 3,
+              "score": 0.9993465542793274,
+              "title": "阐述光合作用的基本过程。",
+              "url": "https://easylearn.baidu.com/edu-page/tiangong/questiondetail?id=1795783074106902675&fr=search"
+            },
+            {
+              "rank": 3,
+              "candidate_index": 3,
+              "relevance": 3,
+              "score": 0.9992280006408691,
+              "title": "简述光合作用的基本过程。",
+              "url": "https://easylearn.baidu.com/edu-page/tiangong/questiondetail?id=1765500236992533449&fr=search"
+            },
+            {
+              "rank": 4,
+              "candidate_index": 6,
+              "relevance": 3,
+              "score": 0.9986318945884705,
+              "title": "请简述光合作用的基本过程,并说明为什么它对地球生态系统至关重要。",
+              "url": "https://easylearn.baidu.com/edu-page/tiangong/questiondetail?id=1797179624364904603&fr=search"
+            },
+            {
+              "rank": 5,
+              "candidate_index": 7,
+              "relevance": 3,
+              "score": 0.9985707998275757,
+              "title": "简述光合作用的基本过程。(7分)",
+              "url": "https://easylearn.baidu.com/edu-page/tiangong/questiondetail?id=1729731316529933110&fr=search"
+            }
+          ]
+        },
+        "bge": {
+          "elapsed_ms": 822.5,
+          "scores": [
+            0.04821005091071129,
+            0.01964740641415119,
+            0.956827700138092,
+            0.9967344403266907,
+            0.9991023540496826,
+            0.994650661945343,
+            0.9982407093048096,
+            0.9587451815605164,
+            0.8679237365722656,
+            0.988978922367096,
+            0.9752565622329712,
+            0.9544056057929993,
+            0.3242209255695343,
+            0.5636868476867676,
+            0.8211992383003235,
+            0.09489394724369049,
+            0.021896878257393837,
+            0.6910600662231445,
+            0.9581092000007629,
+            0.18851318955421448
+          ],
+          "meta": {
+            "tokens": {
+              "input_tokens": 3312,
+              "output_tokens": 0,
+              "image_tokens": 0
+            },
+            "billed_units": {
+              "input_tokens": 3312,
+              "output_tokens": 0,
+              "image_tokens": 0,
+              "search_units": 0,
+              "classifications": 0
+            }
+          },
+          "request_id": "019f8e16d42a7f3fa33cf9f92d9eb7c2",
+          "metrics": {
+            "ndcg_at_10": 0.9404875240541909,
+            "recall_at_10": 0.6,
+            "precision_at_5": 1.0,
+            "mrr": 1.0
+          },
+          "ranking": [
+            4,
+            6,
+            3,
+            5,
+            9,
+            10,
+            7,
+            18,
+            2,
+            11,
+            8,
+            14,
+            17,
+            13,
+            12,
+            19,
+            15,
+            0,
+            16,
+            1
+          ],
+          "top5": [
+            {
+              "rank": 1,
+              "candidate_index": 4,
+              "relevance": 3,
+              "score": 0.9991023540496826,
+              "title": "阐述光合作用的基本过程。",
+              "url": "https://easylearn.baidu.com/edu-page/tiangong/questiondetail?id=1795783074106902675&fr=search"
+            },
+            {
+              "rank": 2,
+              "candidate_index": 6,
+              "relevance": 3,
+              "score": 0.9982407093048096,
+              "title": "请简述光合作用的基本过程,并说明为什么它对地球生态系统至关重要。",
+              "url": "https://easylearn.baidu.com/edu-page/tiangong/questiondetail?id=1797179624364904603&fr=search"
+            },
+            {
+              "rank": 3,
+              "candidate_index": 3,
+              "relevance": 3,
+              "score": 0.9967344403266907,
+              "title": "简述光合作用的基本过程。",
+              "url": "https://easylearn.baidu.com/edu-page/tiangong/questiondetail?id=1765500236992533449&fr=search"
+            },
+            {
+              "rank": 4,
+              "candidate_index": 5,
+              "relevance": 3,
+              "score": 0.994650661945343,
+              "title": "请简述光合作用的基本过程。",
+              "url": "https://easylearn.baidu.com/edu-page/tiangong/questiondetail?id=1785200799990028719&fr=search"
+            },
+            {
+              "rank": 5,
+              "candidate_index": 9,
+              "relevance": 3,
+              "score": 0.988978922367096,
+              "title": "什么是光合作用?光合作用的基本过程包括哪些步骤?",
+              "url": "https://easylearn.baidu.com/edu-page/tiangong/questiondetail?id=1805245726021835822&fr=search"
+            }
+          ]
+        }
+      },
+      "labels": [
+        1,
+        1,
+        3,
+        3,
+        3,
+        3,
+        3,
+        3,
+        3,
+        3,
+        3,
+        3,
+        2,
+        2,
+        2,
+        2,
+        1,
+        2,
+        1,
+        1
+      ]
+    },
+    {
+      "query": "2026年人工智能领域有哪些最新进展",
+      "type": "timely",
+      "candidate_count": 19,
+      "label_distribution": {
+        "0": 0,
+        "1": 0,
+        "2": 0,
+        "3": 19
+      },
+      "ndcg_winner": "tie",
+      "models": {
+        "bge": {
+          "elapsed_ms": 802.9,
+          "scores": [
+            0.7261685729026794,
+            0.5526765584945679,
+            0.9551259875297546,
+            0.5635280609130859,
+            0.7104008197784424,
+            0.8795434832572937,
+            0.733790397644043,
+            0.6958929896354675,
+            0.7360168695449829,
+            0.624761700630188,
+            0.624761700630188,
+            0.7106590867042542,
+            0.7104008197784424,
+            0.6488825082778931,
+            0.7958471179008484,
+            0.8563769459724426,
+            0.9797335267066956,
+            0.9375627040863037,
+            0.9244150519371033
+          ],
+          "meta": {
+            "tokens": {
+              "input_tokens": 3205,
+              "output_tokens": 0,
+              "image_tokens": 0
+            },
+            "billed_units": {
+              "input_tokens": 3205,
+              "output_tokens": 0,
+              "image_tokens": 0,
+              "search_units": 0,
+              "classifications": 0
+            }
+          },
+          "request_id": "019f8e16d75b7cdaae9f836b13fcf651",
+          "metrics": {
+            "ndcg_at_10": 1.0,
+            "recall_at_10": 0.5263157894736842,
+            "precision_at_5": 1.0,
+            "mrr": 1.0
+          },
+          "ranking": [
+            16,
+            2,
+            17,
+            18,
+            5,
+            15,
+            14,
+            8,
+            6,
+            0,
+            11,
+            4,
+            12,
+            7,
+            13,
+            9,
+            10,
+            3,
+            1
+          ],
+          "top5": [
+            {
+              "rank": 1,
+              "candidate_index": 16,
+              "relevance": 3,
+              "score": 0.9797335267066956,
+              "title": "2026 年人工智能技术演进与产业落地:从多模态爆发到智能体革命",
+              "url": "https://blog.csdn.net/ZZSFZG/article/details/161106216"
+            },
+            {
+              "rank": 2,
+              "candidate_index": 2,
+              "relevance": 3,
+              "score": 0.9551259875297546,
+              "title": "对话Arm邹挺:2026年物理AI加速,芯片将有这些新进展",
+              "url": "https://baijiahao.baidu.com/s?id=1855439982263594455&wfr=spider&for=pc"
+            },
+            {
+              "rank": 3,
+              "candidate_index": 17,
+              "relevance": 3,
+              "score": 0.9375627040863037,
+              "title": "2026年人工智能十大趋势发布 AI赋能千行百业,新生态加速形成 ",
+              "url": "https://www.kepuchina.cn/article/articleinfo?business_type=100&classify=0&ar_id=687677"
+            },
+            {
+              "rank": 4,
+              "candidate_index": 18,
+              "relevance": 3,
+              "score": 0.9244150519371033,
+              "title": "2026世界人工智能大会:首发技术闪耀,创新成果引领AI新未来 ",
+              "url": "https://m.sohu.com/a/1052423268_362225/"
+            },
+            {
+              "rank": 5,
+              "candidate_index": 5,
+              "relevance": 3,
+              "score": 0.8795434832572937,
+              "title": "中国平安亮相世界人工智能大会,发布医疗、保险、支付领域最新AI成果",
+              "url": "http://finance.sina.com.cn/wm/2026-07-19/doc-iniiirzc3483427.shtml"
+            }
+          ]
+        },
+        "qwen": {
+          "elapsed_ms": 855.8,
+          "scores": [
+            0.9876502156257629,
+            0.9368616938591003,
+            0.9919258952140808,
+            0.9832342863082886,
+            0.9202194213867188,
+            0.9878889918327332,
+            0.976706862449646,
+            0.9399586915969849,
+            0.9879400730133057,
+            0.9016488194465637,
+            0.9016488194465637,
+            0.7069622278213501,
+            0.920082688331604,
+            0.8569546937942505,
+            0.9162213206291199,
+            0.807171642780304,
+            0.9978138208389282,
+            0.9882538318634033,
+            0.9832659959793091
+          ],
+          "meta": {
+            "tokens": {
+              "input_tokens": 5379,
+              "output_tokens": 0,
+              "image_tokens": 0
+            },
+            "billed_units": {
+              "input_tokens": 5379,
+              "output_tokens": 0,
+              "image_tokens": 0,
+              "search_units": 0,
+              "classifications": 0
+            }
+          },
+          "request_id": "019f8e16da837ab78183847087150eb1",
+          "metrics": {
+            "ndcg_at_10": 1.0,
+            "recall_at_10": 0.5263157894736842,
+            "precision_at_5": 1.0,
+            "mrr": 1.0
+          },
+          "ranking": [
+            16,
+            2,
+            17,
+            8,
+            5,
+            0,
+            18,
+            3,
+            6,
+            7,
+            1,
+            4,
+            12,
+            14,
+            9,
+            10,
+            13,
+            15,
+            11
+          ],
+          "top5": [
+            {
+              "rank": 1,
+              "candidate_index": 16,
+              "relevance": 3,
+              "score": 0.9978138208389282,
+              "title": "2026 年人工智能技术演进与产业落地:从多模态爆发到智能体革命",
+              "url": "https://blog.csdn.net/ZZSFZG/article/details/161106216"
+            },
+            {
+              "rank": 2,
+              "candidate_index": 2,
+              "relevance": 3,
+              "score": 0.9919258952140808,
+              "title": "对话Arm邹挺:2026年物理AI加速,芯片将有这些新进展",
+              "url": "https://baijiahao.baidu.com/s?id=1855439982263594455&wfr=spider&for=pc"
+            },
+            {
+              "rank": 3,
+              "candidate_index": 17,
+              "relevance": 3,
+              "score": 0.9882538318634033,
+              "title": "2026年人工智能十大趋势发布 AI赋能千行百业,新生态加速形成 ",
+              "url": "https://www.kepuchina.cn/article/articleinfo?business_type=100&classify=0&ar_id=687677"
+            },
+            {
+              "rank": 4,
+              "candidate_index": 8,
+              "relevance": 3,
+              "score": 0.9879400730133057,
+              "title": "2026WAIC十大看点:国产芯片全阵容亮相,AI步入产业层",
+              "url": "https://www.stcn.com/article/detail/4024733.html"
+            },
+            {
+              "rank": 5,
+              "candidate_index": 5,
+              "relevance": 3,
+              "score": 0.9878889918327332,
+              "title": "中国平安亮相世界人工智能大会,发布医疗、保险、支付领域最新AI成果",
+              "url": "http://finance.sina.com.cn/wm/2026-07-19/doc-iniiirzc3483427.shtml"
+            }
+          ]
+        }
+      },
+      "labels": [
+        3,
+        3,
+        3,
+        3,
+        3,
+        3,
+        3,
+        3,
+        3,
+        3,
+        3,
+        3,
+        3,
+        3,
+        3,
+        3,
+        3,
+        3,
+        3
+      ]
+    },
+    {
+      "query": "今天A股大盘行情怎么样",
+      "type": "timely",
+      "candidate_count": 20,
+      "label_distribution": {
+        "0": 3,
+        "1": 5,
+        "2": 9,
+        "3": 3
+      },
+      "ndcg_winner": "bge",
+      "models": {
+        "qwen": {
+          "elapsed_ms": 631.2,
+          "scores": [
+            0.7621254920959473,
+            0.00946658756583929,
+            0.9983141422271729,
+            0.003499826416373253,
+            0.9942598342895508,
+            0.9927493333816528,
+            0.9788683652877808,
+            0.9769676923751831,
+            0.9738881587982178,
+            0.9964411854743958,
+            0.31557580828666687,
+            0.8787851333618164,
+            0.9569892287254333,
+            0.8898260593414307,
+            0.7692372798919678,
+            0.9440425038337708,
+            0.8947833180427551,
+            0.943659245967865,
+            0.6235763430595398,
+            0.23866631090641022
+          ],
+          "meta": {
+            "tokens": {
+              "input_tokens": 5825,
+              "output_tokens": 0,
+              "image_tokens": 0
+            },
+            "billed_units": {
+              "input_tokens": 5825,
+              "output_tokens": 0,
+              "image_tokens": 0,
+              "search_units": 0,
+              "classifications": 0
+            }
+          },
+          "request_id": "019f8e16dcfb7aff913ef3e98e987cb3",
+          "metrics": {
+            "ndcg_at_10": 0.8608319691168511,
+            "recall_at_10": 0.5833333333333334,
+            "precision_at_5": 1.0,
+            "mrr": 1.0
+          },
+          "ranking": [
+            2,
+            9,
+            4,
+            5,
+            6,
+            7,
+            8,
+            12,
+            15,
+            17,
+            16,
+            13,
+            11,
+            14,
+            0,
+            18,
+            10,
+            19,
+            1,
+            3
+          ],
+          "top5": [
+            {
+              "rank": 1,
+              "candidate_index": 2,
+              "relevance": 3,
+              "score": 0.9983141422271729,
+              "title": "A股:预判正确,今天(7月23日)大盘走势已定,大盘会这样走!",
+              "url": "https://baijiahao.baidu.com/s?id=1871420095899326671&wfr=spider&for=pc"
+            },
+            {
+              "rank": 2,
+              "candidate_index": 9,
+              "relevance": 2,
+              "score": 0.9964411854743958,
+              "title": "A股放量上涨,行情不对劲,不用猜,明天(7月23日)大盘会这样走",
+              "url": "https://baijiahao.baidu.com/s?id=1871380920777320616&wfr=spider&for=pc"
+            },
+            {
+              "rank": 3,
+              "candidate_index": 4,
+              "relevance": 3,
+              "score": 0.9942598342895508,
+              "title": "如何看待2026年7月23日A股市场行情?",
+              "url": "https://www.zhihu.com/question/2060028167197403097/answer/2063313286465066474"
+            },
+            {
+              "rank": 4,
+              "candidate_index": 5,
+              "relevance": 3,
+              "score": 0.9927493333816528,
+              "title": "怎么看待2026年7月23号A股股市行情?",
+              "url": "https://www.zhihu.com/question/2062908674947994420/answer/2063304859554669038"
+            },
+            {
+              "rank": 5,
+              "candidate_index": 6,
+              "relevance": 2,
+              "score": 0.9788683652877808,
+              "title": "对2026年7月23日A股市场行情,大家有什么看法?",
+              "url": "https://www.zhihu.com/question/2063186941135284209/answer/2063343738261336548"
+            }
+          ]
+        },
+        "bge": {
+          "elapsed_ms": 577.0,
+          "scores": [
+            0.21377277374267578,
+            0.11417113244533539,
+            0.5339025855064392,
+            0.005392996594309807,
+            0.6265338659286499,
+            0.47910645604133606,
+            0.32216373085975647,
+            0.1818215548992157,
+            0.1262093335390091,
+            0.26591378450393677,
+            0.029255205765366554,
+            0.15233974158763885,
+            0.11966147273778915,
+            0.08850844949483871,
+            0.04636303335428238,
+            0.21567170321941376,
+            0.2820945084095001,
+            0.33321884274482727,
+            0.08862332999706268,
+            0.02017238549888134
+          ],
+          "meta": {
+            "tokens": {
+              "input_tokens": 3547,
+              "output_tokens": 0,
+              "image_tokens": 0
+            },
+            "billed_units": {
+              "input_tokens": 3547,
+              "output_tokens": 0,
+              "image_tokens": 0,
+              "search_units": 0,
+              "classifications": 0
+            }
+          },
+          "request_id": "019f8e16df6f7885900616bb39ead6f5",
+          "metrics": {
+            "ndcg_at_10": 0.890422913931876,
+            "recall_at_10": 0.5833333333333334,
+            "precision_at_5": 1.0,
+            "mrr": 1.0
+          },
+          "ranking": [
+            4,
+            2,
+            5,
+            17,
+            6,
+            16,
+            9,
+            15,
+            0,
+            7,
+            11,
+            8,
+            12,
+            1,
+            18,
+            13,
+            14,
+            10,
+            19,
+            3
+          ],
+          "top5": [
+            {
+              "rank": 1,
+              "candidate_index": 4,
+              "relevance": 3,
+              "score": 0.6265338659286499,
+              "title": "如何看待2026年7月23日A股市场行情?",
+              "url": "https://www.zhihu.com/question/2060028167197403097/answer/2063313286465066474"
+            },
+            {
+              "rank": 2,
+              "candidate_index": 2,
+              "relevance": 3,
+              "score": 0.5339025855064392,
+              "title": "A股:预判正确,今天(7月23日)大盘走势已定,大盘会这样走!",
+              "url": "https://baijiahao.baidu.com/s?id=1871420095899326671&wfr=spider&for=pc"
+            },
+            {
+              "rank": 3,
+              "candidate_index": 5,
+              "relevance": 3,
+              "score": 0.47910645604133606,
+              "title": "怎么看待2026年7月23号A股股市行情?",
+              "url": "https://www.zhihu.com/question/2062908674947994420/answer/2063304859554669038"
+            },
+            {
+              "rank": 4,
+              "candidate_index": 17,
+              "relevance": 2,
+              "score": 0.33321884274482727,
+              "title": "2026年7月20日 A股全天收盘:一、核心指数表现(极致分化行情)1. 上证指数:3796.28点,+0.85%,日内... - 雪球",
+              "url": "https://xueqiu.com/2879251622/401268519"
+            },
+            {
+              "rank": 5,
+              "candidate_index": 6,
+              "relevance": 2,
+              "score": 0.32216373085975647,
+              "title": "对2026年7月23日A股市场行情,大家有什么看法?",
+              "url": "https://www.zhihu.com/question/2063186941135284209/answer/2063343738261336548"
+            }
+          ]
+        }
+      },
+      "labels": [
+        0,
+        1,
+        3,
+        2,
+        3,
+        3,
+        2,
+        1,
+        1,
+        2,
+        2,
+        2,
+        2,
+        2,
+        1,
+        0,
+        2,
+        2,
+        1,
+        0
+      ]
+    },
+    {
+      "query": "Transformer 和 RNN 在长序列建模上的区别",
+      "type": "multihop",
+      "candidate_count": 20,
+      "label_distribution": {
+        "0": 0,
+        "1": 3,
+        "2": 4,
+        "3": 13
+      },
+      "ndcg_winner": "qwen",
+      "models": {
+        "bge": {
+          "elapsed_ms": 604.7,
+          "scores": [
+            0.6110526919364929,
+            0.8887710571289062,
+            0.9917272329330444,
+            0.981793224811554,
+            0.9795677661895752,
+            0.8111305236816406,
+            0.9921053647994995,
+            0.8481522798538208,
+            0.9873818755149841,
+            0.6636479496955872,
+            0.8038842678070068,
+            0.9417363405227661,
+            0.9939413070678711,
+            0.9683383703231812,
+            0.539250910282135,
+            0.7411305904388428,
+            0.9297968149185181,
+            0.9407423734664917,
+            0.993168830871582,
+            0.02874339558184147
+          ],
+          "meta": {
+            "tokens": {
+              "input_tokens": 3152,
+              "output_tokens": 0,
+              "image_tokens": 0
+            },
+            "billed_units": {
+              "input_tokens": 3152,
+              "output_tokens": 0,
+              "image_tokens": 0,
+              "search_units": 0,
+              "classifications": 0
+            }
+          },
+          "request_id": "019f8e16e19d7bb3a814108aedf93c60",
+          "metrics": {
+            "ndcg_at_10": 0.7998213011497377,
+            "recall_at_10": 0.5294117647058824,
+            "precision_at_5": 0.8,
+            "mrr": 1.0
+          },
+          "ranking": [
+            12,
+            18,
+            6,
+            2,
+            8,
+            3,
+            4,
+            13,
+            11,
+            17,
+            16,
+            1,
+            7,
+            5,
+            10,
+            15,
+            9,
+            0,
+            14,
+            19
+          ],
+          "top5": [
+            {
+              "rank": 1,
+              "candidate_index": 12,
+              "relevance": 3,
+              "score": 0.9939413070678711,
+              "title": "RNN和Transformer区别",
+              "url": "https://blog.csdn.net/weixin_42923363/article/details/149117000"
+            },
+            {
+              "rank": 2,
+              "candidate_index": 18,
+              "relevance": 1,
+              "score": 0.993168830871582,
+              "title": "时间序列预测: SARIMAX、RNN、LSTM、Prophet 及 Transformer Models 的比较分析",
+              "url": "https://zhuanlan.zhihu.com/p/1897589324846982786"
+            },
+            {
+              "rank": 3,
+              "candidate_index": 6,
+              "relevance": 3,
+              "score": 0.9921053647994995,
+              "title": "Transformer、RNN (循环神经网络) 和 CNN (卷积神经网络)的区别",
+              "url": "https://blog.csdn.net/ilovepengqi/article/details/148613271"
+            },
+            {
+              "rank": 4,
+              "candidate_index": 2,
+              "relevance": 3,
+              "score": 0.9917272329330444,
+              "title": "RNN与Transformer全面对比:原理、性能与应用场景",
+              "url": "https://blog.csdn.net/m0_59162559/article/details/148862880"
+            },
+            {
+              "rank": 5,
+              "candidate_index": 8,
+              "relevance": 3,
+              "score": 0.9873818755149841,
+              "title": "根据RNN和Transformer的结构特点及区别和多头注意力机制",
+              "url": "https://blog.csdn.net/m0_73321558/article/details/137203122"
+            }
+          ]
+        },
+        "qwen": {
+          "elapsed_ms": 854.3,
+          "scores": [
+            0.8156827092170715,
+            0.9394393563270569,
+            0.9993879795074463,
+            0.9941030144691467,
+            0.996645987033844,
+            0.9934505224227905,
+            0.9955255389213562,
+            0.9818738698959351,
+            0.993279755115509,
+            0.9921888113021851,
+            0.9867401123046875,
+            0.998234748840332,
+            0.9890223741531372,
+            0.9865142703056335,
+            0.9550526738166809,
+            0.9309398531913757,
+            0.9952220320701599,
+            0.8943224549293518,
+            0.9778980612754822,
+            0.041664473712444305
+          ],
+          "meta": {
+            "tokens": {
+              "input_tokens": 5039,
+              "output_tokens": 0,
+              "image_tokens": 0
+            },
+            "billed_units": {
+              "input_tokens": 5039,
+              "output_tokens": 0,
+              "image_tokens": 0,
+              "search_units": 0,
+              "classifications": 0
+            }
+          },
+          "request_id": "019f8e16e4ff7ae289061bab49e5cd1d",
+          "metrics": {
+            "ndcg_at_10": 0.9552009891550426,
+            "recall_at_10": 0.5882352941176471,
+            "precision_at_5": 1.0,
+            "mrr": 1.0
+          },
+          "ranking": [
+            2,
+            11,
+            4,
+            6,
+            16,
+            3,
+            5,
+            8,
+            9,
+            12,
+            10,
+            13,
+            7,
+            18,
+            14,
+            1,
+            15,
+            17,
+            0,
+            19
+          ],
+          "top5": [
+            {
+              "rank": 1,
+              "candidate_index": 2,
+              "relevance": 3,
+              "score": 0.9993879795074463,
+              "title": "RNN与Transformer全面对比:原理、性能与应用场景",
+              "url": "https://blog.csdn.net/m0_59162559/article/details/148862880"
+            },
+            {
+              "rank": 2,
+              "candidate_index": 11,
+              "relevance": 3,
+              "score": 0.998234748840332,
+              "title": "大语言模型背后的Transformer,与CNN和RNN有何不同,一文搞懂!!",
+              "url": "https://blog.51cto.com/u_16163480/14492160"
+            },
+            {
+              "rank": 3,
+              "candidate_index": 4,
+              "relevance": 3,
+              "score": 0.996645987033844,
+              "title": "【深度学习】RNN vs. Transformer,从循环到自注意力 最强比较 !!",
+              "url": "https://blog.csdn.net/fengdu78/article/details/142514464"
+            },
+            {
+              "rank": 4,
+              "candidate_index": 6,
+              "relevance": 3,
+              "score": 0.9955255389213562,
+              "title": "Transformer、RNN (循环神经网络) 和 CNN (卷积神经网络)的区别",
+              "url": "https://blog.csdn.net/ilovepengqi/article/details/148613271"
+            },
+            {
+              "rank": 5,
+              "candidate_index": 16,
+              "relevance": 3,
+              "score": 0.9952220320701599,
+              "title": "RNN过时了?Transformer要完全取代RNN?",
+              "url": "https://zhuanlan.zhihu.com/p/1891040453236871255"
+            }
+          ]
+        }
+      },
+      "labels": [
+        2,
+        3,
+        3,
+        2,
+        3,
+        3,
+        3,
+        3,
+        3,
+        3,
+        3,
+        3,
+        3,
+        3,
+        1,
+        2,
+        3,
+        2,
+        1,
+        1
+      ]
+    },
+    {
+      "query": "RAG 检索增强生成和模型微调各自的优缺点",
+      "type": "multihop",
+      "candidate_count": 20,
+      "label_distribution": {
+        "0": 0,
+        "1": 1,
+        "2": 8,
+        "3": 11
+      },
+      "ndcg_winner": "bge",
+      "models": {
+        "qwen": {
+          "elapsed_ms": 834.1,
+          "scores": [
+            0.2220747172832489,
+            0.9857140779495239,
+            0.9914366602897644,
+            0.994380533695221,
+            0.999295711517334,
+            0.9989418387413025,
+            0.9996371269226074,
+            0.9976379871368408,
+            0.9994093179702759,
+            0.9762114882469177,
+            0.9886809587478638,
+            0.9928485155105591,
+            0.9905381202697754,
+            0.9994956254959106,
+            0.8640809059143066,
+            0.7980728149414062,
+            0.9676965475082397,
+            0.999066174030304,
+            0.975665807723999,
+            0.9984904527664185
+          ],
+          "meta": {
+            "tokens": {
+              "input_tokens": 5237,
+              "output_tokens": 0,
+              "image_tokens": 0
+            },
+            "billed_units": {
+              "input_tokens": 5237,
+              "output_tokens": 0,
+              "image_tokens": 0,
+              "search_units": 0,
+              "classifications": 0
+            }
+          },
+          "request_id": "019f8e16e83e7c07bdf33e46884116fb",
+          "metrics": {
+            "ndcg_at_10": 0.8809750481083818,
+            "recall_at_10": 0.5263157894736842,
+            "precision_at_5": 1.0,
+            "mrr": 1.0
+          },
+          "ranking": [
+            6,
+            13,
+            8,
+            4,
+            17,
+            5,
+            19,
+            7,
+            3,
+            11,
+            2,
+            12,
+            10,
+            1,
+            9,
+            18,
+            16,
+            14,
+            15,
+            0
+          ],
+          "top5": [
+            {
+              "rank": 1,
+              "candidate_index": 6,
+              "relevance": 3,
+              "score": 0.9996371269226074,
+              "title": "RAG 和 微调 的区别",
+              "url": "https://blog.csdn.net/u013798595/article/details/147366509"
+            },
+            {
+              "rank": 2,
+              "candidate_index": 13,
+              "relevance": 2,
+              "score": 0.9994956254959106,
+              "title": "一文读懂:大模型RAG(检索增强生成)含高级方法",
+              "url": "https://zhuanlan.zhihu.com/p/675509396"
+            },
+            {
+              "rank": 3,
+              "candidate_index": 8,
+              "relevance": 3,
+              "score": 0.9994093179702759,
+              "title": "一文读懂大模型检索知识生成(RAG)",
+              "url": "https://blog.csdn.net/qq_33782021/article/details/153264379"
+            },
+            {
+              "rank": 4,
+              "candidate_index": 4,
+              "relevance": 3,
+              "score": 0.999295711517334,
+              "title": "RAG与Fine-Tuning大模型技术比拼",
+              "url": "https://cloud.baidu.com/article/3380058"
+            },
+            {
+              "rank": 5,
+              "candidate_index": 17,
+              "relevance": 3,
+              "score": 0.999066174030304,
+              "title": "RAG大模型增强生成能力案例有哪些?",
+              "url": "https://www.zhihu.com/question/638503601/answer/97961353941"
+            }
+          ]
+        },
+        "bge": {
+          "elapsed_ms": 813.0,
+          "scores": [
+            0.6976556777954102,
+            0.8707364797592163,
+            0.9773667454719543,
+            0.9871402382850647,
+            0.9641121625900269,
+            0.9848505258560181,
+            0.9991127848625183,
+            0.782640814781189,
+            0.9943588376045227,
+            0.5267024040222168,
+            0.8107360601425171,
+            0.8383596539497375,
+            0.4350202977657318,
+            0.9933854937553406,
+            0.5131911039352417,
+            0.2974332869052887,
+            0.8794758915901184,
+            0.9808688163757324,
+            0.7660290598869324,
+            0.9746174216270447
+          ],
+          "meta": {
+            "tokens": {
+              "input_tokens": 3258,
+              "output_tokens": 0,
+              "image_tokens": 0
+            },
+            "billed_units": {
+              "input_tokens": 3258,
+              "output_tokens": 0,
+              "image_tokens": 0,
+              "search_units": 0,
+              "classifications": 0
+            }
+          },
+          "request_id": "019f8e16ea887ca69c2ad0ec3c7d8ecb",
+          "metrics": {
+            "ndcg_at_10": 0.8825845340300185,
+            "recall_at_10": 0.47368421052631576,
+            "precision_at_5": 1.0,
+            "mrr": 1.0
+          },
+          "ranking": [
+            6,
+            8,
+            13,
+            3,
+            5,
+            17,
+            2,
+            19,
+            4,
+            16,
+            1,
+            11,
+            10,
+            7,
+            18,
+            0,
+            9,
+            14,
+            12,
+            15
+          ],
+          "top5": [
+            {
+              "rank": 1,
+              "candidate_index": 6,
+              "relevance": 3,
+              "score": 0.9991127848625183,
+              "title": "RAG 和 微调 的区别",
+              "url": "https://blog.csdn.net/u013798595/article/details/147366509"
+            },
+            {
+              "rank": 2,
+              "candidate_index": 8,
+              "relevance": 3,
+              "score": 0.9943588376045227,
+              "title": "一文读懂大模型检索知识生成(RAG)",
+              "url": "https://blog.csdn.net/qq_33782021/article/details/153264379"
+            },
+            {
+              "rank": 3,
+              "candidate_index": 13,
+              "relevance": 2,
+              "score": 0.9933854937553406,
+              "title": "一文读懂:大模型RAG(检索增强生成)含高级方法",
+              "url": "https://zhuanlan.zhihu.com/p/675509396"
+            },
+            {
+              "rank": 4,
+              "candidate_index": 3,
+              "relevance": 3,
+              "score": 0.9871402382850647,
+              "title": "花十几万微调模型,效果不如RAG?",
+              "url": "https://www.163.com/dy/article/L2EBGEA50556LPY6.html"
+            },
+            {
+              "rank": 5,
+              "candidate_index": 5,
+              "relevance": 3,
+              "score": 0.9848505258560181,
+              "title": "RAG与大模型微调全面对比:应用场景+微调方法详解",
+              "url": "https://blog.csdn.net/SSH_6/article/details/159435700"
+            }
+          ]
+        }
+      },
+      "labels": [
+        3,
+        2,
+        3,
+        3,
+        3,
+        3,
+        3,
+        2,
+        3,
+        2,
+        2,
+        3,
+        2,
+        2,
+        2,
+        2,
+        1,
+        3,
+        3,
+        3
+      ]
+    },
+    {
+      "query": "向量数据库 HNSW 索引的原理",
+      "type": "longtail",
+      "candidate_count": 20,
+      "label_distribution": {
+        "0": 0,
+        "1": 1,
+        "2": 8,
+        "3": 11
+      },
+      "ndcg_winner": "bge",
+      "models": {
+        "bge": {
+          "elapsed_ms": 595.0,
+          "scores": [
+            0.9668322801589966,
+            0.0709850937128067,
+            0.2738867402076721,
+            0.5538601875305176,
+            0.38658472895622253,
+            0.6895501613616943,
+            0.9705444574356079,
+            0.9731085300445557,
+            0.9675448536872864,
+            0.9090023040771484,
+            0.26065582036972046,
+            0.9485452771186829,
+            0.9166066646575928,
+            0.7559061646461487,
+            0.897400975227356,
+            0.5478785634040833,
+            0.722577691078186,
+            0.9898305535316467,
+            0.5466853380203247,
+            0.0026787552051246166
+          ],
+          "meta": {
+            "tokens": {
+              "input_tokens": 3166,
+              "output_tokens": 0,
+              "image_tokens": 0
+            },
+            "billed_units": {
+              "input_tokens": 3166,
+              "output_tokens": 0,
+              "image_tokens": 0,
+              "search_units": 0,
+              "classifications": 0
+            }
+          },
+          "request_id": "019f8e16edd47ab88301608e7313adea",
+          "metrics": {
+            "ndcg_at_10": 0.8450923023011543,
+            "recall_at_10": 0.5263157894736842,
+            "precision_at_5": 1.0,
+            "mrr": 1.0
+          },
+          "ranking": [
+            17,
+            7,
+            6,
+            8,
+            0,
+            11,
+            12,
+            9,
+            14,
+            13,
+            16,
+            5,
+            3,
+            15,
+            18,
+            4,
+            2,
+            10,
+            1,
+            19
+          ],
+          "top5": [
+            {
+              "rank": 1,
+              "candidate_index": 17,
+              "relevance": 3,
+              "score": 0.9898305535316467,
+              "title": "向量索引:向量数据库路线图",
+              "url": "https://zhuanlan.zhihu.com/p/3897339415"
+            },
+            {
+              "rank": 2,
+              "candidate_index": 7,
+              "relevance": 3,
+              "score": 0.9731085300445557,
+              "title": "Redis 向量检索与多级缓存设计:从 HNSW 索引到 L1/L2 缓存的工程实践",
+              "url": "https://blog.csdn.net/2401_87746054/article/details/161787589"
+            },
+            {
+              "rank": 3,
+              "candidate_index": 6,
+              "relevance": 2,
+              "score": 0.9705444574356079,
+              "title": "探秘新一代向量存储格式Lance-format (十七) 向量索引 - HNSW 实现",
+              "url": "https://zhuanlan.zhihu.com/p/1999481093880045664"
+            },
+            {
+              "rank": 4,
+              "candidate_index": 8,
+              "relevance": 2,
+              "score": 0.9675448536872864,
+              "title": "向量数据库到底怎么工作?",
+              "url": "https://weibo.com/1402400261/Q9q2tjJn8"
+            },
+            {
+              "rank": 5,
+              "candidate_index": 0,
+              "relevance": 3,
+              "score": 0.9668322801589966,
+              "title": "向量数据库基础:HNSW",
+              "url": "https://baijiahao.baidu.com/s?id=1807470900710146986&wfr=spider&for=pc"
+            }
+          ]
+        },
+        "qwen": {
+          "elapsed_ms": 605.6,
+          "scores": [
+            0.9995293617248535,
+            0.8019287586212158,
+            0.8346419930458069,
+            0.9969815611839294,
+            0.9880992770195007,
+            0.9864357113838196,
+            0.9941984415054321,
+            0.9975665807723999,
+            0.9998307228088379,
+            0.9954285621643066,
+            0.9675381779670715,
+            0.9935124516487122,
+            0.9967953562736511,
+            0.9975693821907043,
+            0.983643114566803,
+            0.9934977293014526,
+            0.9955503940582275,
+            0.9995489716529846,
+            0.9579671621322632,
+            0.4910465478897095
+          ],
+          "meta": {
+            "tokens": {
+              "input_tokens": 5256,
+              "output_tokens": 0,
+              "image_tokens": 0
+            },
+            "billed_units": {
+              "input_tokens": 5256,
+              "output_tokens": 0,
+              "image_tokens": 0,
+              "search_units": 0,
+              "classifications": 0
+            }
+          },
+          "request_id": "019f8e16f032751f983ed34729f786f5",
+          "metrics": {
+            "ndcg_at_10": 0.7534045454785803,
+            "recall_at_10": 0.5263157894736842,
+            "precision_at_5": 1.0,
+            "mrr": 1.0
+          },
+          "ranking": [
+            8,
+            17,
+            0,
+            13,
+            7,
+            3,
+            12,
+            16,
+            9,
+            6,
+            11,
+            15,
+            4,
+            5,
+            14,
+            10,
+            18,
+            2,
+            1,
+            19
+          ],
+          "top5": [
+            {
+              "rank": 1,
+              "candidate_index": 8,
+              "relevance": 2,
+              "score": 0.9998307228088379,
+              "title": "向量数据库到底怎么工作?",
+              "url": "https://weibo.com/1402400261/Q9q2tjJn8"
+            },
+            {
+              "rank": 2,
+              "candidate_index": 17,
+              "relevance": 3,
+              "score": 0.9995489716529846,
+              "title": "向量索引:向量数据库路线图",
+              "url": "https://zhuanlan.zhihu.com/p/3897339415"
+            },
+            {
+              "rank": 3,
+              "candidate_index": 0,
+              "relevance": 3,
+              "score": 0.9995293617248535,
+              "title": "向量数据库基础:HNSW",
+              "url": "https://baijiahao.baidu.com/s?id=1807470900710146986&wfr=spider&for=pc"
+            },
+            {
+              "rank": 4,
+              "candidate_index": 13,
+              "relevance": 3,
+              "score": 0.9975693821907043,
+              "title": "HNSW算法的基本原理及使用",
+              "url": "https://zhuanlan.zhihu.com/p/673027535"
+            },
+            {
+              "rank": 5,
+              "candidate_index": 7,
+              "relevance": 3,
+              "score": 0.9975665807723999,
+              "title": "Redis 向量检索与多级缓存设计:从 HNSW 索引到 L1/L2 缓存的工程实践",
+              "url": "https://blog.csdn.net/2401_87746054/article/details/161787589"
+            }
+          ]
+        }
+      },
+      "labels": [
+        3,
+        2,
+        2,
+        2,
+        3,
+        3,
+        2,
+        3,
+        2,
+        3,
+        3,
+        3,
+        3,
+        3,
+        2,
+        3,
+        2,
+        3,
+        2,
+        1
+      ]
+    },
+    {
+      "query": "LangChain 的 agent 是如何调用工具的",
+      "type": "mixed",
+      "candidate_count": 20,
+      "label_distribution": {
+        "0": 0,
+        "1": 0,
+        "2": 3,
+        "3": 17
+      },
+      "ndcg_winner": "tie",
+      "models": {
+        "qwen": {
+          "elapsed_ms": 806.1,
+          "scores": [
+            0.9911214113235474,
+            0.9982700347900391,
+            0.9984839558601379,
+            0.997399091720581,
+            0.9976796507835388,
+            0.9966622591018677,
+            0.9991514682769775,
+            0.9969891905784607,
+            0.9992257356643677,
+            0.9995049238204956,
+            0.9957128763198853,
+            0.99854576587677,
+            0.9988853335380554,
+            0.9995225667953491,
+            0.9244130253791809,
+            0.9935681223869324,
+            0.998884379863739,
+            0.9993149042129517,
+            0.9928395748138428,
+            0.9988155364990234
+          ],
+          "meta": {
+            "tokens": {
+              "input_tokens": 5038,
+              "output_tokens": 0,
+              "image_tokens": 0
+            },
+            "billed_units": {
+              "input_tokens": 5038,
+              "output_tokens": 0,
+              "image_tokens": 0,
+              "search_units": 0,
+              "classifications": 0
+            }
+          },
+          "request_id": "019f8e16f35374a79b293d1bd39111c1",
+          "metrics": {
+            "ndcg_at_10": 1.0,
+            "recall_at_10": 0.5,
+            "precision_at_5": 1.0,
+            "mrr": 1.0
+          },
+          "ranking": [
+            13,
+            9,
+            17,
+            8,
+            6,
+            12,
+            16,
+            19,
+            11,
+            2,
+            1,
+            4,
+            3,
+            7,
+            5,
+            10,
+            15,
+            18,
+            0,
+            14
+          ],
+          "top5": [
+            {
+              "rank": 1,
+              "candidate_index": 13,
+              "relevance": 3,
+              "score": 0.9995225667953491,
+              "title": "基于LangChain 1.0 的Agent 构建与工具调用实战",
+              "url": "https://blog.csdn.net/2301_79288416/article/details/159656087"
+            },
+            {
+              "rank": 2,
+              "candidate_index": 9,
+              "relevance": 3,
+              "score": 0.9995049238204956,
+              "title": "LangChain Agent与工具调用深度教程 - 构建智能助手完全指南 - LangChain入门教程 - 3",
+              "url": "https://blog.csdn.net/qq_21559191/article/details/145941115"
+            },
+            {
+              "rank": 3,
+              "candidate_index": 17,
+              "relevance": 3,
+              "score": 0.9993149042129517,
+              "title": "【大模型入门——Agent实现】langchain中agent使用实例",
+              "url": "https://zhuanlan.zhihu.com/p/30778521330"
+            },
+            {
+              "rank": 4,
+              "candidate_index": 8,
+              "relevance": 3,
+              "score": 0.9992257356643677,
+              "title": "Agent 工具封装和调用",
+              "url": "https://blog.csdn.net/m0_61980960/article/details/160867874"
+            },
+            {
+              "rank": 5,
+              "candidate_index": 6,
+              "relevance": 3,
+              "score": 0.9991514682769775,
+              "title": "langchain (十):Agent 调用外部工具(Tools)",
+              "url": "https://blog.csdn.net/sadfasdfsafadsa/article/details/156687731"
+            }
+          ]
+        },
+        "bge": {
+          "elapsed_ms": 783.9,
+          "scores": [
+            0.35773053765296936,
+            0.9107521176338196,
+            0.9759888052940369,
+            0.8664595484733582,
+            0.941825270652771,
+            0.8081159591674805,
+            0.9881835579872131,
+            0.7408303022384644,
+            0.9885082840919495,
+            0.9905292391777039,
+            0.8803455829620361,
+            0.8836166858673096,
+            0.9389721155166626,
+            0.9910037517547607,
+            0.40295857191085815,
+            0.8902179002761841,
+            0.9898560047149658,
+            0.9475506544113159,
+            0.724298357963562,
+            0.5042664408683777
+          ],
+          "meta": {
+            "tokens": {
+              "input_tokens": 3101,
+              "output_tokens": 0,
+              "image_tokens": 0
+            },
+            "billed_units": {
+              "input_tokens": 3101,
+              "output_tokens": 0,
+              "image_tokens": 0,
+              "search_units": 0,
+              "classifications": 0
+            }
+          },
+          "request_id": "019f8e16f6747f01a76b1466839f79f9",
+          "metrics": {
+            "ndcg_at_10": 1.0,
+            "recall_at_10": 0.5,
+            "precision_at_5": 1.0,
+            "mrr": 1.0
+          },
+          "ranking": [
+            13,
+            9,
+            16,
+            8,
+            6,
+            2,
+            17,
+            4,
+            12,
+            1,
+            15,
+            11,
+            10,
+            3,
+            5,
+            7,
+            18,
+            19,
+            14,
+            0
+          ],
+          "top5": [
+            {
+              "rank": 1,
+              "candidate_index": 13,
+              "relevance": 3,
+              "score": 0.9910037517547607,
+              "title": "基于LangChain 1.0 的Agent 构建与工具调用实战",
+              "url": "https://blog.csdn.net/2301_79288416/article/details/159656087"
+            },
+            {
+              "rank": 2,
+              "candidate_index": 9,
+              "relevance": 3,
+              "score": 0.9905292391777039,
+              "title": "LangChain Agent与工具调用深度教程 - 构建智能助手完全指南 - LangChain入门教程 - 3",
+              "url": "https://blog.csdn.net/qq_21559191/article/details/145941115"
+            },
+            {
+              "rank": 3,
+              "candidate_index": 16,
+              "relevance": 3,
+              "score": 0.9898560047149658,
+              "title": "Langchain Agent - 实用技巧汇总",
+              "url": "https://zhuanlan.zhihu.com/p/697005461"
+            },
+            {
+              "rank": 4,
+              "candidate_index": 8,
+              "relevance": 3,
+              "score": 0.9885082840919495,
+              "title": "Agent 工具封装和调用",
+              "url": "https://blog.csdn.net/m0_61980960/article/details/160867874"
+            },
+            {
+              "rank": 5,
+              "candidate_index": 6,
+              "relevance": 3,
+              "score": 0.9881835579872131,
+              "title": "langchain (十):Agent 调用外部工具(Tools)",
+              "url": "https://blog.csdn.net/sadfasdfsafadsa/article/details/156687731"
+            }
+          ]
+        }
+      },
+      "labels": [
+        2,
+        3,
+        3,
+        3,
+        3,
+        3,
+        3,
+        3,
+        3,
+        3,
+        3,
+        3,
+        3,
+        3,
+        2,
+        2,
+        3,
+        3,
+        3,
+        3
+      ]
+    },
+    {
+      "query": "如何评估搜索引擎的检索质量",
+      "type": "howto",
+      "candidate_count": 20,
+      "label_distribution": {
+        "0": 1,
+        "1": 8,
+        "2": 6,
+        "3": 5
+      },
+      "ndcg_winner": "qwen",
+      "models": {
+        "bge": {
+          "elapsed_ms": 784.5,
+          "scores": [
+            0.0017324009677395225,
+            0.07782123237848282,
+            0.6561906933784485,
+            0.9849745631217957,
+            0.07240118086338043,
+            0.6262866854667664,
+            0.073866106569767,
+            0.854529857635498,
+            0.27515944838523865,
+            0.04585149511694908,
+            0.9859704375267029,
+            0.6769192218780518,
+            0.0026415649335831404,
+            0.07974983006715775,
+            0.03630927950143814,
+            0.6381891965866089,
+            0.6775358319282532,
+            0.0060823229141533375,
+            0.5299742817878723,
+            0.010032965801656246
+          ],
+          "meta": {
+            "tokens": {
+              "input_tokens": 2930,
+              "output_tokens": 0,
+              "image_tokens": 0
+            },
+            "billed_units": {
+              "input_tokens": 2930,
+              "output_tokens": 0,
+              "image_tokens": 0,
+              "search_units": 0,
+              "classifications": 0
+            }
+          },
+          "request_id": "019f8e16f98676b69a9c97dc291488d6",
+          "metrics": {
+            "ndcg_at_10": 0.8126367820500628,
+            "recall_at_10": 0.6363636363636364,
+            "precision_at_5": 0.8,
+            "mrr": 1.0
+          },
+          "ranking": [
+            10,
+            3,
+            7,
+            16,
+            11,
+            2,
+            15,
+            5,
+            18,
+            8,
+            13,
+            1,
+            6,
+            4,
+            9,
+            14,
+            19,
+            17,
+            12,
+            0
+          ],
+          "top5": [
+            {
+              "rank": 1,
+              "candidate_index": 10,
+              "relevance": 3,
+              "score": 0.9859704375267029,
+              "title": "搜索引擎检索系统质量评估",
+              "url": "http://www.cqvip.com/main/zcps.aspx?c=1&id=20258792"
+            },
+            {
+              "rank": 2,
+              "candidate_index": 3,
+              "relevance": 3,
+              "score": 0.9849745631217957,
+              "title": "怎样量化评价搜索引擎的结果质量 - Harveyaot - 博客园",
+              "url": "https://www.cnblogs.com/harveyaot/archive/2013/03/19/2969012.html"
+            },
+            {
+              "rank": 3,
+              "candidate_index": 7,
+              "relevance": 1,
+              "score": 0.854529857635498,
+              "title": "Google 搜索质量评估指南(2016)-第一部分:页面质量评估指南",
+              "url": "https://blog.51cto.com/u_16213571/14734083"
+            },
+            {
+              "rank": 4,
+              "candidate_index": 16,
+              "relevance": 2,
+              "score": 0.6775358319282532,
+              "title": "科研文献阅读笔记(1)",
+              "url": "https://zhuanlan.zhihu.com/p/717231847"
+            },
+            {
+              "rank": 5,
+              "candidate_index": 11,
+              "relevance": 2,
+              "score": 0.6769192218780518,
+              "title": "搜索引擎中的查询结果覆盖度",
+              "url": "https://blog.csdn.net/2501_91930600/article/details/149493885"
+            }
+          ]
+        },
+        "qwen": {
+          "elapsed_ms": 822.4,
+          "scores": [
+            0.0004677994002122432,
+            0.7125594615936279,
+            0.9548996090888977,
+            0.9987891316413879,
+            0.997611403465271,
+            0.9944486618041992,
+            0.5269601941108704,
+            0.9528508186340332,
+            0.8735112547874451,
+            0.810093104839325,
+            0.9992662072181702,
+            0.9892338514328003,
+            0.025715326890349388,
+            0.2559850811958313,
+            0.10689406096935272,
+            0.9826173186302185,
+            0.9729071855545044,
+            0.03439214825630188,
+            0.9509401321411133,
+            0.04440677911043167
+          ],
+          "meta": {
+            "tokens": {
+              "input_tokens": 5003,
+              "output_tokens": 0,
+              "image_tokens": 0
+            },
+            "billed_units": {
+              "input_tokens": 5003,
+              "output_tokens": 0,
+              "image_tokens": 0,
+              "search_units": 0,
+              "classifications": 0
+            }
+          },
+          "request_id": "019f8e16fca57fc48aaf07c464a5b392",
+          "metrics": {
+            "ndcg_at_10": 0.9423492878753681,
+            "recall_at_10": 0.7272727272727273,
+            "precision_at_5": 1.0,
+            "mrr": 1.0
+          },
+          "ranking": [
+            10,
+            3,
+            4,
+            5,
+            11,
+            15,
+            16,
+            2,
+            7,
+            18,
+            8,
+            9,
+            1,
+            6,
+            13,
+            14,
+            19,
+            17,
+            12,
+            0
+          ],
+          "top5": [
+            {
+              "rank": 1,
+              "candidate_index": 10,
+              "relevance": 3,
+              "score": 0.9992662072181702,
+              "title": "搜索引擎检索系统质量评估",
+              "url": "http://www.cqvip.com/main/zcps.aspx?c=1&id=20258792"
+            },
+            {
+              "rank": 2,
+              "candidate_index": 3,
+              "relevance": 3,
+              "score": 0.9987891316413879,
+              "title": "怎样量化评价搜索引擎的结果质量 - Harveyaot - 博客园",
+              "url": "https://www.cnblogs.com/harveyaot/archive/2013/03/19/2969012.html"
+            },
+            {
+              "rank": 3,
+              "candidate_index": 4,
+              "relevance": 3,
+              "score": 0.997611403465271,
+              "title": "深入理解搜索引擎——搜索评价指标",
+              "url": "https://zhuanlan.zhihu.com/p/351986117"
+            },
+            {
+              "rank": 4,
+              "candidate_index": 5,
+              "relevance": 3,
+              "score": 0.9944486618041992,
+              "title": "一文读懂 搜索引擎的评价指标介绍",
+              "url": "https://www.jianshu.com/p/460016105da4"
+            },
+            {
+              "rank": 5,
+              "candidate_index": 11,
+              "relevance": 2,
+              "score": 0.9892338514328003,
+              "title": "搜索引擎中的查询结果覆盖度",
+              "url": "https://blog.csdn.net/2501_91930600/article/details/149493885"
+            }
+          ]
+        }
+      },
+      "labels": [
+        0,
+        2,
+        3,
+        3,
+        3,
+        3,
+        1,
+        1,
+        1,
+        2,
+        3,
+        2,
+        1,
+        1,
+        2,
+        2,
+        2,
+        1,
+        1,
+        1
+      ]
+    },
+    {
+      "query": "TC3-HMAC-SHA256 签名算法的步骤",
+      "type": "howto",
+      "candidate_count": 20,
+      "label_distribution": {
+        "0": 0,
+        "1": 12,
+        "2": 6,
+        "3": 2
+      },
+      "ndcg_winner": "qwen",
+      "models": {
+        "qwen": {
+          "elapsed_ms": 600.1,
+          "scores": [
+            0.7099732756614685,
+            0.0156888198107481,
+            0.610947847366333,
+            0.9770380258560181,
+            0.7660200595855713,
+            0.3689213693141937,
+            0.2049804925918579,
+            0.030877552926540375,
+            0.054156333208084106,
+            0.9128541350364685,
+            0.8987956643104553,
+            0.9241342544555664,
+            0.9252346754074097,
+            0.8996877670288086,
+            0.8288081884384155,
+            0.9117914438247681,
+            0.8943332433700562,
+            0.9036181569099426,
+            0.89668869972229,
+            0.8987259268760681
+          ],
+          "meta": {
+            "tokens": {
+              "input_tokens": 4887,
+              "output_tokens": 0,
+              "image_tokens": 0
+            },
+            "billed_units": {
+              "input_tokens": 4887,
+              "output_tokens": 0,
+              "image_tokens": 0,
+              "search_units": 0,
+              "classifications": 0
+            }
+          },
+          "request_id": "019f8e16ff0f721d945753592a6f09aa",
+          "metrics": {
+            "ndcg_at_10": 0.6010745125247982,
+            "recall_at_10": 0.25,
+            "precision_at_5": 0.4,
+            "mrr": 1.0
+          },
+          "ranking": [
+            3,
+            12,
+            11,
+            9,
+            15,
+            17,
+            13,
+            10,
+            19,
+            18,
+            16,
+            14,
+            4,
+            0,
+            2,
+            5,
+            6,
+            8,
+            7,
+            1
+          ],
+          "top5": [
+            {
+              "rank": 1,
+              "candidate_index": 3,
+              "relevance": 3,
+              "score": 0.9770380258560181,
+              "title": "HMAC-Sha256签名算法和时间戳结合进行数据传输安全性的保障",
+              "url": "https://blog.csdn.net/weixin_41429382/article/details/146055952"
+            },
+            {
+              "rank": 2,
+              "candidate_index": 12,
+              "relevance": 1,
+              "score": 0.9252346754074097,
+              "title": "签名方法 v3",
+              "url": "https://cloud.tencent.com/document/product/1131/42337"
+            },
+            {
+              "rank": 3,
+              "candidate_index": 11,
+              "relevance": 1,
+              "score": 0.9241342544555664,
+              "title": "签名方法 v3",
+              "url": "https://cloud.tencent.com/document/product/1083/80921"
+            },
+            {
+              "rank": 4,
+              "candidate_index": 9,
+              "relevance": 2,
+              "score": 0.9128541350364685,
+              "title": "签名方法 v3",
+              "url": "https://cloud.tencent.com/document/product/1629/108688"
+            },
+            {
+              "rank": 5,
+              "candidate_index": 15,
+              "relevance": 1,
+              "score": 0.9117914438247681,
+              "title": "签名方法 v3",
+              "url": "https://cloud.tencent.com/document/product/856/33903"
+            }
+          ]
+        },
+        "bge": {
+          "elapsed_ms": 692.4,
+          "scores": [
+            0.4287734627723694,
+            0.0010460324119776487,
+            0.5900842547416687,
+            0.9256513714790344,
+            0.29678624868392944,
+            0.36783698201179504,
+            0.17609913647174835,
+            0.0007319810101762414,
+            0.18984092772006989,
+            0.3914332985877991,
+            0.7343342900276184,
+            0.3831908106803894,
+            0.6148212552070618,
+            0.7402025461196899,
+            0.7878855466842651,
+            0.3710840046405792,
+            0.7237375378608704,
+            0.7364352345466614,
+            0.7207545042037964,
+            0.7312145233154297
+          ],
+          "meta": {
+            "tokens": {
+              "input_tokens": 2803,
+              "output_tokens": 0,
+              "image_tokens": 0
+            },
+            "billed_units": {
+              "input_tokens": 2803,
+              "output_tokens": 0,
+              "image_tokens": 0,
+              "search_units": 0,
+              "classifications": 0
+            }
+          },
+          "request_id": "019f8e17014c7236aab375da8403f1a2",
+          "metrics": {
+            "ndcg_at_10": 0.5556785126451685,
+            "recall_at_10": 0.125,
+            "precision_at_5": 0.2,
+            "mrr": 1.0
+          },
+          "ranking": [
+            3,
+            14,
+            13,
+            17,
+            10,
+            19,
+            16,
+            18,
+            12,
+            2,
+            0,
+            9,
+            11,
+            15,
+            5,
+            4,
+            8,
+            6,
+            1,
+            7
+          ],
+          "top5": [
+            {
+              "rank": 1,
+              "candidate_index": 3,
+              "relevance": 3,
+              "score": 0.9256513714790344,
+              "title": "HMAC-Sha256签名算法和时间戳结合进行数据传输安全性的保障",
+              "url": "https://blog.csdn.net/weixin_41429382/article/details/146055952"
+            },
+            {
+              "rank": 2,
+              "candidate_index": 14,
+              "relevance": 1,
+              "score": 0.7878855466842651,
+              "title": "流量反欺诈",
+              "url": "https://cloud.tencent.com/doc/product/1031/43300"
+            },
+            {
+              "rank": 3,
+              "candidate_index": 13,
+              "relevance": 1,
+              "score": 0.7402025461196899,
+              "title": "签名方法 v3",
+              "url": "https://cloud.tencent.cn/document/product/1527/89584"
+            },
+            {
+              "rank": 4,
+              "candidate_index": 17,
+              "relevance": 1,
+              "score": 0.7364352345466614,
+              "title": "签名方法 v3",
+              "url": "https://www.cloud.tencent.com/document/product/599/30659"
+            },
+            {
+              "rank": 5,
+              "candidate_index": 10,
+              "relevance": 1,
+              "score": 0.7343342900276184,
+              "title": "签名方法 v3",
+              "url": "https://cloud.tencent.cn/document/product/1131/76639"
+            }
+          ]
+        }
+      },
+      "labels": [
+        2,
+        2,
+        1,
+        3,
+        3,
+        2,
+        2,
+        2,
+        1,
+        2,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1
+      ]
+    }
+  ]
+}

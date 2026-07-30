@@ -44,11 +44,13 @@ MCP 与 REST 只暴露两个业务能力：
 
 Agent 应先检查：
 
-1. `failures[]`；
-2. `retrieval_assessment.status` 与 `gaps[]`；
-3. `query.filter_execution` 是否真正应用了所需过滤器；
-4. `evidence[].quality`；
-5. 需要事实核验、反证或全文时，转入 `research`。
+1. `failures[]`；其中 `degradation.action` 是已执行的降级动作，
+   `retry_owner=server` 时不要由 Agent 紧密重试，`retry_after_ms` 非空时必须等待；
+2. `result_set.counts_by_stage`，确认各来源在召回、排序、组装和最终选择阶段的数量；
+3. `retrieval_assessment.status` 与 `gaps[]`；
+4. `query.filter_execution` 是否真正应用了所需过滤器；
+5. `evidence[].quality`；
+6. 需要事实核验、反证或全文时，转入 `research`。
 
 ## 2. `research`
 

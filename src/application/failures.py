@@ -1,6 +1,7 @@
 """应用服务共享的结构化失败构造器。"""
 from __future__ import annotations
 
+import math
 from typing import Optional
 
 from src.domain.errors import ExternalServiceError, public_error_message
@@ -24,4 +25,10 @@ def search_failure(
         code=external.code if external is not None else code,
         message=public_error_message(message),
         recoverable=external.recoverable if external is not None else recoverable,
+        retry_after_ms=(
+            math.ceil(external.retry_after_seconds * 1000)
+            if external is not None
+            and external.retry_after_seconds is not None
+            else None
+        ),
     )

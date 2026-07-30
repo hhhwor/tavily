@@ -3,15 +3,18 @@ from __future__ import annotations
 
 import secrets
 from collections import Counter
+from typing import Sequence
 
 from src.application.answerability import AnswerabilityPolicy
 from src.application.commands import SearchCommand
+from src.application.degradation import degradation_for
 from src.application.discovery_service import DiscoveryService
 from src.application.evidence_assembler import EvidenceAssembler
+from src.application.evidence_selection import select_evidence
 from src.application.ports.runtime import Clock
 from src.application.ports.search_seed import SearchSeedStore
 from src.application.trust_annotator import TrustAnnotator
-from src.domain.documents import EnrichedDocument
+from src.domain.documents import DocumentKind, EnrichedDocument
 from src.domain.evidence import AnswerabilityGap, Evidence
 from src.domain.search_api import (
     FailureDetail,
@@ -24,6 +27,8 @@ from src.domain.search_api import (
     SearchResponse,
     SearchResultSet,
     SearchSeedSnapshot,
+    SearchStageCounts,
+    SourceTypeCounts,
     SourceFilterExecution,
 )
 
@@ -61,6 +66,12 @@ class SearchService:
             code=value.code,
             message=value.message,
             retryable=value.recoverable,
+            retry_after_ms=value.retry_after_ms,
+            degradation=degradation_for(
+                stage=value.stage,
+                code=value.code,
+                retryable=value.recoverable,
+            ),
         )
 
     @staticmethod
@@ -118,6 +129,49 @@ class SearchService:
             for name in ("citable", "limited", "discovery_only", "unavailable")
         })
 
+    @staticmethod
+    def _source_type_counts(evidence: Sequence[Evidence]) -> SourceTypeCounts:
+        counts = Counter(item.type for item in evidence)
+        return SourceTypeCounts(**{
+            name: counts.get(name, 0)
+            for name in ("web", "academic", "patent")
+        })
+
+    @staticmethod
+    def _stage_gaps(
+        *,
+        expected_types: list[DocumentKind],
+        counts: SearchStageCounts,
+    ) -> list[AnswerabilityGap]:
+        gaps: list[AnswerabilityGap] = []
+        for source_type in expected_types:
+            if getattr(counts.selected, source_type) > 0:
+                continue
+            if getattr(counts.assembled, source_type) > 0:
+                code = "SOURCE_TYPE_DROPPED_BY_LIMIT"
+                message = (
+                    f"{source_type} 有可用候选，但因结果 limit 不足未进入最终 evidence。"
+                )
+            elif getattr(counts.ranked, source_type) > 0:
+                code = "SOURCE_TYPE_DROPPED_DURING_ASSEMBLY"
+                message = (
+                    f"{source_type} 已通过排序，但未能组装为可返回 evidence。"
+                )
+            elif getattr(counts.recalled, source_type) > 0:
+                code = "SOURCE_TYPE_DROPPED_BY_RANKING"
+                message = (
+                    f"{source_type} 已召回候选，但没有候选通过排序阶段。"
+                )
+            else:
+                continue
+            gaps.append(AnswerabilityGap(
+                code=code,
+                severity="warning",
+                message=message,
+                type=source_type,
+            ))
+        return gaps
+
     def execute(self, command: SearchCommand) -> SearchResponse:
         started = self._clock.monotonic()
         outcome = self._discovery.execute(command)
@@ -134,12 +188,17 @@ class SearchService:
             outcome.ranked.web,
             academic,
             outcome.ranked.patent,
-        )[: command.limit]
+        )
+        selected = select_evidence(
+            assembled,
+            limit=command.limit,
+            required_source_types=command.source_types or (),
+        )
         trust = self._trust_annotator.annotate(
             mode="annotate",
             query=outcome.planned.plan.normalized_query,
             planned_sources=outcome.recalled.planned_sources,
-            evidence=assembled,
+            evidence=selected,
             query_time=outcome.query_time,
             candidate_budget=outcome.recalled.candidate_budget,
             source_snapshots={
@@ -147,6 +206,20 @@ class SearchService:
             },
         )
         evidence = list(trust.evidence)
+        stage_counts = SearchStageCounts(
+            recalled=SourceTypeCounts(
+                web=len(outcome.recalled.web),
+                academic=len(outcome.recalled.academic),
+                patent=len(outcome.recalled.patent),
+            ),
+            ranked=SourceTypeCounts(
+                web=len(outcome.ranked.web),
+                academic=len(outcome.ranked.academic),
+                patent=len(outcome.ranked.patent),
+            ),
+            assembled=self._source_type_counts(assembled),
+            selected=self._source_type_counts(evidence),
+        )
         answerability = self._answerability.evaluate(
             evidence,
             failures,
@@ -155,6 +228,13 @@ class SearchService:
             expected_patent=outcome.planned.do_patent,
             include_pdf_text=False,
         )
+        expected_types: list[DocumentKind] = []
+        if outcome.planned.active_provider_names:
+            expected_types.append("web")
+        if outcome.planned.do_academic:
+            expected_types.append("academic")
+        if outcome.planned.do_patent:
+            expected_types.append("patent")
         assessment = RetrievalAssessment(
             status={
                 "answerable": "usable",
@@ -162,7 +242,13 @@ class SearchService:
                 "not_answerable": "unusable",
             }[answerability.status],
             quality_mix=self._quality_mix(evidence),
-            gaps=answerability.gaps,
+            gaps=[
+                *answerability.gaps,
+                *self._stage_gaps(
+                    expected_types=expected_types,
+                    counts=stage_counts,
+                ),
+            ],
         )
         filter_execution = self._filter_execution(command, outcome.recalled.batches)
         query = SearchQuery(
@@ -234,6 +320,11 @@ class SearchService:
                 code="SEARCH_SEED_UNAVAILABLE",
                 message="研究种子暂时不可用；搜索结果仍可使用。",
                 retryable=True,
+                degradation=degradation_for(
+                    stage="seed_store",
+                    code="SEARCH_SEED_UNAVAILABLE",
+                    retryable=True,
+                ),
             ))
 
         counts = Counter(item.type for item in evidence)
@@ -247,6 +338,7 @@ class SearchService:
                 returned=len(evidence),
                 limit=command.limit,
                 counts_by_type=dict(counts),
+                counts_by_stage=stage_counts,
             ),
             retrieval_assessment=assessment,
             retrieval_boundary=boundary,

@@ -2,7 +2,7 @@
 name: chukonu-web-search
 description: "通过 Chukonu remote MCP 的 search 与 research 获取网页、学术和专利证据。用于需要外部、实时、可引用信息的搜索任务，以及需要事实核验、反证检索、PDF 全文深读、覆盖评估或持久化多轮研究的任务；依据结构化 evidence、retrieval_assessment 与 research dossier 作答。"
 metadata:
-  version: "0.3.0"
+  version: "0.3.1"
   tags: [web, search, research, academic, patent, mcp, evidence, oauth]
   transport: streamable-http
   requires:
@@ -93,10 +93,11 @@ claude mcp add chukonu-web-search https://search.houdutech.cn/web/mcp/ \
 按以下顺序检查搜索响应：
 
 1. 读取 `failures[]`，确认是否有来源或阶段失败。
-2. 读取 `retrieval_assessment.status` 和 `retrieval_assessment.gaps[]`，判断证据是否可用及缺口。
-3. 读取 `query.filter_execution`，确认所需过滤器是否真正应用；不要仅根据请求参数假设过滤成功。
-4. 检查每条 `evidence[].quality`，优先使用质量更高、可定位、可引用的证据。
-5. 仅把 `evidence[].scores.relevance` 用于排序，不要将其解释为事实置信度。
+2. 读取 `result_set.counts_by_stage`，比较 `recalled/ranked/assembled/selected` 的分来源计数，定位候选在哪个阶段损失。
+3. 读取 `retrieval_assessment.status` 和 `retrieval_assessment.gaps[]`，判断证据是否可用及缺口。
+4. 读取 `query.filter_execution`，确认所需过滤器是否真正应用；不要仅根据请求参数假设过滤成功。
+5. 检查每条 `evidence[].quality`，优先使用质量更高、可定位、可引用的证据。
+6. 仅把 `evidence[].scores.relevance` 用于排序，不要将其解释为事实置信度。
 
 `status` 只表示搜索执行是否完整，不能代替证据充分性判断。`research_seed.search_id` 指向服务端保存的不可变 evidence 与检索边界快照；不要自行构造、修改或让客户端回传该快照。
 

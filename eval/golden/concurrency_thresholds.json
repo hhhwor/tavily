@@ -1,0 +1,34 @@
+{
+  "schema_version": "concurrency-thresholds.v1",
+  "description": "Offline search-pipeline merge gate; latency thresholds include planning, recall, retry, ranking, trust annotation and SQLite seed persistence.",
+  "levels": {
+    "20": {
+      "min_success_rate": 1.0,
+      "min_complete_rate": 1.0,
+      "min_usable_rate": 1.0,
+      "max_exception_rate": 0.0,
+      "max_deadline_failure_rate": 0.0,
+      "max_p95_ms": 1000.0,
+      "min_throughput_rps": 20.0,
+      "min_provider_parallelism": 2,
+      "max_provider_parallelism": 16,
+      "min_scorer_parallelism": 2,
+      "max_scorer_parallelism": 4,
+      "min_retry_recovery_rate": 1.0
+    },
+    "50": {
+      "min_success_rate": 1.0,
+      "min_complete_rate": 1.0,
+      "min_usable_rate": 1.0,
+      "max_exception_rate": 0.0,
+      "max_deadline_failure_rate": 0.0,
+      "max_p95_ms": 1500.0,
+      "min_throughput_rps": 20.0,
+      "min_provider_parallelism": 2,
+      "max_provider_parallelism": 16,
+      "min_scorer_parallelism": 2,
+      "max_scorer_parallelism": 4,
+      "min_retry_recovery_rate": 1.0
+    }
+  }
+}

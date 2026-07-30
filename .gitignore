@@ -28,3 +28,8 @@ node_modules/
 # Misc
 *.log
 .DS_Store
+lark-auth-qrcode.png
+lark-cli.tar.gz
+
+# Reproducible evaluation outputs (corpora, baselines and thresholds are source)
+eval/golden/*_report.json
