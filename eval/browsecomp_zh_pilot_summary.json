@@ -1,0 +1,324 @@
+{
+  "schema_version": "browsecomp-zh-pilot-summary.v1",
+  "completed_at_utc": "2026-07-31T10:08:24.243024+00:00",
+  "rejudged_at_utc": "2026-07-31T10:18:55.472752+00:00",
+  "dataset_sha256": "49963cdc8b4a16f4656bbac89ed5f3495f7b3bec4cf310990f567e7893c6a531",
+  "repo_commit": "86abe635e7deef89ec00c68ff1c2588f0e2f2099",
+  "seed": 20260730,
+  "sample_size": 55,
+  "systems": {
+    "B0": {
+      "runs": 55,
+      "completed": 55,
+      "failed": 0,
+      "success_rate": 1.0,
+      "failure_types": {},
+      "judgments": {
+        "INCORRECT": 32,
+        "NOT_ATTEMPTED": 21,
+        "CORRECT": 2
+      },
+      "search_calls": 0,
+      "open_calls": 0,
+      "usable_opens": 0,
+      "model_calls": 87,
+      "answer_tokens": 24894,
+      "judge_tokens": 6725,
+      "tokens": 31619,
+      "elapsed_p50_ms": 3029,
+      "elapsed_p95_ms": 20163,
+      "budget_violations": 0,
+      "format_repairs": 0,
+      "invalid_output_retries": 0,
+      "leak_hits": 0
+    },
+    "B1": {
+      "runs": 55,
+      "completed": 55,
+      "failed": 0,
+      "success_rate": 1.0,
+      "failure_types": {},
+      "judgments": {
+        "INCORRECT": 37,
+        "CORRECT": 9,
+        "NOT_ATTEMPTED": 9
+      },
+      "search_calls": 55,
+      "open_calls": 0,
+      "usable_opens": 0,
+      "model_calls": 94,
+      "answer_tokens": 289725,
+      "judge_tokens": 7927,
+      "tokens": 297652,
+      "elapsed_p50_ms": 8651,
+      "elapsed_p95_ms": 28674,
+      "budget_violations": 0,
+      "format_repairs": 0,
+      "invalid_output_retries": 1,
+      "leak_hits": 1
+    },
+    "B2": {
+      "runs": 55,
+      "completed": 46,
+      "failed": 9,
+      "success_rate": 0.8363636363636363,
+      "failure_types": {
+        "model_total_deadline": 6,
+        "model_read_timeout": 1,
+        "model_http_429": 1,
+        "budget_exhausted": 1
+      },
+      "judgments": {
+        "INCORRECT": 38,
+        "CORRECT": 3,
+        "UNJUDGED": 9,
+        "NOT_ATTEMPTED": 5
+      },
+      "search_calls": 47,
+      "open_calls": 136,
+      "usable_opens": 85,
+      "model_calls": 314,
+      "answer_tokens": 2423482,
+      "judge_tokens": 7962,
+      "tokens": 2431444,
+      "elapsed_p50_ms": 51397,
+      "elapsed_p95_ms": 180972,
+      "budget_violations": 0,
+      "format_repairs": 0,
+      "invalid_output_retries": 0,
+      "leak_hits": 1
+    }
+  },
+  "topics": {
+    "影视": {
+      "n": 5,
+      "judgments": {
+        "B0": {
+          "INCORRECT": 3,
+          "CORRECT": 1,
+          "NOT_ATTEMPTED": 1
+        },
+        "B1": {
+          "CORRECT": 2,
+          "NOT_ATTEMPTED": 1,
+          "INCORRECT": 2
+        },
+        "B2": {
+          "INCORRECT": 4,
+          "NOT_ATTEMPTED": 1
+        }
+      }
+    },
+    "艺术": {
+      "n": 5,
+      "judgments": {
+        "B0": {
+          "NOT_ATTEMPTED": 3,
+          "INCORRECT": 2
+        },
+        "B1": {
+          "INCORRECT": 4,
+          "NOT_ATTEMPTED": 1
+        },
+        "B2": {
+          "INCORRECT": 4,
+          "UNJUDGED": 1
+        }
+      }
+    },
+    "地理": {
+      "n": 5,
+      "judgments": {
+        "B0": {
+          "NOT_ATTEMPTED": 1,
+          "INCORRECT": 3,
+          "CORRECT": 1
+        },
+        "B1": {
+          "NOT_ATTEMPTED": 1,
+          "INCORRECT": 4
+        },
+        "B2": {
+          "UNJUDGED": 3,
+          "INCORRECT": 2
+        }
+      }
+    },
+    "音乐": {
+      "n": 5,
+      "judgments": {
+        "B0": {
+          "INCORRECT": 4,
+          "NOT_ATTEMPTED": 1
+        },
+        "B1": {
+          "INCORRECT": 4,
+          "NOT_ATTEMPTED": 1
+        },
+        "B2": {
+          "INCORRECT": 4,
+          "UNJUDGED": 1
+        }
+      }
+    },
+    "历史": {
+      "n": 5,
+      "judgments": {
+        "B0": {
+          "INCORRECT": 4,
+          "NOT_ATTEMPTED": 1
+        },
+        "B1": {
+          "CORRECT": 3,
+          "INCORRECT": 2
+        },
+        "B2": {
+          "CORRECT": 1,
+          "UNJUDGED": 2,
+          "INCORRECT": 1,
+          "NOT_ATTEMPTED": 1
+        }
+      }
+    },
+    "医学": {
+      "n": 5,
+      "judgments": {
+        "B0": {
+          "INCORRECT": 4,
+          "NOT_ATTEMPTED": 1
+        },
+        "B1": {
+          "INCORRECT": 4,
+          "NOT_ATTEMPTED": 1
+        },
+        "B2": {
+          "INCORRECT": 4,
+          "NOT_ATTEMPTED": 1
+        }
+      }
+    },
+    "电子游戏": {
+      "n": 5,
+      "judgments": {
+        "B0": {
+          "NOT_ATTEMPTED": 3,
+          "INCORRECT": 2
+        },
+        "B1": {
+          "CORRECT": 1,
+          "INCORRECT": 4
+        },
+        "B2": {
+          "INCORRECT": 4,
+          "UNJUDGED": 1
+        }
+      }
+    },
+    "科技": {
+      "n": 5,
+      "judgments": {
+        "B0": {
+          "INCORRECT": 4,
+          "NOT_ATTEMPTED": 1
+        },
+        "B1": {
+          "INCORRECT": 3,
+          "NOT_ATTEMPTED": 1,
+          "CORRECT": 1
+        },
+        "B2": {
+          "INCORRECT": 5
+        }
+      }
+    },
+    "体育": {
+      "n": 5,
+      "judgments": {
+        "B0": {
+          "INCORRECT": 2,
+          "NOT_ATTEMPTED": 3
+        },
+        "B1": {
+          "INCORRECT": 5
+        },
+        "B2": {
+          "INCORRECT": 4,
+          "UNJUDGED": 1
+        }
+      }
+    },
+    "政策法规": {
+      "n": 5,
+      "judgments": {
+        "B0": {
+          "INCORRECT": 4,
+          "NOT_ATTEMPTED": 1
+        },
+        "B1": {
+          "INCORRECT": 4,
+          "CORRECT": 1
+        },
+        "B2": {
+          "CORRECT": 1,
+          "NOT_ATTEMPTED": 1,
+          "INCORRECT": 3
+        }
+      }
+    },
+    "学术论文": {
+      "n": 5,
+      "judgments": {
+        "B0": {
+          "NOT_ATTEMPTED": 5
+        },
+        "B1": {
+          "CORRECT": 1,
+          "NOT_ATTEMPTED": 3,
+          "INCORRECT": 1
+        },
+        "B2": {
+          "CORRECT": 1,
+          "NOT_ATTEMPTED": 1,
+          "INCORRECT": 3
+        }
+      }
+    }
+  },
+  "api_volume": {
+    "model_calls": 608,
+    "model_tokens": 2780513,
+    "judge_self_test_calls": 2,
+    "judge_self_test_tokens": 318,
+    "previous_judge_model_calls": 111,
+    "previous_judge_model_tokens": 19480,
+    "logical_search_calls": 102,
+    "known_search_provider_request_ceiling": 408,
+    "open_url_calls": 136,
+    "counts_are_lower_bounds": true,
+    "lower_bound_reason": "失败轨的部分模型、搜索和读页调用未落入完成态 run 快照"
+  },
+  "checks": {
+    "selected_55": true,
+    "five_per_topic": true,
+    "health_four_sources": true,
+    "leak_filter_self_test": true,
+    "judge_self_test": true,
+    "all_165_completed": false,
+    "all_165_judged": false,
+    "b1_exactly_one_search": true,
+    "b2_search_used": false,
+    "b2_usable_open": false,
+    "native_schema_without_repair": true,
+    "retrieved_answers_have_evidence": true,
+    "confidence_uses_percent_scale": true,
+    "no_budget_violation": true,
+    "no_invalid_open_ref": true
+  },
+  "passed": false,
+  "reference_status": "official_answers_unaudited",
+  "limitations": [
+    "Pilot 只作运行诊断，不发布正式准确率。",
+    "参考答案尚未完成双人盲化有效性审计。",
+    "判分为内部 Judge，不是官方 GPT-4o 兼容通道。"
+  ]
+}

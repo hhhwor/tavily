@@ -73,8 +73,12 @@ class ResolvedResearch(ResearchModel):
     profile: str
     depth: str
     policy_id: str
+    policy_version: str = "1"
     budget: ResearchBudget
     privacy: ResearchPrivacy
+    execution_route: Literal[
+        "standard_external_allowed", "restricted_local_only"
+    ] = "standard_external_allowed"
     seed_included: int = 0
     seed_excluded: int = 0
     seed_exclusion_reasons: list[str] = Field(default_factory=list)
@@ -89,6 +93,24 @@ class ResearchProgress(ResearchModel):
     deep_reads: int = 0
     evidence_adopted: int = 0
     gaps_remaining: int = 0
+    scope_excluded: int = 0
+    scope_exclusion_reasons: list[str] = Field(default_factory=list)
+
+
+class ResearchUsage(ResearchModel):
+    rounds: int = 0
+    raw_candidates: int = 0
+    adopted_candidates: int = 0
+    deep_read_documents: int = 0
+    deep_read_pages: int = 0
+    deep_read_bytes: int = 0
+    model_requests: int = 0
+    model_input_tokens: int = 0
+    model_output_tokens: int = 0
+    retries: int = 0
+    estimated_external_cost_microunits: int = 0
+    actual_external_cost_microunits: int = 0
+    elapsed_ms: int = 0
 
 
 class ResearchInputRequest(ResearchModel):
@@ -169,7 +191,10 @@ class ResearchStop(ResearchModel):
         "objective_satisfied",
         "information_gain_saturated",
         "max_rounds_reached",
+        "max_candidates_reached",
+        "source_failure",
         "deadline_reached",
+        "queue_ttl_exceeded",
         "cancelled_by_user",
         "failed",
         "needs_input",
@@ -202,6 +227,7 @@ class ResearchTaskEnvelope(ResearchModel):
     updated_at: datetime
     resolved: ResolvedResearch | None = None
     progress: ResearchProgress = Field(default_factory=ResearchProgress)
+    usage: ResearchUsage = Field(default_factory=ResearchUsage)
     input_request: ResearchInputRequest | None = None
     dossier: ResearchDossier | None = None
     stop: ResearchStop | None = None

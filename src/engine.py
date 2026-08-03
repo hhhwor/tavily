@@ -13,8 +13,12 @@ from src.application.research_service import ResearchService
 from src.application.search_service import SearchService
 from src.config import Settings
 from src.domain.documents import DocumentKind
-from src.domain.research import ResearchTaskEnvelope
-from src.domain.search_api import SearchResponse
+from src.interfaces.public_models import (
+    PublicResearchTaskEnvelope,
+    PublicSearchResponse,
+    public_research_response,
+    public_search_response,
+)
 
 
 class SearchEngine:
@@ -55,7 +59,7 @@ class SearchEngine:
         limit: int = 10,
         source_types: tuple[DocumentKind, ...] | None = None,
         filters: SearchFilters | None = None,
-    ) -> SearchResponse:
+    ) -> PublicSearchResponse:
         return self.execute(SearchCommand(
             query=query,
             limit=limit,
@@ -63,18 +67,20 @@ class SearchEngine:
             filters=filters or SearchFilters(),
         ))
 
-    def execute(self, command: SearchCommand) -> SearchResponse:
-        return self._search_service.execute(command)
+    def execute(self, command: SearchCommand) -> PublicSearchResponse:
+        return public_search_response(self._search_service.execute(command))
 
     def start_research(
         self,
         command: ResearchCommand,
         *,
         idempotency_key: str,
-    ) -> ResearchTaskEnvelope:
-        return self._research_service.start(
-            command,
-            idempotency_key=idempotency_key,
+    ) -> PublicResearchTaskEnvelope:
+        return public_research_response(
+            self._research_service.start(
+                command,
+                idempotency_key=idempotency_key,
+            )
         )
 
     def get_research(
@@ -82,25 +88,31 @@ class SearchEngine:
         research_id: str,
         *,
         detail: str = "standard",
-    ) -> ResearchTaskEnvelope:
-        return self._research_service.get(research_id, detail=detail)
+    ) -> PublicResearchTaskEnvelope:
+        return public_research_response(
+            self._research_service.get(research_id, detail=detail)
+        )
 
     def research_feedback(
         self,
         research_id: str,
         command: ResearchFeedbackCommand,
-    ) -> ResearchTaskEnvelope:
-        return self._research_service.feedback(research_id, command)
+    ) -> PublicResearchTaskEnvelope:
+        return public_research_response(
+            self._research_service.feedback(research_id, command)
+        )
 
     def cancel_research(
         self,
         research_id: str,
         *,
         task_revision: int | None = None,
-    ) -> ResearchTaskEnvelope:
-        return self._research_service.cancel(
-            research_id,
-            task_revision=task_revision,
+    ) -> PublicResearchTaskEnvelope:
+        return public_research_response(
+            self._research_service.cancel(
+                research_id,
+                task_revision=task_revision,
+            )
         )
 
     def close(self) -> None:

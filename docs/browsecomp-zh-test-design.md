@@ -14,10 +14,10 @@
 
 BrowseComp-ZH 不能直接复用 FreshQA 的“原问题单次搜索 Top-8 → 固定模型回答”口径。官方基准的核心难点是持续改写查询、多轮检索、跨页核验和约束合取；只跑单轮搜索会把“不会继续找”与“搜索后端找不到”混在一起。
 
-本测试采用两个互不替代的评测轨道：
+完整设计保留两个互不替代的评测轨道，但当前阶段只执行主轨：
 
 1. **搜索后端隔离轨（主轨）**：固定规划/回答模型、网页读取器、提示词和预算，只替换搜索配置，衡量 Chukonu 检索结果对多跳 Agent 的净贡献。
-2. **Chukonu 原生端到端轨（副轨）**：评估 `search → research → 固定回答模型` 的完整能力，结果代表 Chukonu 搜索与研究编排的组合，不解释为纯搜索后端成绩。
+2. **Chukonu 原生端到端轨（副轨，暂缓）**：未来评估 `search → research → 固定回答模型` 的完整能力；结果代表 Chukonu 搜索与研究编排的组合，不解释为纯搜索后端成绩。
 
 主指标为经参考答案有效性审计后的短答案准确率 `Accuracy_valid`。同时报告无搜索增益、相对单轮检索增益、证据支持率、校准误差、延迟、成功率和成本。首次正式运行用于建立基线，不预设缺乏依据的绝对通过分数。
 
@@ -37,7 +37,7 @@ BrowseComp-ZH 不能直接复用 FreshQA 的“原问题单次搜索 Top-8 → �
 |---|---|---|
 | FreshQA 只有单轮检索 | 无法测试迭代搜索和多跳推理 | 增加固定 Agent 多轮检索主轨 |
 | 搜索后端与研究 Agent 边界未定义 | 无法判断增益来自检索还是编排 | 主轨隔离后端，副轨单列原生端到端 |
-| 未固定搜索轮数、网页读取、Token 和时间预算 | 测试时计算量不同会主导结果 | 预注册 Standard/Deep 预算 |
+| 未固定搜索轮数、网页读取、Token 和时间预算 | 测试时计算量不同会主导结果 | 预注册 Standard 预算 |
 | 未定义 BrowseComp-ZH 判分协议 | 与官方数字或 FreshQA Judge 混用会失真 | 单列官方兼容分与内部审计分 |
 | 未处理动态参考答案 | 失效参考答案会把正确系统判错 | 运行前盲化审计 289 条参考答案 |
 | 未记录搜索轨迹和最终支持证据 | 只能知道答错，无法定位检索链路故障 | 冻结查询、结果、URL 读取和引用轨迹 |
@@ -102,7 +102,7 @@ BrowseComp-ZH 不能直接复用 FreshQA 的“原问题单次搜索 Top-8 → �
 ### 4.1 目标
 
 1. 测量当前四源 Chukonu 对固定 Agent 的准确率提升。
-2. 区分参数记忆、单轮检索、多轮检索和原生研究编排的贡献。
+2. 区分参数记忆、单轮检索和多轮检索的贡献；原生研究编排留待副轨实施。
 3. 定位失败发生在查询分解、召回、排序、网页读取、证据核验、推理还是答案格式。
 4. 给出质量、延迟、可用率和成本的同口径结果，并建立后续回归基线。
 
@@ -123,9 +123,8 @@ BrowseComp-ZH 不能直接复用 FreshQA 的“原问题单次搜索 Top-8 → �
 | B0 | 固定模型，无搜索 | 无 | 模型参数记忆能答多少 | 模型基线 |
 | B1 | 四源 Chukonu 单轮 | 原问题搜索一次，Top-8 | 复用 FreshQA 式链路能答多少 | 搜索 + 固定回答模型 |
 | B2 | 四源 Chukonu 多轮 Agent | 固定 Agent 可改写查询、搜索、读页 | 多轮策略相对单轮带来多少增益 | **搜索后端主结果** |
-| B3 | Chukonu 原生研究 | `search → research → 固定回答模型` | 当前完整产品链路能答多少 | 搜索 + 原生研究编排 |
 
-四组必须使用同一固定回答模型。B2 的规划模型也固定为该模型；若它不能稳定遵循工具协议，允许在正式运行前一次性更换，但四组和全部对照必须同步更换并重新开始。
+B0–B2 必须使用同一固定回答模型。B2 的规划模型也固定为该模型；若它不能稳定遵循工具协议，允许在正式运行前一次性更换，但三个配置和全部单源对照必须同步更换并重新开始。
 
 初始建议复用 FreshQA 的 `Qwen/Qwen3-30B-A3B-Instruct-2507`，温度设为 0。正式配置必须记录精确模型 ID、服务商、解码参数和请求时间。
 
@@ -134,9 +133,16 @@ BrowseComp-ZH 不能直接复用 FreshQA 的“原问题单次搜索 Top-8 → �
 | ID | 配置 | 用途 |
 |---|---|---|
 | A1 | Doubao 单源多轮 Agent | 与现有 FreshQA 单源结果衔接 |
-| A2 | 四源 Chukonu 去除 Aliyun | 量化当前影响最大新增来源的贡献 |
-| A3 | 四源 Chukonu 去重排或 RRF | 量化排序对复杂题的贡献 |
-| A4 | B2 Deep 预算 | 绘制准确率随测试时计算量变化的曲线 |
+| A2 | Aliyun 单源多轮 Agent | 比较四源 Chukonu 与 Aliyun 单源的同协议差异 |
+| A3 | Baidu 单源多轮 Agent | 比较四源 Chukonu 与 Baidu 单源的同协议差异 |
+
+A1–A3 仅作为独立单源搜索后端对照，不做从四源 Chukonu 中逐项去源或修改排序算法的消融；四源组成、融合与重排均视为当前 Chukonu 搜索后端的整体能力。
+
+合成冒烟中的 A1–A3 通过评测器内的单源适配器直接调用仓库现有 provider，
+再统一映射为 `title / url / snippet / published_date / source`。它们不经过
+Chukonu 四源融合和重排，也不向公开 `/search` 接口增加 provider 调参字段。每次
+search 事件必须记录声明 backend 和实际返回的 source；只要出现混源、来源缺失或
+backend 不匹配，该单源轨即失败。
 
 外部 AI 搜索产品若无法共享规划模型、读取器和预算，只能进入“产品级参考表”，不得与 B2 放在搜索后端隔离榜中。
 
@@ -148,18 +154,24 @@ B2 只向 Agent 暴露两个评测专用工具：
 
 ```text
 search(query, limit=10, source_types=["web"])
-open_url(url, max_chars)
+open_url(ref, max_chars)
 ```
 
 - `search` 适配不同后端并返回统一的 `title / url / snippet / published_date / source`。
+- 每条 search 结果由 EvidenceRegistry 分配 `s1...sN`；`open_url` 只接受这些
+  ref，由评测器确定性解析对应 URL。工具 schema 会枚举当前可用 ref，模型不能
+  生成或改写 URL；读取失败的 ref 从后续枚举中移除。
 - `open_url` 使用所有后端共享的网页读取器，不使用搜索供应商私有生成答案。
 - 搜索结果和网页正文均视为不可信数据，网页中的指令不得改变评测任务、预算或输出格式。
 - Agent 只能看到当前问题和自己的工具轨迹，不能访问文件系统、Shell、参考答案、Judge、其他配置结果或历史样本。
 - 工具重试由评测器控制，Agent 不能通过重复同一失败请求绕过预算。
 
-`open_url` 当前不是仓库的统一公开评测接口，实施 B2 前必须补齐；在此之前只能执行 B1 或 B3，不能把它们代称为 B2。
+`open_url` 是评测器内部工具，不是仓库的统一公开搜索接口；B2 与 A1–A3 已使用
+同一个 PageReader 实现。
 
-### 6.2 B3 原生研究协议
+### 6.2 B3 原生研究协议（暂缓）
+
+B3 不进入当前 Pilot、Final、统计比较和验收范围。以下协议仅作为后续实施预留：
 
 1. 用原问题调用 `search`，固定 `limit=10`、`source_types=["web"]`。
 2. 使用返回的 `search_id` 启动 `research`。
@@ -206,8 +218,6 @@ B3 Standard 预算固定为最多 3 轮、100 个候选、10 次深读和 120 �
 | No-search | 0 | — | 0 | 0 | 60 s | B0 |
 | Single | 1 | 8 | 0 | 12,000 | 60 s | B1 |
 | Standard | 最多 8 | 10 | 最多 12 | 80,000 | 180 s | B2 主结果 |
-| Native | 见 §6.2 | 10 | 最多 10 次深读 | 由 `resolved` 固定 | 180 s | B3 |
-| Deep | 最多 20 | 10 | 最多 25 | 200,000 | 600 s | A4 敏感性分析 |
 
 所有预算还必须记录规划/回答模型的输入、输出和缓存 Token。供应商不返回 Token 时标记 `unavailable`，不得估算为 0。
 
@@ -217,11 +227,22 @@ B3 Standard 预算固定为最多 3 轮、100 个候选、10 次深读和 120 �
 |---|---:|---|---|
 | Harness smoke | 合成题 5 条 | 验证工具、预算、日志、Judge 和泄漏过滤 | 否 |
 | Pilot | 分层固定 55 条，每领域 5 条 | 估算成本、限流和故障率 | 只作运行诊断 |
-| Final Standard | 全部 289 条 | B0–B3 主结果 | 是 |
+| Final Standard | 全部 289 条 | B0–B2 主结果 | 是 |
 | Variance | 分层固定 55 条 × 3 次 | 测量活网页面和 Agent 随机性 | 是，单独报告 |
-| Deep | 与 Variance 相同的 55 条 | 测试时计算量敏感性 | 是，单独报告 |
 
 Pilot 前必须冻结模型、Prompt、工具 schema、预算、重试和 Judge。Pilot 后只能修复使测试无效的工程故障；任何质量调优都需要废弃该批次、记录原因并重新冻结。
+
+当前 Pilot 的固定模型输出上限为：Planner 700、Finalizer 700、Judge 180
+Token。Finalizer Prompt 要求 `exact_answer` 只写答案本身，`explanation` 在
+schema 中固定为 `""`；解释不参与短答案判分。若 Finalizer 返回不可解析 JSON，
+或违反终态/证据引用不变量，允许带纠错提示重试一次，调用和 Token 全量计费。
+Judge 同样使用最小严格 schema，
+`reason` 固定为 `""`，遇到无效 JSON 最多重试一次。当前 SiliconFlow 严格 schema 解码对
+`maxLength / maxItems` 存在长时间无响应，因此不使用这些关键字；字段、类型、
+状态和引用仍由 schema 与本地解析器双重校验。
+
+Judge 的模型通道只接收 `status=answered` 的候选，因此输出枚举只有
+`CORRECT / INCORRECT`；`NOT_ATTEMPTED` 仅由评测器根据候选 status 确定性产生。
 
 ## 8. 参考答案有效性与泄漏控制
 
@@ -329,7 +350,7 @@ Final 前由两名审阅者在看不到任何系统输出的情况下独立核�
 
 ## 11. 公平运行与可复现性
 
-1. B0–B3 使用同一数据顺序和同一参考答案快照。
+1. B0–B2 使用同一数据顺序和同一参考答案快照。
 2. 联网配置按题交错运行，配置顺序采用固定 Latin square，避免某个配置总在更早的网页状态下运行。
 3. Final Standard 在连续 48 小时 UTC 窗口内完成；超出则整批标记为跨窗，不与同窗批次作严格配对。
 4. 固定客户端并发、连接池、超时、重试次数和退避策略；429 不得通过无限重试掩盖。
@@ -365,6 +386,12 @@ Final 前由两名审阅者在看不到任何系统输出的情况下独立核�
 ```text
 eval/
 ├── browsecomp_zh_eval.py
+├── browsecomp_zh_pilot.py
+├── browsecomp_zh_synthetic.json
+├── browsecomp_zh_smoke_details.json
+├── browsecomp_zh_smoke_report.md
+├── browsecomp_zh_single_source_smoke_details.json
+├── browsecomp_zh_single_source_smoke_report.md
 ├── browsecomp_zh_judge.py
 ├── browsecomp_zh_ground_truth.py
 ├── browsecomp_zh_reporting.py
@@ -428,7 +455,7 @@ eval/
 - Agent、搜索或 Judge 接触到参考答案。
 - 未解决 Judge 失败或人工裁决分歧。
 - 发生预算越界、泄漏清单中途修改却未全量重跑。
-- B0–B3 未在同一运行窗口完成，却被当作严格配对比较。
+- B0–B2 未在同一运行窗口完成，却被当作严格配对比较。
 
 ### 14.2 运行健康门槛
 
@@ -453,27 +480,35 @@ eval/
 
 ## 15. 建议复现命令
 
-以下是待实现接口，不代表仓库当前已具备这些参数：
+基础轨、单源轨合成冒烟及 55 条 Pilot 接口已经实现；Final 和独立聚合报告命令仍是待实现接口，不代表仓库当前已具备对应参数：
 
 ```bash
 # 只验证协议，不使用正式题目
-.venv311/bin/python -m eval.browsecomp_zh_eval \
-  --config eval/browsecomp_zh_configs.yaml \
-  --systems B0,B1,B2,B3 \
-  --synthetic-smoke
+.venv311/bin/python -m eval.browsecomp_zh_eval --synthetic-smoke
+
+# 验证 A1 Doubao、A2 Aliyun、A3 Baidu 单源隔离轨
+.venv311/bin/python -m eval.browsecomp_zh_eval --single-source-smoke
 
 # 分层 Pilot，只做运行诊断
-.venv311/bin/python -m eval.browsecomp_zh_eval \
-  --config eval/browsecomp_zh_configs.yaml \
-  --systems B0,B1,B2,B3 \
+.venv311/bin/python -m eval.browsecomp_zh_pilot \
+  --dataset <restricted-data-dir>/browsecomp-zh-encrypted.xlsx \
   --sample-size 55 \
-  --stratify Topic \
-  --seed 20260730
+  --per-topic 5 \
+  --seed 20260730 \
+  --secure-run-dir <restricted-run-dir>
+
+# 同一批 55 条的 A1 Doubao 单源多轮 Agent Pilot
+.venv311/bin/python -m eval.browsecomp_zh_doubao_pilot \
+  --dataset <restricted-data-dir>/browsecomp-zh-encrypted.xlsx \
+  --sample-size 55 \
+  --per-topic 5 \
+  --seed 20260730 \
+  --secure-run-dir <restricted-doubao-run-dir>
 
 # Final Standard
 .venv311/bin/python -m eval.browsecomp_zh_eval \
   --config eval/browsecomp_zh_configs.yaml \
-  --systems B0,B1,B2,B3 \
+  --systems B0,B1,B2 \
   --all \
   --budget standard \
   --freeze-live-results
@@ -500,7 +535,7 @@ eval/
     "sample_size": 289
   },
   "method": {
-    "systems": ["B0", "B1", "B2", "B3"],
+    "systems": ["B0", "B1", "B2"],
     "planner_answer_model": null,
     "official_compatible_judge": null,
     "internal_judge": null,

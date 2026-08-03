@@ -40,11 +40,13 @@ class RecallCoordinator:
         *,
         clock: Callable[[], datetime],
         resilience: ResiliencePolicy | None = None,
+        research_executor: Executor | None = None,
     ) -> None:
         self._settings = settings
         self._registry = registry
         self._cache = cache
         self._executor = executor
+        self._research_executor = research_executor or executor
         self._clock = clock
         self._resilience = resilience
 
@@ -151,6 +153,9 @@ class RecallCoordinator:
         *,
         filters: SearchFilters | None = None,
         deadline: Deadline | None = None,
+        workload_class: str = "search",
+        allow_shared_cache: bool = True,
+        candidate_budget: int | None = None,
     ) -> RecallOutcome:
         filters = filters or SearchFilters()
         active_names = set(planned.active_provider_names)
@@ -171,6 +176,21 @@ class RecallCoordinator:
                 (source, self._request(planned.search_query, planned.plan.recency, filters))
                 for source in self._registry.sources("patent")
             )
+        if candidate_budget is not None:
+            remaining_budget = max(0, candidate_budget)
+            bounded_tasks: list[tuple[RetrievalSource, RetrievalRequest]] = []
+            for index, (source, request) in enumerate(tasks):
+                sources_left = len(tasks) - index
+                if remaining_budget <= 0:
+                    break
+                share = max(1, remaining_budget // max(1, sources_left))
+                allocation = min(request.candidate_budget, share)
+                bounded_tasks.append((
+                    source,
+                    replace(request, candidate_budget=allocation),
+                ))
+                remaining_budget -= allocation
+            tasks = bounded_tasks
 
         web: list[RetrievedDocument] = []
         academic: list[RetrievedDocument] = []
@@ -179,13 +199,19 @@ class RecallCoordinator:
         providers_used: list[str] = []
         failures = []
         use_cache = (
-            self._settings.cache_enabled
+            allow_shared_cache
+            and self._settings.cache_enabled
             and self._cache is not None
             and not planned.plan.time_sensitive
         )
 
+        executor = (
+            self._research_executor
+            if workload_class == "research"
+            else self._executor
+        )
         futures = {
-            self._executor.submit(
+            executor.submit(
                 self._cached_retrieve,
                 source,
                 request,

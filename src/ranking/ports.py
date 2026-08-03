@@ -18,6 +18,7 @@ class TextScorer(Protocol):
 class Reranker(ABC):
     name: str = "base"
     supports_text_scoring: bool = True
+    is_external: bool = False
 
     @abstractmethod
     def rerank(

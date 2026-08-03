@@ -18,8 +18,11 @@ from src.application.ports.research_store import (
 from src.application.ports.search_seed import SearchSeedExpired, SearchSeedNotFound
 from src.bootstrap import Container, build_container
 from src.application.research_service import ResearchRequestError
-from src.domain.research import ResearchTaskEnvelope
-from src.domain.search_api import SearchResponse
+from src.application.research_dispatcher import ResearchQueueFull
+from src.interfaces.public_models import (
+    PublicResearchTaskEnvelope,
+    PublicSearchResponse,
+)
 from src.interfaces.schemas import (
     ResearchCancelRequest,
     ResearchDetail,
@@ -64,7 +67,16 @@ def _translate_error(exc: Exception) -> HTTPException:
     if isinstance(exc, ResearchIdempotencyConflict):
         return HTTPException(status_code=409, detail=str(exc))
     if isinstance(exc, ResearchRequestError):
-        return HTTPException(status_code=422, detail=str(exc))
+        return HTTPException(
+            status_code=422,
+            detail={"code": exc.code, "message": str(exc)},
+        )
+    if isinstance(exc, ResearchQueueFull):
+        return HTTPException(
+            status_code=429,
+            detail={"code": exc.code, "message": str(exc)},
+            headers={"Retry-After": str(exc.retry_after_seconds)},
+        )
     if isinstance(exc, (ResearchRevisionConflict, ValueError)):
         return HTTPException(status_code=409, detail=str(exc))
     if isinstance(exc, (SearchSeedNotFound, ResearchTaskNotFound)):
@@ -145,21 +157,26 @@ def create_app(
             "mcp": current.mcp_available,
             "cache": engine.cache.stats() if engine.cache else {"enabled": False},
             "resilience": current.resilience.snapshot(),
+            "research_queue": current.research_dispatcher.stats(),
         }
 
-    @application.post("/search", response_model=SearchResponse)
-    def search(req: SearchRequest) -> SearchResponse:
+    @application.post("/search", response_model=PublicSearchResponse)
+    def search(req: SearchRequest) -> PublicSearchResponse:
         try:
             return runtime().engine.execute(req.to_command())
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
 
-    @application.post("/research", response_model=ResearchTaskEnvelope, status_code=202)
+    @application.post(
+        "/research",
+        response_model=PublicResearchTaskEnvelope,
+        status_code=202,
+    )
     def start_research(
         req: ResearchRequest,
         response: Response,
         idempotency_key: str = Header(..., alias="Idempotency-Key"),
-    ) -> ResearchTaskEnvelope:
+    ) -> PublicResearchTaskEnvelope:
         try:
             task = runtime().engine.start_research(
                 req.to_command(),
@@ -174,7 +191,9 @@ def create_app(
         except Exception as exc:
             raise _translate_error(exc) from exc
 
-    @application.get("/research/{research_id}", response_model=ResearchTaskEnvelope)
+    @application.get(
+        "/research/{research_id}", response_model=PublicResearchTaskEnvelope
+    )
     def get_research(
         research_id: str,
         response: Response,
@@ -195,21 +214,27 @@ def create_app(
         except Exception as exc:
             raise _translate_error(exc) from exc
 
-    @application.post("/research/{research_id}/feedback", response_model=ResearchTaskEnvelope)
+    @application.post(
+        "/research/{research_id}/feedback",
+        response_model=PublicResearchTaskEnvelope,
+    )
     def research_feedback(
         research_id: str,
         req: ResearchFeedbackRequest,
-    ) -> ResearchTaskEnvelope:
+    ) -> PublicResearchTaskEnvelope:
         try:
             return runtime().engine.research_feedback(research_id, req.to_command())
         except Exception as exc:
             raise _translate_error(exc) from exc
 
-    @application.post("/research/{research_id}/cancel", response_model=ResearchTaskEnvelope)
+    @application.post(
+        "/research/{research_id}/cancel",
+        response_model=PublicResearchTaskEnvelope,
+    )
     def cancel_research(
         research_id: str,
         req: ResearchCancelRequest | None = None,
-    ) -> ResearchTaskEnvelope:
+    ) -> PublicResearchTaskEnvelope:
         try:
             return runtime().engine.cancel_research(
                 research_id,

@@ -8,6 +8,7 @@ from src.domain.errors import ExternalServiceError
 from src.domain.search import SearchResult
 from src.infrastructure.doubao_mcp import (
     DOUBAO_MCP_REVISION,
+    DoubaoResponseError,
     DoubaoMcpClient,
     fit_doubao_query,
 )
@@ -75,7 +76,8 @@ class DoubaoSearchProvider(SearchProvider):
         self.timeout = timeout
         if not self.api_key:
             raise ValueError(
-                "缺少豆包搜索凭证: ASK_ECHO_SEARCH_INFINITY_API_KEY"
+                "缺少豆包搜索凭证: DOUBAO_API_KEY / "
+                "ASK_ECHO_SEARCH_INFINITY_API_KEY"
             )
         self._client = client or DoubaoMcpClient(
             api_key=self.api_key,
@@ -179,6 +181,18 @@ class DoubaoSearchProvider(SearchProvider):
             )
         except ExternalServiceError:
             raise
+        except DoubaoResponseError as exc:
+            quota_exhausted = exc.code == "10406"
+            raise ExternalServiceError(
+                provider=self.name,
+                code=(
+                    "SEARCH_QUOTA_EXHAUSTED"
+                    if quota_exhausted
+                    else "SEARCH_UPSTREAM_REJECTED"
+                ),
+                recoverable=not quota_exhausted,
+                cause=exc,
+            ) from exc
         except TimeoutError as exc:
             raise ExternalServiceError(
                 provider=self.name,

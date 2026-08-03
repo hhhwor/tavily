@@ -8,7 +8,13 @@ from typing import Any, Dict, List, Sequence, Tuple
 
 import requests
 
+from src.application.ports.runtime import Deadline, DeadlineExceededError
+from src.application.research_execution import (
+    CancellationToken,
+    ResearchCancelledError,
+)
 from src.infrastructure.http_errors import external_http_error
+from src.infrastructure.http_timeout import bounded_http_timeout
 from src.domain.evidence import Evidence
 from src.domain.trust import CandidateClaim
 
@@ -110,6 +116,7 @@ class RuleEntailmentClassifier:
     """只在全文字面一致或结构化值明确冲突时下强结论。"""
 
     name = "rules:v1"
+    is_external = False
 
     def classify_pairs(self, pairs: Sequence[EntailmentPair]) -> Dict[str, EntailmentDecision]:
         return {pair_id: self._classify(claim, evidence) for pair_id, claim, evidence in pairs}
@@ -148,6 +155,8 @@ class RuleEntailmentClassifier:
 class SiliconFlowEntailmentClassifier:
     """一次请求批量判断模糊 pair；输出仍由本地标签白名单约束。"""
 
+    is_external = True
+
     def __init__(
         self,
         api_key: str,
@@ -166,6 +175,15 @@ class SiliconFlowEntailmentClassifier:
         self._http = http_session or requests
 
     def classify_pairs(self, pairs: Sequence[EntailmentPair]) -> Dict[str, EntailmentDecision]:
+        return self.classify_pairs_with_context(pairs)
+
+    def classify_pairs_with_context(
+        self,
+        pairs: Sequence[EntailmentPair],
+        *,
+        deadline: Deadline | None = None,
+        cancellation: CancellationToken | None = None,
+    ) -> Dict[str, EntailmentDecision]:
         if not pairs:
             return {}
         pair_list = list(pairs)
@@ -180,7 +198,21 @@ class SiliconFlowEntailmentClassifier:
             last_error: BaseException | None = None
             for attempt in range(_MAX_BATCH_ATTEMPTS):
                 try:
-                    batch_decisions = self._classify_batch(pending)
+                    if cancellation is not None:
+                        cancellation.raise_if_cancelled()
+                    remaining = None
+                    if deadline is not None:
+                        remaining = deadline.remaining_seconds()
+                        if remaining <= 0:
+                            raise DeadlineExceededError(
+                                "research verification deadline exceeded"
+                            )
+                    batch_decisions = self._classify_batch(
+                        pending,
+                        timeout_seconds=remaining,
+                    )
+                except (DeadlineExceededError, ResearchCancelledError):
+                    raise
                 except Exception as exc:
                     last_error = exc
                     if (
@@ -224,7 +256,12 @@ class SiliconFlowEntailmentClassifier:
             )
         return decisions
 
-    def _classify_batch(self, pairs: Sequence[EntailmentPair]) -> Dict[str, EntailmentDecision]:
+    def _classify_batch(
+        self,
+        pairs: Sequence[EntailmentPair],
+        *,
+        timeout_seconds: float | None = None,
+    ) -> Dict[str, EntailmentDecision]:
         payload = [{
             "id": pair_id,
             "claim": claim.model_dump(),
@@ -252,7 +289,7 @@ class SiliconFlowEntailmentClassifier:
                     "temperature": 0,
                     "max_tokens": min(4096, 256 + 180 * len(pairs)),
                 },
-                timeout=self.timeout,
+                timeout=bounded_http_timeout(self.timeout, timeout_seconds),
             )
             response.raise_for_status()
             content = response.json()["choices"][0]["message"]["content"].strip()

@@ -121,6 +121,11 @@ class Settings:
     state_db_path: str = "/tmp/chukonu-state.sqlite3"
     search_seed_ttl_seconds: int = 86400
     research_max_workers: int = 4
+    research_queue_capacity: int = 32
+    research_queue_ttl_ms: int = 120000
+    research_queue_retry_after_seconds: int = 1
+    research_recall_max_workers: int = 4
+    research_ranking_max_workers: int = 2
 
     ranking_profile: str = "quality"
     rerank_backend: str = "siliconflow"
@@ -269,9 +274,9 @@ class Settings:
             qianfan_api_key=env.get("QIANFAN_API_KEY", ""),
             tencent_secret_id=env.get("TENCENT_SECRET_ID", ""),
             tencent_secret_key=env.get("TENCENT_SECRET_KEY", ""),
-            doubao_api_key=env.get(
-                "ASK_ECHO_SEARCH_INFINITY_API_KEY",
-                "",
+            doubao_api_key=(
+                env.get("DOUBAO_API_KEY")
+                or env.get("ASK_ECHO_SEARCH_INFINITY_API_KEY", "")
             ),
             doubao_uvx_path=env.get("DOUBAO_UVX_PATH", ""),
             aliyun_access_key_id=aliyun_id,
@@ -293,6 +298,21 @@ class Settings:
             ),
             research_max_workers=_int(
                 env, "RESEARCH_MAX_WORKERS", 4, minimum=1
+            ),
+            research_queue_capacity=_int(
+                env, "RESEARCH_QUEUE_CAPACITY", 32, minimum=0
+            ),
+            research_queue_ttl_ms=_int(
+                env, "RESEARCH_QUEUE_TTL_MS", 120000, minimum=1
+            ),
+            research_queue_retry_after_seconds=_int(
+                env, "RESEARCH_QUEUE_RETRY_AFTER_SECONDS", 1, minimum=1
+            ),
+            research_recall_max_workers=_int(
+                env, "RESEARCH_RECALL_MAX_WORKERS", 4, minimum=1
+            ),
+            research_ranking_max_workers=_int(
+                env, "RESEARCH_RANKING_MAX_WORKERS", 2, minimum=1
             ),
             ranking_profile=ranking.profile,
             rerank_backend=rerank_backend,

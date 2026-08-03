@@ -10,6 +10,10 @@ from mcp.server.transport_security import TransportSecuritySettings
 from src.application.commands import ResearchFeedbackCommand
 from src.config import Settings
 from src.engine import SearchEngine
+from src.interfaces.public_models import (
+    public_research_response,
+    public_search_response,
+)
 from src.interfaces.schemas import ResearchRequest, SearchRequest
 
 
@@ -63,7 +67,7 @@ def build_mcp(engine: SearchEngine, settings: Optional[Settings] = None) -> Fast
         response = await anyio.to_thread.run_sync(
             lambda: engine.execute(request.to_command())
         )
-        return response.model_dump(mode="json")
+        return public_search_response(response).model_dump(mode="json")
 
     @mcp.tool(
         name="research",
@@ -142,6 +146,6 @@ def build_mcp(engine: SearchEngine, settings: Optional[Settings] = None) -> Fast
                     task_revision=task_revision,
                 )
             )
-        return response.model_dump(mode="json")
+        return public_research_response(response).model_dump(mode="json")
 
     return mcp

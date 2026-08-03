@@ -97,6 +97,17 @@ def test_doubao_credentials_enable_provider_without_leaking_from_repr():
     assert "doubao-test-key" not in repr(configured)
 
 
+def test_doubao_api_key_prefers_new_environment_name():
+    configured = Settings.from_env({
+        "DOUBAO_API_KEY": "new-key",
+        "ASK_ECHO_SEARCH_INFINITY_API_KEY": "legacy-key",
+        "OPENALEX_ENABLED": "false",
+    })
+
+    assert configured.doubao_api_key == "new-key"
+    assert "new-key" not in repr(configured)
+
+
 def test_serpapi_requires_explicit_opt_in():
     disabled = Settings.from_env({
         "SERPAPI_API_KEY": "serpapi-test-key",

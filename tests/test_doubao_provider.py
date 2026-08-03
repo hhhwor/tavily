@@ -4,6 +4,7 @@ import pytest
 
 from src.application.ports.retrieval import RetrievalRequest
 from src.domain.errors import ExternalServiceError
+from src.infrastructure.doubao_mcp import DoubaoResponseError
 from src.providers.doubao import DoubaoSearchProvider
 
 
@@ -116,6 +117,24 @@ def test_doubao_provider_uses_stable_failure_contract():
     assert caught.value.code == "SEARCH_TIMEOUT"
     assert caught.value.recoverable is True
     assert "secret upstream detail" not in str(caught.value)
+
+
+def test_doubao_provider_marks_exhausted_quota_nonrecoverable():
+    provider = DoubaoSearchProvider(
+        api_key="test-key",
+        client=_Client(
+            error=DoubaoResponseError(
+                "10406",
+                "Free quota has been exhausted.",
+            )
+        ),
+    )
+
+    with pytest.raises(ExternalServiceError) as caught:
+        provider.search("query")
+
+    assert caught.value.code == "SEARCH_QUOTA_EXHAUSTED"
+    assert caught.value.recoverable is False
 
 
 def test_doubao_provider_requires_explicit_credentials(monkeypatch):

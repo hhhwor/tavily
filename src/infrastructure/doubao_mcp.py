@@ -43,6 +43,15 @@ _PASSTHROUGH_ENV = (
 )
 
 
+class DoubaoResponseError(RuntimeError):
+    """Validated upstream error returned inside a successful MCP tool call."""
+
+    def __init__(self, code: str, message: str) -> None:
+        self.code = code
+        self.upstream_message = message
+        super().__init__(f"Doubao upstream rejected request ({code})")
+
+
 def fit_doubao_query(query: str, limit: int = 100) -> tuple[str, bool]:
     """Normalize a query and retain both ends when the API limit is exceeded."""
     normalized = " ".join(query.split())
@@ -65,6 +74,13 @@ def parse_doubao_web_results(text: str) -> list[dict[str, Any]]:
         raise RuntimeError("Doubao MCP returned non-JSON content") from exc
     result = body.get("Result")
     if not isinstance(result, dict):
+        metadata = body.get("ResponseMetadata") or {}
+        error = metadata.get("Error") or {}
+        if isinstance(error, dict) and error.get("Code"):
+            raise DoubaoResponseError(
+                code=str(error["Code"]),
+                message=str(error.get("Message") or ""),
+            )
         raise RuntimeError("Doubao MCP returned no Result")
     rows = result.get("WebResults")
     if not isinstance(rows, list):

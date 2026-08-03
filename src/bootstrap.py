@@ -11,6 +11,7 @@ import requests
 from src.application.answerability import AnswerabilityPolicy
 from src.application.discovery_service import DiscoveryService
 from src.application.evidence_assembler import EvidenceAssembler
+from src.application.model_router import PrivacyAwareModelRouter
 from src.application.query_planner import QueryPlanner
 from src.application.ranking_service import RankingService
 from src.application.recall import RecallCoordinator
@@ -189,6 +190,8 @@ class Container:
     http_session: requests.Session
     recall_executor: ThreadPoolExecutor
     ranking_executor: ThreadPoolExecutor
+    research_recall_executor: ThreadPoolExecutor
+    research_ranking_executor: ThreadPoolExecutor
     pdf_executor: ThreadPoolExecutor
     resilience: ResilienceManager
     research_dispatcher: ResearchDispatcher
@@ -244,6 +247,8 @@ class Container:
                             _shutdown_executors(
                                 self.recall_executor,
                                 self.ranking_executor,
+                                self.research_recall_executor,
+                                self.research_ranking_executor,
                                 self.pdf_executor,
                             )
                         finally:
@@ -268,9 +273,17 @@ def build_container(
         max_workers=config.ranking_executor_max_workers,
         thread_name_prefix="search-ranking",
     )
+    research_recall_executor = ThreadPoolExecutor(
+        max_workers=config.research_recall_max_workers,
+        thread_name_prefix="research-recall",
+    )
+    research_ranking_executor = ThreadPoolExecutor(
+        max_workers=config.research_ranking_max_workers,
+        thread_name_prefix="research-ranking",
+    )
     pdf_executor = ThreadPoolExecutor(
         max_workers=config.pdf_executor_max_workers,
-        thread_name_prefix="search-pdf",
+        thread_name_prefix="research-pdf",
     )
     engine: Optional[SearchEngine] = None
     scorer: Any = None
@@ -315,6 +328,7 @@ def build_container(
             ranking_executor,
             clock=clock,
             resilience=resilience,
+            research_executor=research_ranking_executor,
         )
         pdf_gateway = OpenAlexPdfGateway(
             config, http, pdf_executor, monotonic=clock.monotonic
@@ -341,6 +355,7 @@ def build_container(
             recall_executor,
             clock=clock.now,
             resilience=resilience,
+            research_executor=research_recall_executor,
         )
         discovery = DiscoveryService(
             query_planner=query_planner,
@@ -374,10 +389,22 @@ def build_container(
             pdf_gateway=pdf_gateway,
             verify_service=verify_service,
             clock=clock,
+            model_router=PrivacyAwareModelRouter(
+                local_verification_available=True,
+                local_reranking_available=(
+                    config.rerank_backend in {"bge", "flashrank"}
+                ),
+            ),
         )
         research_dispatcher = ResearchDispatcher(
             research_service.run,
             max_workers=config.research_max_workers,
+            queue_capacity=config.research_queue_capacity,
+            queue_ttl_ms=config.research_queue_ttl_ms,
+            retry_after_seconds=config.research_queue_retry_after_seconds,
+            on_expired=research_service.expire_queued,
+            on_available=research_service.recover_pending,
+            monotonic=clock.monotonic,
         )
         research_service.attach_dispatcher(research_dispatcher)
         engine = SearchEngine(
@@ -393,8 +420,7 @@ def build_container(
             claim_verifier=verifier,
             source_registry=registry,
         )
-        for research_id in research_store.runnable():
-            research_dispatcher.submit(research_id)
+        research_service.recover_pending()
 
         mcp = None
         mcp_app = None
@@ -415,6 +441,8 @@ def build_container(
             http_session=http,
             recall_executor=recall_executor,
             ranking_executor=ranking_executor,
+            research_recall_executor=research_recall_executor,
+            research_ranking_executor=research_ranking_executor,
             pdf_executor=pdf_executor,
             resilience=resilience,
             research_dispatcher=research_dispatcher,
@@ -462,6 +490,8 @@ def build_container(
                     _shutdown_executors(
                         recall_executor,
                         ranking_executor,
+                        research_recall_executor,
+                        research_ranking_executor,
                         pdf_executor,
                     )
                 except BaseException:

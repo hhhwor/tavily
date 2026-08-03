@@ -27,6 +27,7 @@ from src.ranking import (
     WebReranker,
     build_rerank_context,
 )
+from src.ranking.ports import NoOpReranker
 
 
 class RankingSettings(Protocol):
@@ -91,11 +92,13 @@ class RankingService:
         *,
         clock: Clock,
         resilience: ResiliencePolicy | None = None,
+        research_executor: Executor | None = None,
     ) -> None:
         self._settings = settings
         self.text_scorer = text_scorer
         self._factory = text_scorer_factory
         self._executor = executor
+        self._research_executor = research_executor or executor
         self._clock = clock
         self._resilience = resilience
         self._scorer_cache: dict[tuple[bool, str, str], Reranker] = {}
@@ -161,6 +164,8 @@ class RankingService:
         *,
         options: RankingOptions | None = None,
         deadline: Deadline | None = None,
+        allow_external_models: bool = True,
+        workload_class: str = "search",
     ) -> RankingOutcome:
         options = options or self.resolve(command)
 
@@ -171,6 +176,10 @@ class RankingService:
             else options.text_scoring_enabled
         )
         scorer = self._select_text_scorer(enabled_override, None, None)
+        if not allow_external_models and bool(
+            getattr(scorer, "is_external", False)
+        ):
+            scorer = NoOpReranker()
         if not scorer.supports_text_scoring and options.threshold_mode != "off":
             options = options.disable_threshold("THRESHOLD_SKIPPED_NO_SCORER")
 
@@ -351,7 +360,12 @@ class RankingService:
                 ranked_web = list(documents)
 
         if deadline is not None:
-            futures = {self._executor.submit(function): kind for kind, function in jobs}
+            executor = (
+                self._research_executor
+                if workload_class == "research"
+                else self._executor
+            )
+            futures = {executor.submit(function): kind for kind, function in jobs}
             processed = set()
 
             def collect(future) -> None:
@@ -385,7 +399,12 @@ class RankingService:
                 ))
                 assign(kind, fallback(kind), already_immutable=True)
         elif len(jobs) > 1:
-            futures = {self._executor.submit(function): kind for kind, function in jobs}
+            executor = (
+                self._research_executor
+                if workload_class == "research"
+                else self._executor
+            )
+            futures = {executor.submit(function): kind for kind, function in jobs}
             for future in as_completed(futures):
                 kind = futures[future]
                 try:

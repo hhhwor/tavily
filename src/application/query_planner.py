@@ -53,6 +53,7 @@ class QueryPlanner:
         academic_available: bool,
         patent_available: bool,
         deadline: Deadline | None = None,
+        allow_external_models: bool = True,
     ) -> PlannedQuery:
         """规划 Web/Academic/Patent 查询，并保留原链路的失败语义。"""
         top_k = command.limit
@@ -74,7 +75,12 @@ class QueryPlanner:
         )
 
         failures: list[SearchFailure] = list(plan.failures)
-        if rewrite and self._settings.siliconflow_api_key and self._rewriter is not None:
+        if (
+            allow_external_models
+            and rewrite
+            and self._settings.siliconflow_api_key
+            and self._rewriter is not None
+        ):
             try:
                 rewritten = self._rewrite(
                     plan.normalized_query,
@@ -126,7 +132,8 @@ class QueryPlanner:
         search_query = plan.rewritten_query or plan.normalized_query
         academic_query = search_query
         if (
-            do_academic
+            allow_external_models
+            and do_academic
             and self._settings.openalex_query_rewrite
             and self._settings.siliconflow_api_key
         ):

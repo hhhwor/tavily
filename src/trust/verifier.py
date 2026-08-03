@@ -6,6 +6,11 @@ import time
 from typing import Any, Dict, List, Optional, Sequence
 
 from src.application.ports.entailment import EntailmentClassifier
+from src.application.ports.runtime import Deadline, DeadlineExceededError
+from src.application.research_execution import (
+    CancellationToken,
+    ResearchCancelledError,
+)
 from src.domain.evidence import Evidence, SearchBoundary
 from src.domain.failures import SearchFailure
 from src.domain.trust import (
@@ -218,6 +223,9 @@ class ClaimVerifier:
         evidence: Sequence[Evidence],
         profile: str = "general",
         search_boundary: Optional[SearchBoundary] = None,
+        deadline: Deadline | None = None,
+        cancellation: CancellationToken | None = None,
+        use_external_models: bool = True,
     ) -> VerificationResult:
         started = self._monotonic()
         profile = (profile or "general").strip().lower()
@@ -247,9 +255,34 @@ class ClaimVerifier:
             pair_rows.extend((f"{claim.id}::{item.id}", claim, item) for item in matched)
 
         failures: List[SearchFailure] = []
-        model_name = getattr(self.classifier, "name", "unknown")
+        classifier = self.classifier
+        if not use_external_models and bool(
+            getattr(classifier, "is_external", False)
+        ):
+            classifier = self.rule_fallback
+        model_name = getattr(classifier, "name", "unknown")
         try:
-            decisions = self.classifier.classify_pairs(pair_rows)
+            if cancellation is not None:
+                cancellation.raise_if_cancelled()
+            if deadline is not None and deadline.expired:
+                raise DeadlineExceededError(
+                    "research verification deadline exceeded"
+                )
+            classify_with_context = getattr(
+                classifier,
+                "classify_pairs_with_context",
+                None,
+            )
+            if callable(classify_with_context):
+                decisions = classify_with_context(
+                    pair_rows,
+                    deadline=deadline,
+                    cancellation=cancellation,
+                )
+            else:
+                decisions = classifier.classify_pairs(pair_rows)
+        except (DeadlineExceededError, ResearchCancelledError):
+            raise
         except PartialEntailmentFailure as exc:
             decisions = dict(exc.decisions)
             decisions.update(self.rule_fallback.classify_pairs(exc.failed_pairs))
@@ -260,7 +293,7 @@ class ClaimVerifier:
             codes = ",".join(exc.error_codes) or "unknown"
             failures.append(SearchFailure(
                 stage="claim_entailment",
-                source=getattr(self.classifier, "name", "unknown"),
+                source=getattr(classifier, "name", "unknown"),
                 code="ENTAILMENT_BACKEND_FAILED",
                 message=(
                     f"蕴含后端局部降级: {len(exc.failed_pairs)}/{len(pair_rows)} 个 pair, "
@@ -273,7 +306,7 @@ class ClaimVerifier:
             model_name = self.rule_fallback.name
             failures.append(SearchFailure(
                 stage="claim_entailment",
-                source=getattr(self.classifier, "name", "unknown"),
+                source=getattr(classifier, "name", "unknown"),
                 code="ENTAILMENT_BACKEND_FAILED",
                 message=public_error_message(exc),
                 recoverable=bool(getattr(exc, "recoverable", True)),

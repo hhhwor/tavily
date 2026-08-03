@@ -96,9 +96,16 @@ class DoubaoMcpSearchClient:
     ):
         if not 1 <= limit <= 50:
             raise ValueError("Doubao result limit must be between 1 and 50")
-        key = api_key or os.environ.get("ASK_ECHO_SEARCH_INFINITY_API_KEY", "")
+        key = (
+            api_key
+            or os.environ.get("DOUBAO_API_KEY", "")
+            or os.environ.get("ASK_ECHO_SEARCH_INFINITY_API_KEY", "")
+        )
         if not key:
-            raise ValueError("ASK_ECHO_SEARCH_INFINITY_API_KEY is required")
+            raise ValueError(
+                "DOUBAO_API_KEY or ASK_ECHO_SEARCH_INFINITY_API_KEY "
+                "is required"
+            )
         self.timeout = timeout
         self.limit = limit
         self._client = DoubaoMcpClient(

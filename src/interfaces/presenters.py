@@ -4,12 +4,13 @@ from __future__ import annotations
 from typing import Any
 
 from src.domain.search_api import SearchResponse
+from src.interfaces.public_models import public_search_response
 
 
 class McpSearchPresenter:
     @staticmethod
     def present(response: SearchResponse) -> dict[str, Any]:
-        return response.model_dump(mode="json")
+        return public_search_response(response).model_dump(mode="json")
 
     @staticmethod
     def restore(data: dict[str, Any]) -> SearchResponse:

@@ -13,6 +13,7 @@ from src.ranking.ports import Reranker, clamp01
 
 
 class SiliconFlowReranker(Reranker):
+    is_external = True
     name = "siliconflow"
 
     def __init__(
