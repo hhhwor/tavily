@@ -90,12 +90,18 @@ class BudgetLedger:
         limits: Mapping[str, int | None] | None = None,
         *,
         monotonic: Callable[[], float],
+        initial_usage: Mapping[str, int] | None = None,
     ) -> None:
         self._limits = {
             key: max(0, int(value)) if value is not None else None
             for key, value in (limits or {}).items()
         }
-        self._used: dict[str, int] = {}
+        restored = {
+            key: max(0, int(value))
+            for key, value in (initial_usage or {}).items()
+        }
+        self._initial_elapsed_ms = restored.pop("elapsed_ms", 0)
+        self._used: dict[str, int] = restored
         self._reserved: dict[str, int] = {}
         self._lock = RLock()
         self._monotonic = monotonic
@@ -151,7 +157,8 @@ class BudgetLedger:
             usage = dict(self._used)
         usage["elapsed_ms"] = max(
             0,
-            int((self._monotonic() - self._started_at) * 1000),
+            self._initial_elapsed_ms
+            + int((self._monotonic() - self._started_at) * 1000),
         )
         return usage
 

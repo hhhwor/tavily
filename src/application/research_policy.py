@@ -18,6 +18,7 @@ class ResolvedPolicy:
     required_source_types: frozenset[DocumentKind]
     counterevidence_required: bool
     verification_profile: str
+    saturation_rounds: int = 2
 
 
 _POLICIES = {

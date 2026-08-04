@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from datetime import date, datetime
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -30,6 +30,15 @@ class ResearchObjective(ResearchModel):
     question: str | None = Field(None, min_length=1, max_length=4000)
     claims: list[CandidateClaimInput] = Field(default_factory=list, max_length=20)
     required_features: list[str] = Field(default_factory=list, max_length=50)
+
+
+class InputQuestion(ResearchModel):
+    id: str
+    field: str
+    prompt: str
+    kind: Literal["text", "date", "single_select", "multi_select"] = "text"
+    required: bool = True
+    options: list[str] = Field(default_factory=list)
 
 
 class ResearchTimeScope(ResearchModel):
@@ -85,7 +94,50 @@ class ResolvedResearch(ResearchModel):
     adjustments: list[str] = Field(default_factory=list)
 
 
+class CoverageTarget(ResearchModel):
+    id: str
+    dimension: Literal[
+        "source_type",
+        "claim",
+        "required_feature",
+        "time",
+        "language",
+        "jurisdiction",
+        "classification",
+        "license",
+    ]
+    value: str
+    required: bool = True
+
+
+class ObjectivePlan(ResearchModel):
+    revision: int = Field(1, ge=1)
+    question: str
+    claims: list[CandidateClaim] = Field(default_factory=list)
+    coverage_targets: list[CoverageTarget] = Field(default_factory=list)
+    ambiguities: list[InputQuestion] = Field(default_factory=list)
+
+
+class ResearchAction(ResearchModel):
+    id: str
+    round: int = Field(..., ge=1)
+    kind: Literal[
+        "search",
+        "counter_search",
+        "deep_read",
+        "citation_expand",
+        "family_expand",
+        "entity_expand",
+    ]
+    target_gap_refs: list[str] = Field(..., min_length=1)
+    source_types: list[DocumentKind] = Field(default_factory=list)
+    query: str | None = None
+    candidate_ids: list[str] = Field(default_factory=list)
+    expected_gain: list[str] = Field(default_factory=list)
+
+
 class ResearchProgress(ResearchModel):
+    current_round: int = 0
     rounds_completed: int = 0
     raw_candidates: int = 0
     independent_works: int = 0
@@ -95,6 +147,7 @@ class ResearchProgress(ResearchModel):
     gaps_remaining: int = 0
     scope_excluded: int = 0
     scope_exclusion_reasons: list[str] = Field(default_factory=list)
+    last_checkpoint_at: datetime | None = None
 
 
 class ResearchUsage(ResearchModel):
@@ -114,9 +167,11 @@ class ResearchUsage(ResearchModel):
 
 
 class ResearchInputRequest(ResearchModel):
+    id: str = "research-input"
     code: str
     message: str
     questions: list[str] = Field(default_factory=list)
+    typed_questions: list[InputQuestion] = Field(default_factory=list)
 
 
 class CoverageGap(ResearchModel):
@@ -126,6 +181,10 @@ class CoverageGap(ResearchModel):
     message: str
     retryable: bool = True
     suggested_action: str | None = None
+    dimension: str | None = None
+    value: str | None = None
+    claim_ref: str | None = None
+    followup_queries: list[str] = Field(default_factory=list)
 
 
 class CoverageItem(ResearchModel):
@@ -138,6 +197,51 @@ class CoverageItem(ResearchModel):
 class ResearchCoverage(ResearchModel):
     matrix: list[CoverageItem] = Field(default_factory=list)
     gaps: list[CoverageGap] = Field(default_factory=list)
+    target_met: bool = False
+
+
+class CoverageGain(ResearchModel):
+    new_independent_evidence: int = 0
+    newly_improved_targets: list[str] = Field(default_factory=list)
+    new_conflicts: int = 0
+    locator_upgrades: int = 0
+    score: int = 0
+
+    @property
+    def improved(self) -> bool:
+        return self.score > 0
+
+
+class RoundResult(ResearchModel):
+    round: int = Field(..., ge=1)
+    actions: list[ResearchAction] = Field(default_factory=list)
+    actual_queries: list[str] = Field(default_factory=list)
+    actual_filters: list[dict[str, Any]] = Field(default_factory=list)
+    source_results: dict[str, int] = Field(default_factory=dict)
+    failures: list[SearchFailure] = Field(default_factory=list)
+    coverage_before: ResearchCoverage
+    coverage_after: ResearchCoverage
+    gain: CoverageGain = Field(default_factory=CoverageGain)
+    usage: ResearchUsage = Field(default_factory=ResearchUsage)
+
+
+class ResearchRoundCheckpoint(ResearchModel):
+    research_id: str
+    attempt: int = Field(..., ge=1)
+    round: int = Field(..., ge=1)
+    plan_revision: int = Field(..., ge=1)
+    result: RoundResult
+    evidence_set_revision: int = Field(..., ge=1)
+    query_trace: list[str] = Field(default_factory=list)
+    source_snapshot: dict[str, str] = Field(default_factory=dict)
+    failures: list[SearchFailure] = Field(default_factory=list)
+    scope_exclusion_reasons: list[str] = Field(default_factory=list)
+    counterevidence_searched: list[str] = Field(default_factory=list)
+    source_attempts: int = 0
+    source_successes: int = 0
+    saturation_rounds: int = 0
+    usage: ResearchUsage = Field(default_factory=ResearchUsage)
+    committed_at: datetime
 
 
 class EvidenceFunnel(ResearchModel):
@@ -183,6 +287,8 @@ class ResearchDossier(ResearchModel):
     boundaries: SearchBoundary
     evidence_index: dict[str, Evidence] = Field(default_factory=dict)
     query_trace: list[str] = Field(default_factory=list)
+    plan: ObjectivePlan | None = None
+    rounds: list[RoundResult] = Field(default_factory=list)
     artifacts: dict[str, str] = Field(default_factory=dict)
 
 

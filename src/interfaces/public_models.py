@@ -113,6 +113,11 @@ def _redact_research_payload(payload: dict[str, Any]) -> dict[str, Any]:
                 if isinstance(item, dict):
                     _redact_evidence(item)
         _redact_boundary(dossier.get("boundaries"))
+        rounds = dossier.get("rounds")
+        if isinstance(rounds, list):
+            for item in rounds:
+                if isinstance(item, dict):
+                    _redact_failures(item.get("failures"))
     _redact_failures(payload.get("failures"))
     return payload
 
