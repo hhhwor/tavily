@@ -150,6 +150,19 @@ def test_vertical_provider_flags_have_explicit_tristate_semantics():
     assert Settings.from_env({"PATENT_ES_URL": "https://example.invalid"}).patent_enabled is True
     with pytest.raises(ValueError, match="PATENT_ES_URL"):
         Settings.from_env({"PATENT_ES_ENABLED": "true"})
+    fulltext = Settings.from_env({
+        "PATENT_FULLTEXT_URL": "https://fulltext.example.invalid",
+    })
+    assert fulltext.patent_fulltext_enabled is True
+    assert fulltext.patent_fulltext_index == "epo_fulltext_read"
+    with pytest.raises(ValueError, match="PATENT_FULLTEXT_URL"):
+        Settings.from_env({"PATENT_FULLTEXT_ENABLED": "true"})
+    with pytest.raises(ValueError, match="PATENT_FULLTEXT_INDEX"):
+        Settings.from_env({
+            "PATENT_FULLTEXT_ENABLED": "true",
+            "PATENT_FULLTEXT_URL": "https://fulltext.example.invalid",
+            "PATENT_FULLTEXT_INDEX": "",
+        })
 
 
 def test_provider_does_not_fall_back_to_process_environment(monkeypatch):

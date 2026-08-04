@@ -4,7 +4,8 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any, Protocol, Sequence
 
-from src.domain.evidence import Evidence
+from src.domain.document_read import DocumentReadResult
+from src.domain.evidence import Evidence, EvidenceLocator
 from src.domain.research import (
     ObjectivePlan,
     ResearchRoundCheckpoint,
@@ -91,6 +92,28 @@ class ResearchStore(Protocol):
         kind: str,
         payload: dict[str, Any],
     ) -> None: ...
+
+    def save_document_read(
+        self,
+        research_id: str,
+        *,
+        attempt: int,
+        action_id: str,
+        result: DocumentReadResult,
+    ) -> None: ...
+
+    def get_document_read(
+        self,
+        research_id: str,
+        *,
+        action_id: str,
+    ) -> DocumentReadResult | None: ...
+
+    def resolve_locator(
+        self,
+        research_id: str,
+        locator: EvidenceLocator,
+    ) -> str | None: ...
 
     def save(
         self,

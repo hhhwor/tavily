@@ -7,7 +7,9 @@ from dataclasses import dataclass
 from typing import Sequence
 
 from src.application.research_policy import ResolvedPolicy
+from src.application.document_identity import independent_work_id
 from src.domain.documents import DocumentKind
+from src.domain.evidence import Evidence
 from src.domain.research import (
     CoverageGap,
     CoverageTarget,
@@ -103,6 +105,7 @@ class ResearchPlanner:
                 ))
         return ObjectivePlan(
             question=question,
+            profile=resolved.profile,
             claims=claims,
             coverage_targets=targets,
             ambiguities=ambiguities,
@@ -257,6 +260,8 @@ class ResearchPlanner:
         round_number: int,
         history: Sequence[RoundResult] = (),
         max_actions: int = 1,
+        evidence: Sequence[Evidence] = (),
+        allow_deep_read: bool = True,
     ) -> list[ResearchAction]:
         used_queries = {
             query
@@ -264,9 +269,137 @@ class ResearchPlanner:
             for query in result.actual_queries
         }
         claim_by_id = {claim.id: claim for claim in plan.claims}
+        attempted_deep_reads = {
+            candidate_id
+            for result in history
+            for action in result.actions
+            if action.kind == "deep_read"
+            for candidate_id in action.candidate_ids
+        }
+        attempted_related_documents = {
+            document_id.casefold()
+            for result in history
+            for action in result.actions
+            for document_id in action.related_document_ids
+        }
+        deep_read_works = {
+            value
+            for item in evidence
+            if item.access.original_status is not None
+            for value in (
+                independent_work_id(item),
+                f"result:{item.result_id}",
+            )
+        }
+        evidence_by_id = {item.id: item for item in evidence}
+        patent_publications = {
+            item.patent.publication_number.casefold()
+            for item in evidence
+            if item.patent is not None and item.patent.publication_number
+        }
         actions: list[ResearchAction] = []
-        for gap in coverage.gaps:
+        ordered_gaps = sorted(
+            enumerate(coverage.gaps),
+            key=lambda row: (
+                {
+                    "PATENT_FAMILY_NOT_READ": 0,
+                    "PATENT_CITATIONS_NOT_READ": 1,
+                    "PATENT_NPL_CITATIONS_NOT_SEARCHED": 2,
+                }.get(row[1].code, 3),
+                row[0],
+            ),
+        )
+        for _, gap in ordered_gaps:
             if not gap.retryable:
+                continue
+            if gap.code == "PATENT_NPL_CITATIONS_NOT_SEARCHED":
+                query = gap.followup_queries[0] if gap.followup_queries else None
+                candidate = next((
+                    evidence_by_id[evidence_id]
+                    for evidence_id in gap.evidence_refs
+                    if evidence_id in evidence_by_id
+                ), None)
+                if query and query not in used_queries and candidate is not None:
+                    identity = "|".join((
+                        str(round_number),
+                        "citation_expand",
+                        gap.id,
+                        query,
+                    ))
+                    actions.append(ResearchAction(
+                        id=_stable_id("action", identity),
+                        round=round_number,
+                        kind="citation_expand",
+                        target_gap_refs=[gap.id],
+                        source_types=["academic"],
+                        query=query,
+                        candidate_ids=[candidate.id],
+                        expected_gain=[f"npl:{query}"],
+                    ))
+                    if len(actions) >= max_actions:
+                        break
+                continue
+            relation_action = self._patent_relation_action(
+                gap,
+                evidence_by_id,
+                patent_publications,
+                attempted_related_documents,
+            ) if allow_deep_read else None
+            if relation_action is not None:
+                kind, candidate, related_document = relation_action
+                identity = "|".join((
+                    str(round_number),
+                    kind,
+                    gap.id,
+                    related_document,
+                ))
+                actions.append(ResearchAction(
+                    id=_stable_id("action", identity),
+                    round=round_number,
+                    kind=kind,
+                    target_gap_refs=[gap.id],
+                    source_types=["patent"],
+                    candidate_ids=[candidate.id],
+                    related_document_ids=[related_document],
+                    expected_gain=[
+                        f"{gap.dimension}:{related_document}"
+                    ],
+                ))
+                if len(actions) >= max_actions:
+                    break
+                continue
+            if gap.code in {
+                "PATENT_FAMILY_NOT_READ",
+                "PATENT_CITATIONS_NOT_READ",
+            }:
+                continue
+            candidate = self._deep_read_candidate(
+                gap,
+                evidence_by_id,
+                attempted_deep_reads,
+                deep_read_works,
+            ) if allow_deep_read else None
+            if candidate is not None:
+                identity = "|".join((
+                    str(round_number),
+                    "deep_read",
+                    gap.id,
+                    candidate.id,
+                ))
+                actions.append(ResearchAction(
+                    id=_stable_id("action", identity),
+                    round=round_number,
+                    kind="deep_read",
+                    target_gap_refs=[gap.id],
+                    source_types=[candidate.type],
+                    candidate_ids=[candidate.id],
+                    expected_gain=[
+                        f"locator:{candidate.result_id}",
+                        f"version:{candidate.result_id}",
+                    ],
+                ))
+                if len(actions) >= max_actions:
+                    break
                 continue
             query = self._query_for_gap(plan, gap, claim_by_id)
             if not query:
@@ -303,6 +436,90 @@ class ResearchPlanner:
             if len(actions) >= max_actions:
                 break
         return actions
+
+    @staticmethod
+    def _patent_relation_action(
+        gap: CoverageGap,
+        evidence_by_id: dict[str, Evidence],
+        existing_publications: set[str],
+        attempted_documents: set[str],
+    ) -> tuple[str, Evidence, str] | None:
+        if gap.code not in {
+            "PATENT_FAMILY_NOT_READ",
+            "PATENT_CITATIONS_NOT_READ",
+        }:
+            return None
+        candidate = next((
+            evidence_by_id[evidence_id]
+            for evidence_id in gap.evidence_refs
+            if evidence_id in evidence_by_id
+            and evidence_by_id[evidence_id].patent is not None
+        ), None)
+        if candidate is None or candidate.patent is None:
+            return None
+        documents = (
+            candidate.patent.family_members
+            if gap.code == "PATENT_FAMILY_NOT_READ"
+            else candidate.patent.patent_citations
+        )
+        related = next((
+            value for value in documents
+            if value.casefold() not in existing_publications
+            and value.casefold() not in attempted_documents
+        ), None)
+        if related is None:
+            return None
+        kind = (
+            "family_expand"
+            if gap.code == "PATENT_FAMILY_NOT_READ"
+            else "citation_expand"
+        )
+        return kind, candidate, related
+
+    @staticmethod
+    def _deep_read_candidate(
+        gap: CoverageGap,
+        evidence_by_id: dict[str, Evidence],
+        attempted: set[str],
+        completed_works: set[str],
+    ) -> Evidence | None:
+        if gap.code not in {
+            "NO_CITABLE_SUPPORT",
+            "ABSTRACT_ONLY",
+            "NO_STABLE_LOCATOR",
+            "NO_SUPPORTING_EVIDENCE",
+            "PROVIDER_EXTRACT_NOT_ORIGINAL",
+            "PATENT_ABSTRACT_ONLY",
+            "CLAIM_TEXT_UNAVAILABLE",
+        }:
+            return None
+        for evidence_id in gap.evidence_refs:
+            item = evidence_by_id.get(evidence_id)
+            if item is None or item.id in attempted:
+                continue
+            if item.diagnostics.failure_code:
+                continue
+            if (
+                independent_work_id(item) in completed_works
+                or f"result:{item.result_id}" in completed_works
+            ):
+                continue
+            readable = (
+                item.type == "academic"
+                and bool(item.citation.work_id and item.access.oa_pdf_url)
+            ) or (
+                item.type == "web" and bool(item.url)
+            ) or (
+                item.type == "patent"
+                and item.patent is not None
+                and bool(item.patent.publication_number)
+            )
+            if not readable:
+                continue
+            if item.access.original_status is not None:
+                continue
+            return item
+        return None
 
     @staticmethod
     def _query_for_gap(

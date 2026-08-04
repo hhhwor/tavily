@@ -5,6 +5,7 @@ import hashlib
 from datetime import date, datetime
 from typing import Sequence
 
+from src.application.document_identity import independent_work_id, normalize_doi
 from src.domain.evidence import Evidence
 from src.domain.research import (
     CoverageGain,
@@ -18,24 +19,8 @@ from src.domain.trust import ClaimAssessment
 
 
 def evidence_identity(item: Evidence) -> str:
-    if item.type == "academic":
-        return "academic:" + str(
-            item.citation.doi or item.citation.work_id or item.result_id
-        )
-    if item.type == "patent" and item.patent is not None:
-        return "patent:" + str(
-            item.patent.family_id
-            or item.patent.publication_number
-            or item.result_id
-        )
-    if item.provenance is not None:
-        return "web:" + str(
-            item.provenance.ownership_group
-            or item.provenance.canonical_url
-            or item.provenance.document_id
-            or item.result_id
-        )
-    return item.result_id
+    """Compatibility wrapper for the M2 independent-work identity."""
+    return independent_work_id(item)
 
 
 def _stable_gap_id(value: str) -> str:
@@ -96,6 +81,11 @@ class CoverageEvaluator:
         ]
         gaps: list[CoverageGap] = []
         for assessment in assessments:
+            relation_refs = list(dict.fromkeys(
+                assessment.support_refs
+                + assessment.conflict_refs
+                + assessment.mention_refs
+            ))
             for code in assessment.gaps:
                 gaps.append(CoverageGap(
                     id=_stable_gap_id(
@@ -116,8 +106,120 @@ class CoverageEvaluator:
                     dimension="claim",
                     value=assessment.claim.id,
                     claim_ref=assessment.claim.id,
+                    evidence_refs=relation_refs,
                     followup_queries=list(assessment.followup_queries),
                 ))
+        for item in evidence:
+            failure_code = item.diagnostics.failure_code
+            if not failure_code:
+                continue
+            retryable = failure_code not in {
+                "WORK_ID_MISSING",
+                "PDF_URL_MISSING",
+                "PDF_CURSOR_INVALID",
+                "PDF_CURSOR_LOOP",
+                "PDF_BYTE_LIMIT_EXCEEDED",
+                "PDF_CHUNK_LIMIT_EXCEEDED",
+            }
+            gaps.append(CoverageGap(
+                id=_stable_gap_id(
+                    f"document:{item.id}:{failure_code}"
+                ),
+                code=failure_code,
+                severity="warning",
+                message=(
+                    f"原文读取失败 {item.id}: {failure_code}"
+                ),
+                retryable=retryable,
+                suggested_action="重新检索可读取的原文版本",
+                dimension="document",
+                value=item.id,
+                evidence_refs=[item.id],
+            ))
+        if plan.profile == "prior_art_landscape":
+            publications = {
+                item.patent.publication_number.casefold()
+                for item in evidence
+                if item.patent is not None
+                and item.patent.publication_number
+            }
+            academic_dois = {
+                normalize_doi(item.citation.doi)
+                for item in evidence
+                if item.type == "academic" and item.citation.doi
+            }
+            for item in evidence:
+                if (
+                    item.patent is None
+                    or item.quality is None
+                    or not item.quality.is_original
+                ):
+                    continue
+                family_remaining = [
+                    publication
+                    for publication in item.patent.family_members
+                    if publication.casefold() not in publications
+                ]
+                if family_remaining:
+                    gaps.append(CoverageGap(
+                        id=_stable_gap_id(
+                            f"family:{item.patent.family_id}:"
+                            + "|".join(sorted(family_remaining))
+                        ),
+                        code="PATENT_FAMILY_NOT_READ",
+                        severity="blocking",
+                        message=(
+                            f"专利族仍有 {len(family_remaining)} 个成员未深读"
+                        ),
+                        suggested_action="深读同族专利并比较权利要求差异",
+                        dimension="patent_family",
+                        value=item.patent.family_id or item.result_id,
+                        evidence_refs=[item.id],
+                    ))
+                citation_remaining = [
+                    publication
+                    for publication in item.patent.patent_citations
+                    if publication.casefold() not in publications
+                ]
+                if citation_remaining:
+                    gaps.append(CoverageGap(
+                        id=_stable_gap_id(
+                            f"citation:{item.id}:"
+                            + "|".join(sorted(citation_remaining))
+                        ),
+                        code="PATENT_CITATIONS_NOT_READ",
+                        severity="blocking",
+                        message=(
+                            f"仍有 {len(citation_remaining)} 个专利引用未深读"
+                        ),
+                        suggested_action="深读引用专利以核对现有技术",
+                        dimension="patent_citation",
+                        value=item.id,
+                        evidence_refs=[item.id],
+                    ))
+                npl_remaining = [
+                    citation
+                    for citation in item.patent.npl_citations
+                    if normalize_doi(citation)
+                    and normalize_doi(citation) not in academic_dois
+                ]
+                if npl_remaining:
+                    gaps.append(CoverageGap(
+                        id=_stable_gap_id(
+                            f"npl:{item.id}:"
+                            + "|".join(sorted(npl_remaining))
+                        ),
+                        code="PATENT_NPL_CITATIONS_NOT_SEARCHED",
+                        severity="blocking",
+                        message=(
+                            f"仍有 {len(npl_remaining)} 个非专利引用未检索"
+                        ),
+                        suggested_action="检索并深读非专利引用",
+                        dimension="patent_npl_citation",
+                        value=item.id,
+                        evidence_refs=[item.id],
+                        followup_queries=[npl_remaining[0]],
+                    ))
         target_by_key = {
             (target.dimension, target.value): target
             for target in plan.coverage_targets

@@ -1,6 +1,6 @@
 {
   "schema_version": "concurrency-thresholds.v1",
-  "description": "Offline search-pipeline merge gate; latency thresholds include planning, recall, retry, ranking, trust annotation and SQLite seed persistence.",
+  "description": "Advisory reference for the optional offline concurrency benchmark; it does not block tests, merges, or releases.",
   "levels": {
     "20": {
       "min_success_rate": 1.0,

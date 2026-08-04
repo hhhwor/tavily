@@ -156,6 +156,7 @@ POST /search {query, top_k, ranking_profile?, rerank_threshold_mode?, ...}
 - **专利 evidence 元数据**:对外返回 `type=patent`。`citation.publication_number` 只作为引用字段;完整结构化元数据进入 `patent` 子对象(`publication_number/application_number/applicant/inventor/ipc_main/cpc_main/country/status/family_id/application_date/publication_date/patent_type/citation_count`)。申请日/公开日用于 `published_date`;摘要进入 `passage.text`(`snippet_type=patent_abstract`);引用数同时进入 `scores.authority`。专利无原生网页,`url` 用 Google Patents 落地页 `https://patents.google.com/patent/{公开号去横线}`(如 `US-2024030484-A1` → `.../US2024030484A1`)。
 - **鉴权与网络**:ES 自身**无鉴权、不区分读写**,只读保证完全靠前置 nginx(只读白名单)+ AWS 安全组**来源 IP 白名单**(详见 `~/adhoc-2026-06-15-read-only-es-nginx-in-se4ai-v2.md`)。本项目所在开发机出口 IP 已在白名单,直连可用;**换部署机器需先给新出口 IP 放行 9243**。TLS 证书覆盖该域名,默认 `verify=True`。凭证缺失(无 `PATENT_ES_URL`)则专利能力**静默关闭**,web/学术零影响。
 - ⚠️ **库与字段随版本变化**:`epo_docdb_v2` 相比旧 `patents` **无 `claims`/`grant_*`/`current_holder`**,新增 CPC/优先权/同族/国别/法律状态等。`20260620` 相比 `20260615` 修复了**中国授权(CN-B)当事人大面积缺失**(申请人 80.8%→90.1%、发明人 76.1%→85.8%,新增中文原文名),代价是当事人字段从扁平 string 改为 object(breaking,已适配;见 [patent-es-cn-b-missing-applicant-bug.md](./patent-es-cn-b-missing-applicant-bug.md))。换索引(如 `epo_docdb`/`google_patents`)字段结构不同,需各自 `_mapping` 适配(`PATENT_ES_INDEX` 可配)。
+- **Research 原文深读**:DOCDB 检索索引不含 claims，因此 M2 使用独立、只读的 `PATENT_FULLTEXT_URL/PATENT_FULLTEXT_INDEX` 读取权利要求、说明书段落、同族和引用关系。未配置时不会用摘要冒充原文，而是记录 `PATENT_FULLTEXT_SOURCE_UNCONFIGURED` diagnostics/coverage gap。
 
 ### 缓存 — provider 召回级([cache.py](../src/cache.py))
 
@@ -208,6 +209,10 @@ POST /search {query, top_k, ranking_profile?, rerank_threshold_mode?, ...}
 | `PATENT_ES_VERIFY_TLS` | **`true`** | 校验 TLS 证书(houdutech 证书已覆盖域名) | 同默认 |
 | `PATENT_ES_PER_PAGE` | `25` | 专利单次召回数(≤100) | 同默认 |
 | `PATENT_DETECT` | **`true`** | L0 专利意图自动识别开关(关掉则仅 `include_patent=true` 触发) | 同默认 |
+| `PATENT_FULLTEXT_URL` | 空 | Research 专利原文只读 ES 地址；缺失时 claims/specification 深读明确不可用 | 接入包含 claims/description 的独立只读服务 |
+| `PATENT_FULLTEXT_INDEX` | `epo_fulltext_read` | 专利原文索引/读别名 | 使用只读别名，禁止复用不含全文的 DOCDB 索引 |
+| `PATENT_FULLTEXT_ENABLED` | 未设置=`auto` | 未设置时随 URL 自动启用；`true` 要求 URL 和非空 index | 原文服务就绪后启用 |
+| `PATENT_FULLTEXT_VERIFY_TLS` | **`true`** | 校验专利原文服务 TLS 证书 | 保持 `true` |
 | `CACHE_ENABLED` | **`true`** | provider 召回级缓存(避免重复调搜索源 API);时效查询不缓存 | 同默认 |
 | `CACHE_BACKEND` | `memory` | 进程内 LRU+TTL(预留 `redis`,未实现时回退 memory) | 多实例/持久化再换 redis |
 | `CACHE_TTL` | `21600` | 非时效结果缓存 TTL(秒,默认 6h) | 同默认 |
@@ -420,4 +425,4 @@ curl -s -X POST localhost:8000/search -H "Authorization: Bearer $TOKEN" \
 | [academic-search-engine-feasibility.md](./academic-search-engine-feasibility.md) | **学术引擎可行性** —— 数据源全景、自建可行性、OpenAlex 接入定位 |
 | [eval-methodology.md](./eval-methodology.md) | **评测体系** —— 指标公式、LLM-as-judge、pooling、复现 |
 | [mcp-usage.md](./mcp-usage.md) | **MCP 使用文档** —— `chukonu-web-search` 工具说明、鉴权、接入(Claude Code/Desktop/Inspector)、本地/外网 |
-| [agent-search-stability-summary.md](./agent-search-stability-summary.md) | **稳定性改造总览** —— Deadline、资源隔离、重试/熔断、降级矩阵与质量/并发门槛 |
+| [agent-search-stability-summary.md](./agent-search-stability-summary.md) | **稳定性改造总览** —— Deadline、资源隔离、重试/熔断、降级矩阵、质量门禁与可选并发基准 |

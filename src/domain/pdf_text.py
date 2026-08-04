@@ -16,5 +16,8 @@ class PdfTextPage(BaseModel):
     returned_chars: int = 0
     next_cursor: Optional[str] = None
     partial: bool = False
+    content_hash: Optional[str] = None
+    parser_version: Optional[str] = None
+    source_version_id: Optional[str] = None
     error_code: Optional[str] = None
     error_message: Optional[str] = None

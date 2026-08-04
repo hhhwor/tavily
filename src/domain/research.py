@@ -113,6 +113,7 @@ class CoverageTarget(ResearchModel):
 class ObjectivePlan(ResearchModel):
     revision: int = Field(1, ge=1)
     question: str
+    profile: str = ""
     claims: list[CandidateClaim] = Field(default_factory=list)
     coverage_targets: list[CoverageTarget] = Field(default_factory=list)
     ambiguities: list[InputQuestion] = Field(default_factory=list)
@@ -133,6 +134,7 @@ class ResearchAction(ResearchModel):
     source_types: list[DocumentKind] = Field(default_factory=list)
     query: str | None = None
     candidate_ids: list[str] = Field(default_factory=list)
+    related_document_ids: list[str] = Field(default_factory=list)
     expected_gain: list[str] = Field(default_factory=list)
 
 
@@ -184,6 +186,7 @@ class CoverageGap(ResearchModel):
     dimension: str | None = None
     value: str | None = None
     claim_ref: str | None = None
+    evidence_refs: list[str] = Field(default_factory=list)
     followup_queries: list[str] = Field(default_factory=list)
 
 

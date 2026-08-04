@@ -3,20 +3,25 @@ from __future__ import annotations
 
 import hashlib
 import json
-from typing import Sequence
+from typing import Mapping, Sequence
 
 from src.application.commands import (
     ResearchCommand,
     ResearchFeedbackCommand,
     SearchFilters,
 )
+from src.application.academic_document_reader import AcademicDocumentReader
 from src.application.discovery_service import DiscoveryService
+from src.application.evidence_adoption import EvidenceAdoptionGate
 from src.application.evidence_assembler import EvidenceAssembler
 from src.application.model_router import (
     PrivacyAwareModelRouter,
     PrivacyPolicyUnsatisfiable,
 )
+from src.application.patent_document_reader import PatentDocumentReader
+from src.application.ports.document_reader import DocumentReader
 from src.application.ports.model_router import ModelRouter
+from src.application.ports.patent_text import UnavailablePatentTextGateway
 from src.application.ports.pdf_text import PdfTextGateway
 from src.application.ports.research_store import ResearchStore
 from src.application.ports.runtime import Clock
@@ -38,6 +43,8 @@ from src.application.research_scope import (
 )
 from src.application.trust_annotator import TrustAnnotator
 from src.application.verify_service import VerifyService
+from src.application.web_document_reader import WebDocumentReader
+from src.domain.documents import DocumentKind
 from src.domain.evidence import Evidence
 from src.domain.research import (
     ResearchBudget,
@@ -50,6 +57,7 @@ from src.domain.research import (
     ResolvedResearch,
 )
 from src.domain.trust import CandidateClaim, ClaimAssessment
+from src.infrastructure.safe_web_fetch import SafeWebFetcher
 
 
 _BUDGET_PRESETS = {
@@ -90,6 +98,7 @@ class ResearchService:
         clock: Clock,
         model_router: ModelRouter | None = None,
         policy_registry: ResearchPolicyRegistry | None = None,
+        document_readers: Mapping[DocumentKind, DocumentReader] | None = None,
     ) -> None:
         # Compatibility reference used by composition audits; execution is
         # owned by ResearchRunner.
@@ -97,18 +106,26 @@ class ResearchService:
         self._model_router = model_router or PrivacyAwareModelRouter()
         self._policy_registry = policy_registry or ResearchPolicyRegistry()
         self._planner = ResearchPlanner()
+        academic_reader = AcademicDocumentReader(pdf_gateway)
+        readers: dict[DocumentKind, DocumentReader] = {
+            "academic": academic_reader,
+            "web": WebDocumentReader(SafeWebFetcher()),
+            "patent": PatentDocumentReader(UnavailablePatentTextGateway()),
+        }
+        readers.update(document_readers or {})
         self._runner = ResearchRunner(
             task_store=task_store,
             discovery=discovery,
             evidence_assembler=evidence_assembler,
             trust_annotator=trust_annotator,
-            pdf_gateway=pdf_gateway,
             verify_service=verify_service,
             clock=clock,
             model_router=self._model_router,
             policy_registry=self._policy_registry,
             planner=self._planner,
             coverage_evaluator=CoverageEvaluator(),
+            document_readers=readers,
+            evidence_adoption=EvidenceAdoptionGate(),
         )
         self._coordinator = ResearchCoordinator(
             seed_store=seed_store,

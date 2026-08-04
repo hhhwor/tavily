@@ -34,6 +34,8 @@ class PdfTextGateway(ABC):
         work_id: str,
         cursor: Optional[str] = None,
         max_chars: Optional[int] = None,
+        *,
+        deadline: Deadline | None = None,
     ) -> PdfTextPage:
         """读取已经抽取并缓存的 PDF 正文分页，不触发新抽取。"""
         raise NotImplementedError

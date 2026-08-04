@@ -2,13 +2,15 @@
 from __future__ import annotations
 
 from collections import Counter
-from typing import Sequence
+from typing import Mapping, Sequence
 
 from src.application.commands import SearchCommand, SearchFilters
 from src.application.discovery_service import DiscoveryService
+from src.application.document_identity import evidence_version_key
+from src.application.evidence_adoption import EvidenceAdoptionGate
 from src.application.evidence_assembler import EvidenceAssembler
+from src.application.ports.document_reader import DocumentReader
 from src.application.ports.model_router import ModelRouter, ResolvedModelRoute
-from src.application.ports.pdf_text import PdfTextGateway
 from src.application.ports.research_store import ResearchStore
 from src.application.ports.runtime import Clock, Deadline, DeadlineExceededError
 from src.application.ports.search_seed import (
@@ -36,6 +38,7 @@ from src.domain.research import (
     EvidenceFunnel,
     ObjectivePlan,
     ResearchAssessment,
+    ResearchAction,
     ResearchCoverage,
     ResearchDossier,
     ResearchFinding,
@@ -61,25 +64,27 @@ class ResearchRunner:
         discovery: DiscoveryService,
         evidence_assembler: EvidenceAssembler,
         trust_annotator: TrustAnnotator,
-        pdf_gateway: PdfTextGateway,
         verify_service: VerifyService,
         clock: Clock,
         model_router: ModelRouter,
         policy_registry: ResearchPolicyRegistry,
         planner: ResearchPlanner,
         coverage_evaluator: CoverageEvaluator,
+        document_readers: Mapping[DocumentKind, DocumentReader],
+        evidence_adoption: EvidenceAdoptionGate,
     ) -> None:
         self._task_store = task_store
         self._discovery = discovery
         self._assembler = evidence_assembler
         self._trust_annotator = trust_annotator
-        self._pdf_gateway = pdf_gateway
         self._verify = verify_service
         self._clock = clock
         self._model_router = model_router
         self._policy_registry = policy_registry
         self._planner = planner
         self._coverage = coverage_evaluator
+        self._document_readers = dict(document_readers)
+        self._evidence_adoption = evidence_adoption
 
     def run(self, research_id: str) -> None:
         try:
@@ -208,6 +213,8 @@ class ResearchRunner:
             history = self._task_store.list_rounds(research_id)
             seed_scope_reasons = list(checkpoint.scope_exclusion_reasons)
 
+        self._enforce_resolvable_quality(research_id, evidence)
+
         claims = list(plan.claims)
         deadline_reached = False
         candidate_budget_reached = False
@@ -240,19 +247,16 @@ class ResearchRunner:
             context.checkpoint()
             if (ledger.remaining("rounds") or 0) <= 0:
                 break
-            room = min(
-                ledger.remaining("raw_candidates") or 0,
-                ledger.remaining("adopted_candidates") or 0,
-            )
-            if room <= 0:
-                candidate_budget_reached = True
-                break
             round_number = ledger.used("rounds") + 1
             actions = self._planner.next_actions(
                 plan,
                 coverage,
                 round_number=round_number,
                 history=history,
+                evidence=evidence,
+                allow_deep_read=(
+                    (ledger.remaining("deep_read_documents") or 0) > 0
+                ),
             )
             if not actions:
                 no_actions = True
@@ -261,52 +265,99 @@ class ResearchRunner:
             before_evidence = list(evidence)
             before_coverage = coverage
             before_assessments = assessments
-            candidate_reservation = ledger.reserve(
-                "adopted_candidates",
-                min(20, room),
+            document_action = action.kind in {
+                "deep_read", "family_expand"
+            } or (
+                action.kind == "citation_expand"
+                and bool(action.related_document_ids)
             )
-            raw_reservation = ledger.reserve(
-                "raw_candidates",
-                candidate_reservation.amount,
+            search_action = action.kind in {"search", "counter_search"} or (
+                action.kind == "citation_expand" and bool(action.query)
             )
-            round_reservation = ledger.reserve("rounds")
-            task = self._set_running_phase(research_id, "expanding")
-            try:
-                (
-                    new,
-                    round_failures,
-                    read_count,
-                    read_pages,
-                    read_bytes,
-                    round_raw_candidates,
-                    round_snapshots,
-                ) = self._expand(
-                    action.query or plan.question,
-                    resolved,
-                    limit=candidate_reservation.amount,
-                    deep_reads_left=(
-                        ledger.remaining("deep_read_documents") or 0
-                    ),
-                    context=context,
-                    model_route=model_route,
-                    source_types=action.source_types or None,
+            candidate_reservation = None
+            raw_reservation = None
+            if search_action:
+                room = min(
+                    ledger.remaining("raw_candidates") or 0,
+                    ledger.remaining("adopted_candidates") or 0,
                 )
+                if room <= 0:
+                    candidate_budget_reached = True
+                    break
+                candidate_reservation = ledger.reserve(
+                    "adopted_candidates",
+                    min(20, room),
+                )
+                raw_reservation = ledger.reserve(
+                    "raw_candidates",
+                    candidate_reservation.amount,
+                )
+            round_reservation = ledger.reserve("rounds")
+            task = self._set_running_phase(
+                research_id,
+                "deep_reading" if document_action else "expanding",
+            )
+            try:
+                if document_action:
+                    (
+                        new,
+                        round_failures,
+                        read_count,
+                        read_pages,
+                        read_bytes,
+                    ) = self._deep_read(
+                        action,
+                        evidence,
+                        plan,
+                        before_coverage,
+                        context,
+                    )
+                    round_raw_candidates = 0
+                    round_snapshots: dict[str, str] = {}
+                else:
+                    assert candidate_reservation is not None
+                    (
+                        new,
+                        round_failures,
+                        read_count,
+                        read_pages,
+                        read_bytes,
+                        round_raw_candidates,
+                        round_snapshots,
+                    ) = self._expand(
+                        action.query or plan.question,
+                        resolved,
+                        limit=candidate_reservation.amount,
+                        context=context,
+                        model_route=model_route,
+                        source_types=action.source_types or None,
+                    )
             except DeadlineExceededError:
-                candidate_reservation.release()
-                raw_reservation.release()
+                if candidate_reservation is not None:
+                    candidate_reservation.release()
+                if raw_reservation is not None:
+                    raw_reservation.release()
                 round_reservation.release()
                 deadline_reached = True
                 break
             except BaseException:
-                candidate_reservation.release()
-                raw_reservation.release()
+                if candidate_reservation is not None:
+                    candidate_reservation.release()
+                if raw_reservation is not None:
+                    raw_reservation.release()
                 round_reservation.release()
                 raise
             scoped, excluded = filter_evidence(new, resolved.scope)
             seed_scope_reasons.extend(excluded)
-            added = self._merge(evidence, scoped)
-            candidate_reservation.commit(added)
-            raw_reservation.commit(round_raw_candidates)
+            if document_action:
+                added = self._merge_document_evidence(evidence, scoped)
+            else:
+                assert candidate_reservation is not None
+                assert raw_reservation is not None
+                added = self._merge(evidence, scoped)
+                candidate_reservation.commit(added)
+                raw_reservation.commit(round_raw_candidates)
+            self._enforce_resolvable_quality(research_id, evidence)
             round_reservation.commit()
             if read_count:
                 ledger.consume("deep_read_documents", read_count)
@@ -316,10 +367,12 @@ class ResearchRunner:
                 ledger.consume("deep_read_bytes", read_bytes)
             failures.extend(round_failures)
             snapshots.update(round_snapshots)
-            query_trace.append(action.query or plan.question)
-            source_attempts += 1
-            if round_snapshots:
-                source_successes += 1
+            if action.query:
+                query_trace.append(action.query)
+            if search_action:
+                source_attempts += 1
+                if round_snapshots:
+                    source_successes += 1
             if action.kind == "counter_search" and round_snapshots:
                 gap_by_id = {gap.id: gap for gap in before_coverage.gaps}
                 counterevidence_searched.update(
@@ -362,8 +415,10 @@ class ResearchRunner:
             result = RoundResult(
                 round=round_number,
                 actions=actions,
-                actual_queries=[action.query or plan.question],
-                actual_filters=[self._filter_payload(resolved)],
+                actual_queries=[action.query] if action.query else [],
+                actual_filters=(
+                    [self._filter_payload(resolved)] if search_action else []
+                ),
                 source_results=dict(Counter(item.type for item in new)),
                 failures=round_failures,
                 coverage_before=before_coverage,
@@ -716,13 +771,243 @@ class ResearchRunner:
             )
             return result, True
 
+    def _deep_read(
+        self,
+        action: ResearchAction,
+        evidence: list[Evidence],
+        plan: ObjectivePlan,
+        coverage: ResearchCoverage,
+        context: ExecutionContext,
+    ) -> tuple[list[Evidence], list[SearchFailure], int, int, int]:
+        candidate_by_id = {item.id: item for item in evidence}
+        candidate = next((
+            candidate_by_id[candidate_id]
+            for candidate_id in action.candidate_ids
+            if candidate_id in candidate_by_id
+        ), None)
+        if candidate is None:
+            return (
+                [],
+                [SearchFailure(
+                    stage="document_read",
+                    source="research",
+                    type=(
+                        action.source_types[0]
+                        if action.source_types else "web"
+                    ),
+                    code="DEEP_READ_CANDIDATE_MISSING",
+                    message="Original-document candidate is unavailable.",
+                    recoverable=False,
+                )],
+                0,
+                0,
+                0,
+            )
+        if action.related_document_ids:
+            if candidate.type != "patent" or candidate.patent is None:
+                return (
+                    [],
+                    [SearchFailure(
+                        stage="document_read",
+                        source=candidate.result_id,
+                        type=candidate.type,
+                        code="PATENT_RELATION_SOURCE_INVALID",
+                        message="Patent relation source is invalid.",
+                        recoverable=False,
+                    )],
+                    0,
+                    0,
+                    0,
+                )
+            candidate = self._related_patent_candidate(
+                candidate,
+                action.related_document_ids[0],
+            )
+        result = self._task_store.get_document_read(
+            context.research_id,
+            action_id=action.id,
+        )
+        must_refetch_unstored_text = bool(
+            result is not None
+            and result.version is not None
+            and result.version.storage_mode != "full_text"
+            and not result.chunks
+        )
+        if result is None or must_refetch_unstored_text:
+            reader = self._document_readers.get(candidate.type)
+            if reader is None:
+                return (
+                    [],
+                    [SearchFailure(
+                        stage="document_read",
+                        source=candidate.result_id,
+                        type=candidate.type,
+                        code="DOCUMENT_READER_UNAVAILABLE",
+                        message="Original-document reader is unavailable.",
+                        recoverable=False,
+                    )],
+                    0,
+                    0,
+                    0,
+                )
+            result = reader.read(candidate, context=context)
+            self._task_store.save_document_read(
+                context.research_id,
+                attempt=context.attempt,
+                action_id=action.id,
+                result=result,
+            )
+
+        gap_by_id = {gap.id: gap for gap in coverage.gaps}
+        claim_by_id = {claim.id: claim for claim in plan.claims}
+        claim_refs = {
+            gap_by_id[gap_id].claim_ref
+            for gap_id in action.target_gap_refs
+            if gap_id in gap_by_id
+            and gap_by_id[gap_id].claim_ref is not None
+        }
+        claim_texts = [
+            claim_by_id[claim_ref].text
+            for claim_ref in claim_refs
+            if claim_ref in claim_by_id
+        ]
+        adopted = self._evidence_adoption.adopt(
+            candidate,
+            result,
+            claim_texts=claim_texts,
+        )
+        if result.diagnostics.failure_code:
+            failed_candidate = self._evidence_adoption.mark_failure(
+                candidate,
+                result,
+            )
+            for index, item in enumerate(evidence):
+                if item.id == candidate.id:
+                    evidence[index] = failed_candidate
+                    break
+            else:
+                evidence.append(failed_candidate)
+        failures: list[SearchFailure] = []
+        if result.diagnostics.failure_code:
+            failures.append(SearchFailure(
+                stage="document_read",
+                source=(
+                    candidate.citation.work_id
+                    or candidate.citation.doi
+                    or (
+                        candidate.patent.publication_number
+                        if candidate.patent is not None else ""
+                    )
+                    or candidate.result_id
+                ),
+                type=candidate.type,
+                code=result.diagnostics.failure_code,
+                message=result.diagnostics.message,
+                recoverable=result.diagnostics.retryable,
+            ))
+        return (
+            adopted,
+            failures,
+            1,
+            result.pages_read,
+            result.bytes_read,
+        )
+
+    def _enforce_resolvable_quality(
+        self,
+        research_id: str,
+        evidence: list[Evidence],
+    ) -> None:
+        """Prevent unpersisted or mismatched quotes from becoming qualified."""
+        reason = "RESEARCH_LOCATOR_UNRESOLVABLE"
+        for index, item in enumerate(evidence):
+            quality = item.quality
+            if quality is None or not quality.can_support_key_claim:
+                continue
+            resolved = (
+                self._task_store.resolve_locator(research_id, item.locator)
+                if item.locator is not None else None
+            )
+            if resolved == item.passage.text:
+                continue
+            reasons = list(dict.fromkeys([*quality.reasons, reason]))
+            warnings = list(dict.fromkeys([
+                *item.diagnostics.warnings,
+                reason,
+            ]))
+            evidence[index] = item.model_copy(deep=True, update={
+                "quality": quality.model_copy(update={
+                    "level": "limited",
+                    "has_stable_locator": False,
+                    "can_support_key_claim": False,
+                    "reasons": reasons,
+                }),
+                "diagnostics": item.diagnostics.model_copy(update={
+                    "warnings": warnings,
+                }),
+            })
+
+    @staticmethod
+    def _related_patent_candidate(
+        parent: Evidence,
+        publication_number: str,
+    ) -> Evidence:
+        assert parent.patent is not None
+        publication_number = publication_number.strip()
+        clean_publication = "".join(
+            character
+            for character in publication_number
+            if character.isalnum()
+        )
+        patent = parent.patent.model_copy(update={
+            "publication_number": publication_number,
+            "application_number": "",
+            "application_date": "",
+            "publication_date": "",
+            "priority_root": "",
+            "priority_dates": [],
+            "family_members": [],
+            "patent_citations": [],
+            "npl_citations": [],
+        })
+        result_id = f"patent:{publication_number}"
+        return parent.model_copy(deep=True, update={
+            "id": f"{result_id}:relation",
+            "result_id": result_id,
+            "url": (
+                f"https://patents.google.com/patent/{clean_publication}"
+                if clean_publication else ""
+            ),
+            "passage": parent.passage.model_copy(update={
+                "text": f"Related patent publication {publication_number}",
+                "snippet_type": "patent_abstract",
+                "char_start": None,
+                "char_end": None,
+                "page_from": None,
+                "page_to": None,
+                "chunk_index": None,
+            }),
+            "citation": parent.citation.model_copy(update={
+                "label": publication_number,
+                "publication_number": publication_number,
+            }),
+            "patent": patent,
+            "diagnostics": parent.diagnostics.model_copy(update={
+                "warnings": ["PATENT_RELATION_DISCOVERY"],
+                "partial": False,
+                "failure_code": None,
+            }),
+            "provenance": None,
+            "locator": None,
+            "quality": None,
+        })
+
     def _expand(
         self,
         query: str,
         resolved: ResolvedResearch,
         *,
         limit: int,
-        deep_reads_left: int,
         context: ExecutionContext,
         model_route: ResolvedModelRoute,
         source_types: Sequence[DocumentKind] | None = None,
@@ -760,17 +1045,9 @@ class ResearchRunner:
             cancellation=context.cancellation,
         )
         context.checkpoint()
-        pdf = self._pdf_gateway.enrich(
-            outcome.ranked.academic,
-            include_pdf_text=deep_reads_left > 0,
-            pdf_text_mode="sync",
-            pdf_max_results=deep_reads_left,
-            deadline=context.deadline,
-        )
-        context.checkpoint()
         evidence = self._assembler.assemble(
             outcome.ranked.web,
-            pdf.academic,
+            outcome.ranked.academic,
             outcome.ranked.patent,
         )[:limit]
         trust = self._trust_annotator.annotate(
@@ -785,26 +1062,6 @@ class ResearchRunner:
                 for batch in outcome.recalled.batches
             },
         )
-        deep_reads = sum(
-            item.passage.snippet_type == "pdf_text"
-            for item in trust.evidence
-        )
-        deep_read_pages = sum(
-            max(
-                1,
-                (item.passage.page_to or item.passage.page_from)
-                - item.passage.page_from
-                + 1,
-            )
-            for item in trust.evidence
-            if item.passage.snippet_type == "pdf_text"
-            and item.passage.page_from is not None
-        )
-        deep_read_bytes = sum(
-            len(item.passage.text.encode("utf-8"))
-            for item in trust.evidence
-            if item.passage.snippet_type == "pdf_text"
-        )
         raw_candidates = sum((
             len(outcome.recalled.web),
             len(outcome.recalled.academic),
@@ -816,11 +1073,10 @@ class ResearchRunner:
                 *outcome.planned.failures,
                 *outcome.recalled.failures,
                 *outcome.ranked.failures,
-                *pdf.failures,
             ],
-            int(deep_reads),
-            deep_read_pages,
-            deep_read_bytes,
+            0,
+            0,
+            0,
             raw_candidates,
             {
                 batch.source.id: batch.snapshot
@@ -861,14 +1117,30 @@ class ResearchRunner:
 
     @staticmethod
     def _merge(current: list[Evidence], new: Sequence[Evidence]) -> int:
-        seen = {evidence_identity(item) for item in current}
+        seen = {evidence_version_key(item) for item in current}
         added = 0
         for item in new:
-            key = evidence_identity(item)
+            key = evidence_version_key(item)
             if key not in seen:
                 seen.add(key)
                 current.append(item)
                 added += 1
+        return added
+
+    @staticmethod
+    def _merge_document_evidence(
+        current: list[Evidence],
+        new: Sequence[Evidence],
+    ) -> int:
+        seen = {evidence_version_key(item) for item in current}
+        added = 0
+        for item in new:
+            key = evidence_version_key(item)
+            if key in seen:
+                continue
+            seen.add(key)
+            current.append(item)
+            added += 1
         return added
 
     @staticmethod

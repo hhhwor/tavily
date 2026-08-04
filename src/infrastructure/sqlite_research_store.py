@@ -13,6 +13,8 @@ from src.application.ports.research_store import (
     ResearchTaskNotFound,
 )
 from src.domain.evidence import Evidence
+from src.domain.document_read import DocumentChunk, DocumentReadResult
+from src.domain.evidence import EvidenceLocator
 from src.domain.research import (
     ObjectivePlan,
     ResearchRoundCheckpoint,
@@ -116,6 +118,47 @@ class SqliteResearchStore:
                 created_at TEXT NOT NULL,
                 FOREIGN KEY (research_id) REFERENCES research_tasks(research_id)
                     ON DELETE CASCADE
+            )
+            """
+        )
+        self._connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS research_document_reads (
+                research_id TEXT NOT NULL,
+                action_id TEXT NOT NULL,
+                attempt INTEGER NOT NULL,
+                document_version_id TEXT,
+                independent_work_id TEXT,
+                status TEXT NOT NULL,
+                payload TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                PRIMARY KEY (research_id, action_id),
+                FOREIGN KEY (research_id) REFERENCES research_tasks(research_id)
+                    ON DELETE CASCADE
+            )
+            """
+        )
+        self._connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS research_document_chunks (
+                research_id TEXT NOT NULL,
+                action_id TEXT NOT NULL,
+                document_version_id TEXT NOT NULL,
+                chunk_index INTEGER NOT NULL,
+                text TEXT NOT NULL,
+                payload TEXT NOT NULL,
+                PRIMARY KEY (research_id, action_id, chunk_index),
+                FOREIGN KEY (research_id, action_id)
+                    REFERENCES research_document_reads(research_id, action_id)
+                    ON DELETE CASCADE
+            )
+            """
+        )
+        self._connection.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_research_document_locator
+            ON research_document_chunks(
+                research_id, document_version_id, chunk_index
             )
             """
         )
@@ -465,6 +508,179 @@ class SqliteResearchStore:
                     datetime.now(timezone.utc).isoformat(),
                 ),
             )
+
+    def save_document_read(
+        self,
+        research_id: str,
+        *,
+        attempt: int,
+        action_id: str,
+        result: DocumentReadResult,
+    ) -> None:
+        if not self._exists(research_id):
+            raise ResearchTaskNotFound(research_id)
+        version = result.version
+        now = datetime.now(timezone.utc).isoformat()
+        payload = json.dumps(
+            result.model_dump(mode="json", exclude={"chunks"}),
+            ensure_ascii=False,
+            separators=(",", ":"),
+        )
+        with self._lock:
+            self._connection.execute("BEGIN IMMEDIATE")
+            try:
+                self._connection.execute(
+                    """
+                    INSERT INTO research_document_reads
+                        (research_id, action_id, attempt, document_version_id,
+                         independent_work_id, status, payload, created_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(research_id, action_id) DO UPDATE SET
+                        attempt = excluded.attempt,
+                        document_version_id = excluded.document_version_id,
+                        independent_work_id = excluded.independent_work_id,
+                        status = excluded.status,
+                        payload = excluded.payload,
+                        created_at = excluded.created_at
+                    """,
+                    (
+                        research_id,
+                        action_id,
+                        attempt,
+                        version.document_version_id if version else None,
+                        version.independent_work_id if version else None,
+                        result.status,
+                        payload,
+                        now,
+                    ),
+                )
+                self._connection.execute(
+                    """
+                    DELETE FROM research_document_chunks
+                    WHERE research_id = ? AND action_id = ?
+                    """,
+                    (research_id, action_id),
+                )
+                if version is not None and version.storage_mode == "full_text":
+                    for chunk in result.chunks:
+                        chunk_payload = json.dumps(
+                            chunk.model_dump(mode="json", exclude={"text"}),
+                            ensure_ascii=False,
+                            separators=(",", ":"),
+                        )
+                        self._connection.execute(
+                            """
+                            INSERT INTO research_document_chunks
+                                (research_id, action_id, document_version_id,
+                                 chunk_index, text, payload)
+                            VALUES (?, ?, ?, ?, ?, ?)
+                            """,
+                            (
+                                research_id,
+                                action_id,
+                                version.document_version_id,
+                                chunk.chunk_index,
+                                chunk.text,
+                                chunk_payload,
+                            ),
+                        )
+                self._connection.execute(
+                    """
+                    INSERT INTO research_events
+                        (research_id, attempt, kind, payload, created_at)
+                    VALUES (?, ?, ?, ?, ?)
+                    """,
+                    (
+                        research_id,
+                        attempt,
+                        "document_read_saved",
+                        json.dumps(
+                            {
+                                "action_id": action_id,
+                                "status": result.status,
+                                "document_version_id": (
+                                    version.document_version_id
+                                    if version else None
+                                ),
+                                "chunks": len(result.chunks),
+                                "failure_code": (
+                                    result.diagnostics.failure_code
+                                ),
+                            },
+                            separators=(",", ":"),
+                        ),
+                        now,
+                    ),
+                )
+                self._connection.execute("COMMIT")
+            except BaseException:
+                self._connection.execute("ROLLBACK")
+                raise
+
+    def get_document_read(
+        self,
+        research_id: str,
+        *,
+        action_id: str,
+    ) -> DocumentReadResult | None:
+        with self._lock:
+            row = self._connection.execute(
+                """
+                SELECT payload FROM research_document_reads
+                WHERE research_id = ? AND action_id = ?
+                """,
+                (research_id, action_id),
+            ).fetchone()
+            chunk_rows = self._connection.execute(
+                """
+                SELECT text, payload FROM research_document_chunks
+                WHERE research_id = ? AND action_id = ?
+                ORDER BY chunk_index
+                """,
+                (research_id, action_id),
+            ).fetchall()
+        if row is None:
+            return None
+        data = json.loads(row["payload"])
+        data["chunks"] = [
+            DocumentChunk.model_validate({
+                **json.loads(chunk_row["payload"]),
+                "text": chunk_row["text"],
+            }).model_dump(mode="python")
+            for chunk_row in chunk_rows
+        ]
+        return DocumentReadResult.model_validate(data)
+
+    def resolve_locator(
+        self,
+        research_id: str,
+        locator: EvidenceLocator,
+    ) -> str | None:
+        if not locator.version_id or locator.chunk_index is None:
+            return None
+        with self._lock:
+            row = self._connection.execute(
+                """
+                SELECT text FROM research_document_chunks
+                WHERE research_id = ? AND document_version_id = ?
+                  AND chunk_index = ?
+                ORDER BY rowid DESC
+                LIMIT 1
+                """,
+                (
+                    research_id,
+                    locator.version_id,
+                    locator.chunk_index,
+                ),
+            ).fetchone()
+        if row is None:
+            return None
+        text = str(row["text"])
+        start = locator.char_start if locator.char_start is not None else 0
+        end = locator.char_end if locator.char_end is not None else len(text)
+        if start < 0 or end < start or end > len(text):
+            return None
+        return text[start:end]
 
     def save(
         self,

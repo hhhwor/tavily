@@ -176,7 +176,7 @@ MRR = 1 / (首个相关文档的排名)
 
 ---
 
-## 7. 合并阻断：质量 Golden Gate 与 20/50 并发 Gate
+## 7. 合并阻断：质量 Golden Gate
 
 日常合并不调用公网 provider 或 LLM judge，而执行可复现的固定门槛：
 
@@ -185,8 +185,8 @@ MRR = 1 / (首个相关文档的排名)
 ```
 
 - 质量门槛固定 Web/Academic/Patent 各 3 条查询，逐领域计算 NDCG@5、Recall@5、Precision@5 和 MRR；任一指标比审定基线下降超过 0.02 即失败。
-- 并发门槛以 20/50 个 client worker 分别执行 40/100 次完整 SearchService 请求，检查成功率、可用率、P95、吞吐、Deadline、瞬时失败重试恢复，以及召回 16 / 排序 4 个 worker 的隔离上限。
-- corpus hash、基线和压力阈值均入库；本机报告不入库，CI 始终上传报告 artifact。
+- 20/50 并发程序已从合并门禁和默认测试移除，仅在需要时手工观察成功率、P95、吞吐、Deadline、重试恢复和隔离池上限。
+- corpus hash 和质量基线入库；并发参考值只作 advisory，不影响退出码。
 
 详细设计、阈值和基线更新流程见 [quality-and-concurrency-gates.md](./quality-and-concurrency-gates.md)。
 
@@ -235,5 +235,5 @@ MRR = 1 / (首个相关文档的排名)
 | [eval/report.md](../eval/report.md) | 最近一次评测的配置对照表 |
 | [eval/cache/](../eval/cache/) | 检索结果 + 判分结果落盘缓存(可复现) |
 | [eval/quality_golden_gate.py](../eval/quality_golden_gate.py) | 三领域固定语料排序质量合并门槛 |
-| [eval/concurrency_gate.py](../eval/concurrency_gate.py) | 完整搜索链路的 20/50 受控并发门槛 |
-| [eval/run_stability_gates.py](../eval/run_stability_gates.py) | 一键执行两类稳定性门槛 |
+| [eval/concurrency_gate.py](../eval/concurrency_gate.py) | 完整搜索链路的可选 20/50 受控并发基准 |
+| [eval/run_stability_gates.py](../eval/run_stability_gates.py) | 执行质量稳定性门禁 |

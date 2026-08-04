@@ -108,6 +108,11 @@ def test_assemble_maps_three_domains_and_sorts_by_relevance():
         "publication_date": "2024-01-01",
         "patent_type": "A1",
         "citation_count": 5,
+        "priority_root": "",
+        "priority_dates": [],
+        "family_members": [],
+        "patent_citations": [],
+        "npl_citations": [],
     }
 
     web_evidence = evidence[2]

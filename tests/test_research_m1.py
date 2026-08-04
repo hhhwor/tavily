@@ -386,7 +386,7 @@ def test_needs_input_task_can_be_cancelled_with_revision_guard(tmp_path):
         assert cancelled.json()["stop"]["reason"] == "cancelled_by_user"
 
 
-def test_seed_satisfied_plan_commits_evidence_set_without_expansion_round(tmp_path):
+def test_unpersisted_seed_locator_cannot_satisfy_research_plan(tmp_path):
     container = build_container(
         _settings(str(tmp_path / "state.sqlite3")),
         include_mcp=False,
@@ -431,10 +431,17 @@ def test_seed_satisfied_plan_commits_evidence_set_without_expansion_round(tmp_pa
         )
 
         assert task["state"] == "completed"
-        assert task["stop"]["reason"] == "objective_satisfied"
-        assert task["progress"]["rounds_completed"] == 0
+        assert task["stop"]["reason"] == "information_gain_saturated"
+        assert task["progress"]["rounds_completed"] == 1
         assert task["evidence_set_revision"] == 1
-        assert task["dossier"]["rounds"] == []
+        assert task["dossier"]["rounds"][0]["actions"][0]["kind"] == (
+            "deep_read"
+        )
+        persisted = task["dossier"]["evidence_index"][evidence.id]
+        assert persisted["quality"]["can_support_key_claim"] is False
+        assert "RESEARCH_LOCATOR_UNRESOLVABLE" in (
+            persisted["diagnostics"]["warnings"]
+        )
         row = container.research_store._connection.execute(  # noqa: SLF001
             """
             SELECT payload FROM research_evidence_sets

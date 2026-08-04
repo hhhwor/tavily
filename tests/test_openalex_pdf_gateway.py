@@ -102,6 +102,9 @@ def test_enrich_returns_copies_and_preserves_http_contract():
         "text_length": 1200,
         "text": "full text from pdf",
         "next_cursor": "cursor1",
+        "content_hash": "sha256:pdf-v1",
+        "parser_version": "grobid-1.2",
+        "version_id": "source-v1",
         "error_code": None,
         "error_message": None,
     })
@@ -132,6 +135,9 @@ def test_enrich_returns_copies_and_preserves_http_contract():
     assert enriched_result.pdf_page_from == 1
     assert enriched_result.pdf_page_to == 2
     assert enriched_result.pdf_next_cursor == "cursor1"
+    assert enriched_result.pdf_content_hash == "sha256:pdf-v1"
+    assert enriched_result.pdf_parser_version == "grobid-1.2"
+    assert enriched_result.pdf_version_id == "source-v1"
 
     assert len(http.post_calls) == 1
     url, body, headers, timeout = http.post_calls[0]
@@ -255,6 +261,9 @@ def test_read_page_reads_cached_text_and_encodes_work_id():
         "page_to": 5,
         "text": "continued pdf text",
         "next_cursor": "cursor2",
+        "content_hash": "sha256:pdf-v1",
+        "parser_version": "grobid-1.2",
+        "version_id": "source-v1",
         "error_code": None,
         "error_message": None,
     })
@@ -267,6 +276,9 @@ def test_read_page_reads_cached_text_and_encodes_work_id():
     assert response.returned_chars == len("continued pdf text")
     assert response.next_cursor == "cursor2"
     assert response.partial is True
+    assert response.content_hash == "sha256:pdf-v1"
+    assert response.parser_version == "grobid-1.2"
+    assert response.source_version_id == "source-v1"
     assert http.get_calls == [(
         "https://openalex.internal/openalex/pdf/text/W%2F123",
         {"max_chars": 500, "cursor": "cursor1"},

@@ -2,6 +2,7 @@ fastapi
 uvicorn[standard]
 pydantic
 requests
+urllib3
 anthropic
 flashrank
 mcp>=1.9.4,<2

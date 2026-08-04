@@ -96,6 +96,9 @@ _PDF_FIELDS = (
     "pdf_page_from",
     "pdf_page_to",
     "pdf_next_cursor",
+    "pdf_content_hash",
+    "pdf_parser_version",
+    "pdf_version_id",
     "pdf_error_code",
     "pdf_error_message",
 )

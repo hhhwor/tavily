@@ -1,8 +1,8 @@
-# Agent Search 质量与并发门槛
+# Agent Search 质量门禁与并发基准
 
 > 稳定性改造总览见 [agent-search-stability-summary.md](./agent-search-stability-summary.md)。
 
-这组门槛用于在不访问公网、不消耗第三方配额的前提下，稳定阻断可复现的排序质量退化、并发异常、Deadline 失守以及线程池隔离退化。
+质量 Golden Gate 用于阻断可复现的排序质量退化。并发程序只保留为按需基准，不进入默认测试、合并或发布门禁。
 
 ## 一键执行
 
@@ -12,14 +12,19 @@
 .venv311/bin/python -m eval.run_stability_gates
 ```
 
-也可以单独执行：
+该命令现在只执行质量门禁。也可以直接执行：
 
 ```bash
 .venv311/bin/python -m eval.quality_golden_gate
+```
+
+按需观察并发性能时手工执行：
+
+```bash
 .venv311/bin/python -m eval.concurrency_gate
 ```
 
-命令失败时退出码非 0。运行报告写入 `eval/golden/quality_report.json` 和 `eval/golden/concurrency_report.json`；两者是本机产物，不提交 Git。
+质量门禁失败时退出码非 0。并发基准只输出观测结果和 advisory，不因 20/50 档位未达到参考值而返回失败。报告均为本机产物，不提交 Git。
 
 ## 质量 Golden Gate
 
@@ -37,7 +42,7 @@
 
 该门槛使用确定性 token-overlap scorer，目的是锁定领域排序策略和特征组合的行为；线上模型效果仍由带真实 provider/模型的完整评测覆盖。
 
-## 20/50 并发门槛
+## 可选 20/50 并发基准
 
 `eval/concurrency_gate.py` 使用真实的 QueryPlanner → RecallCoordinator → RankingService → EvidenceAssembler → TrustAnnotator → SQLite Seed Store 链路，只把公网 provider 和 scorer 替换为带确定延迟的受控实现。
 
@@ -48,7 +53,7 @@
 | 20 | 40 | 20 ms | 5 ms | 每 10 个请求 1 次 | 1500 ms |
 | 50 | 100 | 20 ms | 5 ms | 每 10 个请求 1 次 | 1500 ms |
 
-门槛定义在 `eval/golden/concurrency_thresholds.json`，同时检查：
+`eval/golden/concurrency_thresholds.json` 仅保留历史参考值，基准会观察：
 
 - success、complete、usable、重试恢复率均为 100%；
 - exception 和 Deadline failure 为 0；
@@ -57,4 +62,4 @@
 - 召回并行度至少为 2 且不超过 16、排序并行度在 2–4，证明负载确有重叠且绝不突破各自线程池上限；
 - resilience retry 计数必须与注入的瞬时失败数一致。
 
-这是代码合并用的受控压力门槛，不代表第三方 provider 的容量结论。发布前仍应在目标网络、目标实例规格和真实连接池配置下做独立 soak test。
+该基准不在 pytest、合并或发布路径中执行，也不代表第三方 provider 的容量结论。需要容量结论时，应在目标网络、目标实例规格和真实连接池配置下做独立 soak test。

@@ -12,6 +12,7 @@ from src.application.answerability import AnswerabilityPolicy
 from src.application.discovery_service import DiscoveryService
 from src.application.evidence_assembler import EvidenceAssembler
 from src.application.model_router import PrivacyAwareModelRouter
+from src.application.patent_document_reader import PatentDocumentReader
 from src.application.query_planner import QueryPlanner
 from src.application.ranking_service import RankingService
 from src.application.recall import RecallCoordinator
@@ -25,6 +26,7 @@ from src.config import Settings
 from src.engine import SearchEngine
 from src.infrastructure.cache import InMemoryCache, build_cache
 from src.infrastructure.openalex_pdf import OpenAlexPdfGateway
+from src.infrastructure.patent_es_fulltext import PatentEsFullTextGateway
 from src.infrastructure.query_rewriter import SiliconFlowQueryRewriter
 from src.infrastructure.resilience import ResilienceManager
 from src.infrastructure.runtime import SystemClock
@@ -380,6 +382,17 @@ def build_container(
             seed_ttl_seconds=config.search_seed_ttl_seconds,
         )
         verify_service = VerifyService(verifier)
+        research_document_readers = {}
+        if config.patent_fulltext_enabled:
+            research_document_readers["patent"] = PatentDocumentReader(
+                PatentEsFullTextGateway(
+                    base_url=config.patent_fulltext_url,
+                    index=config.patent_fulltext_index,
+                    http_session=http,
+                    timeout_seconds=config.provider_timeout,
+                    verify_tls=config.patent_fulltext_verify_tls,
+                )
+            )
         research_service = ResearchService(
             seed_store=seed_store,
             task_store=research_store,
@@ -395,6 +408,7 @@ def build_container(
                     config.rerank_backend in {"bge", "flashrank"}
                 ),
             ),
+            document_readers=research_document_readers,
         )
         research_dispatcher = ResearchDispatcher(
             research_service.run,

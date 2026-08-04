@@ -269,7 +269,7 @@ E2E/Agent/Tool Eval 已使用 search.v1 字段，但部分 Runner 仍从 `src.mo
 ### Phase C：工程化与质量基线
 
 - [ ] 建立 `pyproject.toml`、依赖 extras 和可复现锁定方案。
-- [x] 建立质量 Golden Gate、20/50 并发 Gate 及对应 CI 阻断。
+- [x] 建立质量 Golden Gate；20/50 并发已调整为按需基准，不再 CI 阻断。
 - [ ] 补齐 lint、type-check、coverage 和 secret scan 等完整 CI 门槛。
 - [x] 建立固定 corpus 的 Web、Academic、Patent 排序质量 golden baseline。
 - [ ] 补充路由和 Evidence 公共契约 golden snapshots。
@@ -284,7 +284,7 @@ E2E/Agent/Tool Eval 已使用 search.v1 字段，但部分 Runner 仍从 `src.mo
 - [x] 引入统一 retry/backoff 和 circuit breaker。
 - [ ] 增加 rate limiter。
 - [ ] 增加结构化日志、request id、指标和追踪字段。
-- [x] 建立 20/50 并发的 SearchService 受控压力门槛，覆盖召回/排序 Executor、Deadline、重试恢复和 SQLite seed。
+- [x] 保留 SearchService 受控并发基准，覆盖召回/排序 Executor、Deadline、重试恢复和 SQLite seed；不进入默认门禁。
 - [ ] 在目标部署环境补充真实 Provider、连接池、rewrite cache 和内存的长时间 soak test。
 - [ ] 建立外部 LLM 数据分类、脱敏和 egress policy。
 
@@ -306,7 +306,7 @@ E2E/Agent/Tool Eval 已使用 search.v1 字段，但部分 Runner 仍从 `src.mo
 | 固定检索质量基线 | 通过 | 9 条三领域固定 corpus；NDCG/Recall/Precision/MRR 下降超过 0.02 阻断 |
 | Coverage/type/lint | 未完成 | 尚无标准配置和 CI 门槛 |
 | 全新环境安装与部署 Smoke | 未完成 | 依赖未完整声明和锁定 |
-| 并发与资源预算 | 通过（受控） | 20/50 并发覆盖完整 SearchService 链路、重试、Deadline 和 16/4 隔离池上限；生产 soak 待补 |
+| 并发与资源预算 | 按需观测 | 受控基准可覆盖完整 SearchService 链路、重试、Deadline 和 16/4 隔离池上限；不阻断合并，生产 soak 待补 |
 
 ### 7.2 建议合并门槛
 

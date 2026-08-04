@@ -40,6 +40,11 @@ class EvidencePatent(BaseModel):
     publication_date: str = ""
     patent_type: str = ""
     citation_count: int = 0
+    priority_root: str = ""
+    priority_dates: List[str] = Field(default_factory=list)
+    family_members: List[str] = Field(default_factory=list)
+    patent_citations: List[str] = Field(default_factory=list)
+    npl_citations: List[str] = Field(default_factory=list)
 
 
 class EvidenceScores(BaseModel):
@@ -56,6 +61,7 @@ class EvidenceAccess(BaseModel):
     license: Optional[str] = None
     oa_pdf_url: Optional[str] = None
     pdf_status: Optional[str] = None
+    original_status: Optional[str] = None
     next_cursor: Optional[str] = None
 
 

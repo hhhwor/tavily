@@ -468,7 +468,7 @@ API 语义要求：
 |---|---|
 | 单元/契约 | Policy/Privacy/Scope 拒绝矩阵；BudgetLedger；Planner/Coverage；Identity；Reader locator；Task state/revision/idempotency/ownership |
 | 故障注入 | planning、provider、deep-read、verification、evidence commit、artifact 各阶段 kill/recover；不得重复 evidence、usage 或外部 operation |
-| 混合负载 | 20/50 Search 并发叠加 quick/deep Research；queue/provider/verifier/DB 抖动；监控 Search P95/P99、queue age、合法终态率、deadline 和 pool saturation |
+| 混合负载（按需基准） | 在目标环境叠加 Search 与 quick/deep Research；观察 P95/P99、queue age、合法终态率、deadline 和 pool saturation；不作为默认合并/发布门禁 |
 | Research 质量 | 独立有效证据召回、claim support precision、locator、版本/专利族归并、反证、无依据陈述、gap disclosure、可复现率及覆盖/时延/成本 |
 
 安全硬门槛：restricted 外部原文模型调用、qualified relation 无效 locator、报告无引用事实句、未披露预算/来源/反证缺口均为 0。

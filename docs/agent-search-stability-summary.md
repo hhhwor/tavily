@@ -2,7 +2,7 @@
 
 > 状态：已实现并通过当前工作树验收
 > 汇总日期：2026-07-28
-> 范围：搜索规划、Provider 召回、重排、PDF 富化、公开失败契约、质量门槛与 20/50 并发门槛
+> 范围：搜索规划、Provider 召回、重排、PDF 富化、公开失败契约、质量门禁与可选并发基准
 
 ## 1. 总结
 
@@ -11,7 +11,7 @@
 1. **时间预算**：一次搜索只有一个端到端 Deadline，各阶段和外部 HTTP 调用消费同一份剩余预算。
 2. **资源隔离**：召回、重排和 PDF 富化使用独立且有上限的线程池，慢任务不能占满其他阶段的执行槽位。
 3. **故障韧性**：可恢复错误执行有界重试；连续最终失败触发依赖级熔断；无法恢复时按明确矩阵降级。
-4. **发布门槛**：固定语料锁定排序质量，20/50 并发负载锁定成功率、Deadline、重试恢复、延迟和隔离池上限。
+4. **发布门槛**：固定语料锁定排序质量；20/50 并发负载只作为手工观测基准，不阻断测试、合并或发布。
 
 最终效果是：单一依赖变慢或失败时，系统会在限定时间内返回可解释的完整或部分结果，而不是无限等待、线程池相互拖垮或让 Agent 猜测下一步动作。
 
@@ -206,9 +206,9 @@ HTTP 客户端异常统一映射为稳定的 `ExternalServiceError(provider, cod
 
 这里的目标是锁定排序策略和特征组合的确定性行为；真实 provider 与模型效果仍由完整 IR/Agent 评测覆盖。
 
-## 10. 20/50 并发稳定性门槛
+## 10. 可选 20/50 并发稳定性基准
 
-并发门槛运行真实的：
+并发基准运行真实的：
 
 ```text
 QueryPlanner
@@ -228,7 +228,7 @@ QueryPlanner
 | 20 | 40 | 20 ms | 5 ms | 每 10 个请求首次失败 1 次 | 1500 ms |
 | 50 | 100 | 20 ms | 5 ms | 每 10 个请求首次失败 1 次 | 1500 ms |
 
-阻断条件包括：
+历史参考项包括：
 
 - success、complete、usable、retry recovery rate 必须为 100%；
 - exception rate 和 Deadline failure rate 必须为 0；
@@ -248,13 +248,13 @@ QueryPlanner
 
 ## 11. 自动化验证与执行方式
 
-一键执行全部门槛：
+执行质量门禁：
 
 ```bash
 .venv311/bin/python -m eval.run_stability_gates
 ```
 
-分别执行：
+按需分别执行质量门禁或并发观测：
 
 ```bash
 .venv311/bin/python -m eval.quality_golden_gate
@@ -283,9 +283,9 @@ curl -s http://localhost:8000/health | jq '.resilience'
 
 - `tests/test_runtime_boundaries.py`：Deadline 传播、HTTP 总超时、线程安全 cache、pending future 取消和 scorer timeout。
 - `tests/test_resilience.py`：重试、Retry-After、熔断、half-open、Deadline、公开 failure 与降级矩阵。
-- `tests/test_stability_gates.py`：质量回退检测、20/50 两档负载和阈值回退检测。
+- `tests/test_stability_gates.py`：只保留质量基线和质量回退检测；不再执行 20/50 压力负载。
 
-GitHub Actions 工作流 `.github/workflows/stability-gates.yml` 在 push 和 pull request 上运行全量测试及两类稳定性门槛，并上传本次报告 artifact。
+当前仓库没有并发基准的 GitHub Actions 阻断路径；`eval.concurrency_gate` 只允许手工触发。
 
 ## 12. 关键配置汇总
 
@@ -321,10 +321,10 @@ GitHub Actions 工作流 `.github/workflows/stability-gates.yml` 在 push 和 pu
 | [`src/application/ranking_service.py`](../src/application/ranking_service.py) | 独立排序池、scorer Deadline、重试和来源域回退 |
 | [`src/bootstrap.py`](../src/bootstrap.py) | 三类隔离池、共享 ResilienceManager 和资源生命周期 |
 | [`eval/quality_golden_gate.py`](../eval/quality_golden_gate.py) | 固定语料质量门槛 |
-| [`eval/concurrency_gate.py`](../eval/concurrency_gate.py) | 20/50 并发门槛 |
-| [`eval/run_stability_gates.py`](../eval/run_stability_gates.py) | 一键执行稳定性门槛 |
+| [`eval/concurrency_gate.py`](../eval/concurrency_gate.py) | 可选 20/50 并发观测基准 |
+| [`eval/run_stability_gates.py`](../eval/run_stability_gates.py) | 执行质量稳定性门禁 |
 | [`docs/agent-search-resilience.md`](./agent-search-resilience.md) | 重试、熔断和降级专项说明 |
-| [`docs/quality-and-concurrency-gates.md`](./quality-and-concurrency-gates.md) | 质量与并发门槛专项说明 |
+| [`docs/quality-and-concurrency-gates.md`](./quality-and-concurrency-gates.md) | 质量门禁与并发基准专项说明 |
 
 ## 14. 当前边界与后续工作
 

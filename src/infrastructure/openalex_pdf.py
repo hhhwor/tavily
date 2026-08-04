@@ -193,6 +193,9 @@ class OpenAlexPdfGateway(PdfTextGateway):
             paper.pdf_page_from = data.get("page_from")
             paper.pdf_page_to = data.get("page_to")
             paper.pdf_next_cursor = data.get("next_cursor")
+            paper.pdf_content_hash = data.get("content_hash")
+            paper.pdf_parser_version = data.get("parser_version")
+            paper.pdf_version_id = data.get("version_id")
             paper.pdf_error_code = (
                 _stable_error_code(data.get("error_code"), "PDF_ENRICH_FAILED")
                 if data.get("error_code")
@@ -226,6 +229,8 @@ class OpenAlexPdfGateway(PdfTextGateway):
         work_id: str,
         cursor: Optional[str] = None,
         max_chars: Optional[int] = None,
+        *,
+        deadline: Deadline | None = None,
     ) -> PdfTextPage:
         """读取已缓存的 PDF 正文分页。"""
         work_id = (work_id or "").strip()
@@ -253,12 +258,23 @@ class OpenAlexPdfGateway(PdfTextGateway):
         headers = {}
         if self._settings.openalex_api_key:
             headers["X-API-Key"] = self._settings.openalex_api_key
+        timeout = max(1.0, float(self._settings.provider_timeout))
+        if deadline is not None:
+            remaining = deadline.remaining_seconds()
+            if remaining <= 0:
+                return PdfTextPage(
+                    work_id=work_id,
+                    status="failed",
+                    error_code="PDF_TEXT_DEADLINE_EXCEEDED",
+                    error_message="PDF text read deadline exceeded",
+                )
+            timeout = max(0.1, min(timeout, remaining))
         try:
             response = self._http.get(
                 endpoint,
                 params=params,
                 headers=headers or None,
-                timeout=max(1, self._settings.provider_timeout),
+                timeout=timeout,
             )
             response.raise_for_status()
             data = response.json()
@@ -293,6 +309,9 @@ class OpenAlexPdfGateway(PdfTextGateway):
             returned_chars=len(text or ""),
             next_cursor=data.get("next_cursor"),
             partial=bool(data.get("next_cursor")),
+            content_hash=data.get("content_hash"),
+            parser_version=data.get("parser_version"),
+            source_version_id=data.get("version_id"),
             error_code=error_code,
             error_message=_external_error_message(error_code) if error_code else None,
         )

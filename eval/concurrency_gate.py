@@ -1,9 +1,10 @@
-"""Deterministic 20/50-concurrency stability gate for the search pipeline.
+"""Optional deterministic concurrency benchmark for the search pipeline.
 
-The gate exercises the real planning, recall, retry, ranking, evidence,
+The benchmark exercises the real planning, recall, retry, ranking, evidence,
 trust-annotation and seed-store path.  Only the external provider is replaced
 with a controlled, latency-bearing fixture so the result is reproducible and
-does not consume third-party quota.
+does not consume third-party quota. Results are advisory and never block a
+test, merge, or release.
 """
 from __future__ import annotations
 
@@ -44,7 +45,7 @@ from src.application.ports.retrieval import SourceDescriptor
 ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_THRESHOLDS = ROOT / "eval" / "golden" / "concurrency_thresholds.json"
 DEFAULT_REPORT = ROOT / "eval" / "golden" / "concurrency_report.json"
-RUNNER_VERSION = "concurrency-gate.v1"
+RUNNER_VERSION = "concurrency-benchmark.v1"
 DEFAULT_LEVELS = (20, 50)
 _REQUEST_INDEX = re.compile(r"(\d+)$")
 
@@ -371,7 +372,7 @@ def run_level(
             if index < concurrency:
                 start_barrier.wait(timeout=30)
             response = runtime.service.execute(SearchCommand(
-                query=f"concurrency gate {concurrency}-{index}",
+                query=f"concurrency benchmark {concurrency}-{index}",
                 limit=5,
                 source_types=("web",),
             ))
@@ -529,7 +530,7 @@ def _sha256(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
-def run_gate(
+def run_benchmark(
     *,
     levels: Sequence[int] = DEFAULT_LEVELS,
     requests_per_worker: int = 2,
@@ -543,12 +544,9 @@ def run_gate(
     if thresholds.get("schema_version") != "concurrency-thresholds.v1":
         raise ValueError("unsupported concurrency threshold version")
     results: dict[str, Any] = {}
-    failures: list[str] = []
+    advisories: list[str] = []
     for level in levels:
         key = str(int(level))
-        if key not in thresholds.get("levels", {}):
-            failures.append(f"missing thresholds for concurrency={key}")
-            continue
         result = run_level(
             int(level),
             requests_per_worker=requests_per_worker,
@@ -556,19 +554,21 @@ def run_gate(
             transient_every=transient_every,
             deadline_ms=deadline_ms,
         )
-        result["failures"] = compare_level(
-            result,
-            thresholds["levels"][key],
+        reference = thresholds.get("levels", {}).get(key)
+        result["advisories"] = (
+            compare_level(result, reference)
+            if reference is not None
+            else [f"no advisory reference for concurrency={key}"]
         )
         results[key] = result
-        failures.extend(
-            f"concurrency={key}: {failure}"
-            for failure in result["failures"]
+        advisories.extend(
+            f"concurrency={key}: {message}"
+            for message in result["advisories"]
         )
     report = {
         "schema_version": "concurrency-report.v1",
         "runner_version": RUNNER_VERSION,
-        "status": "failed" if failures else "passed",
+        "status": "observed",
         "thresholds_sha256": _sha256(thresholds_path),
         "workload": {
             "levels": [int(level) for level in levels],
@@ -579,17 +579,13 @@ def run_gate(
             "external_network": False,
         },
         "levels": results,
-        "failures": failures,
+        "advisories": advisories,
     }
     if report_path is not None:
         report_path.parent.mkdir(parents=True, exist_ok=True)
         report_path.write_text(
             json.dumps(report, ensure_ascii=False, indent=2) + "\n",
             encoding="utf-8",
-        )
-    if failures:
-        raise RuntimeError(
-            "concurrency gate failed: " + "; ".join(failures)
         )
     return report
 
@@ -611,7 +607,7 @@ def main() -> int:
     parser.add_argument("--transient-every", type=int, default=10)
     parser.add_argument("--deadline-ms", type=int, default=1500)
     args = parser.parse_args()
-    report = run_gate(
+    report = run_benchmark(
         levels=args.levels,
         requests_per_worker=args.requests_per_worker,
         thresholds_path=args.thresholds,

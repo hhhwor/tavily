@@ -176,6 +176,10 @@ class Settings:
     patent_es_verify_tls: bool = True
     patent_es_per_page: int = 25
     patent_detect: bool = True
+    patent_fulltext_url: str = ""
+    patent_fulltext_index: str = "epo_fulltext_read"
+    patent_fulltext_enabled: bool = False
+    patent_fulltext_verify_tls: bool = True
 
     cache_enabled: bool = True
     cache_backend: str = "memory"
@@ -268,6 +272,23 @@ class Settings:
         patent_enabled = bool(patent_url) if patent_flag is None else patent_flag
         if patent_enabled and not patent_url:
             raise ValueError("PATENT_ES_ENABLED=true 时必须配置 PATENT_ES_URL")
+        patent_fulltext_url = env.get("PATENT_FULLTEXT_URL", "").strip()
+        patent_fulltext_flag = _optional_bool(env, "PATENT_FULLTEXT_ENABLED")
+        patent_fulltext_enabled = (
+            bool(patent_fulltext_url)
+            if patent_fulltext_flag is None else patent_fulltext_flag
+        )
+        patent_fulltext_index = env.get(
+            "PATENT_FULLTEXT_INDEX", "epo_fulltext_read"
+        ).strip()
+        if patent_fulltext_enabled and not patent_fulltext_url:
+            raise ValueError(
+                "PATENT_FULLTEXT_ENABLED=true 时必须配置 PATENT_FULLTEXT_URL"
+            )
+        if patent_fulltext_enabled and not patent_fulltext_index:
+            raise ValueError(
+                "PATENT_FULLTEXT_ENABLED=true 时必须配置 PATENT_FULLTEXT_INDEX"
+            )
 
         rewrite_model = env.get("REWRITE_MODEL", "Qwen/Qwen2.5-7B-Instruct")
         return cls(
@@ -361,6 +382,12 @@ class Settings:
             patent_es_verify_tls=_bool(env, "PATENT_ES_VERIFY_TLS", True),
             patent_es_per_page=_int(env, "PATENT_ES_PER_PAGE", 25, minimum=1),
             patent_detect=_bool(env, "PATENT_DETECT", True),
+            patent_fulltext_url=patent_fulltext_url,
+            patent_fulltext_index=patent_fulltext_index,
+            patent_fulltext_enabled=patent_fulltext_enabled,
+            patent_fulltext_verify_tls=_bool(
+                env, "PATENT_FULLTEXT_VERIFY_TLS", True
+            ),
             cache_enabled=_bool(env, "CACHE_ENABLED", True),
             cache_backend=env.get("CACHE_BACKEND", "memory"),
             cache_ttl=_int(env, "CACHE_TTL", 21600, minimum=0),

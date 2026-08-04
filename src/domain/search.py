@@ -52,6 +52,9 @@ class AcademicResult(SearchResult):
     pdf_page_from: Optional[int] = None
     pdf_page_to: Optional[int] = None
     pdf_next_cursor: Optional[str] = None
+    pdf_content_hash: Optional[str] = None
+    pdf_parser_version: Optional[str] = None
+    pdf_version_id: Optional[str] = None
     pdf_error_code: Optional[str] = None
     pdf_error_message: Optional[str] = None
 
