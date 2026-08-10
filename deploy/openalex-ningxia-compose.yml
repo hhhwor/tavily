@@ -1,0 +1,43 @@
+name: openalex-ningxia
+
+services:
+  migration-minio:
+    image: minio/minio:RELEASE.2024-05-28T17-19-04Z
+    container_name: openalex_migration_minio
+    restart: unless-stopped
+    env_file:
+      - /etc/openalex-migration-minio.env
+    command: server /data
+    volumes:
+      - /mnt/openalex-migration/minio:/data:Z
+    ports:
+      - "127.0.0.1:19000:9000"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+
+  elasticsearch:
+    image: patent_es:icu
+    container_name: patent_es
+    restart: unless-stopped
+    environment:
+      - discovery.type=single-node
+      - xpack.security.enabled=false
+      - cluster.name=openalex-ningxia
+      - "ES_JAVA_OPTS=-Xms24g -Xmx24g"
+      - bootstrap.memory_lock=true
+    ulimits:
+      memlock:
+        soft: -1
+        hard: -1
+    volumes:
+      - /mnt/openalex-migration/elasticsearch:/usr/share/elasticsearch/data:Z
+    ports:
+      - "127.0.0.1:9200:9200"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:9200/_cluster/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 10

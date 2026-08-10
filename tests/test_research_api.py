@@ -269,6 +269,7 @@ def test_public_surface_has_only_search_and_research_resources(tmp_path):
     assert "/research/{research_id}" in paths
     assert "/research/{research_id}/feedback" in paths
     assert "/research/{research_id}/cancel" in paths
+    assert "/research/{research_id}/artifacts/{artifact_id}" in paths
     assert "/verify" not in paths
     assert "/academic/pdf/text/{work_id}" not in paths
 

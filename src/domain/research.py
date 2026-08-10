@@ -277,9 +277,119 @@ class ResearchAssessment(ResearchModel):
 
 
 class ResearchFinding(ResearchModel):
+    id: str = ""
     claim: CandidateClaim
     assessment: ClaimAssessment
+    qualified_relation_refs: list[str] = Field(default_factory=list)
+    conflict_relation_refs: list[str] = Field(default_factory=list)
     limitations: list[str] = Field(default_factory=list)
+
+
+class ResearchStatement(ResearchModel):
+    id: str
+    text: str
+    kind: Literal["factual", "analysis", "limitation"]
+    status: Literal[
+        "supported", "conflicted", "insufficient", "context"
+    ] = "context"
+    finding_refs: list[str] = Field(default_factory=list)
+
+
+class ResearchSummary(ResearchModel):
+    status: Literal[
+        "sufficient",
+        "sufficient_with_limitations",
+        "insufficient",
+        "conflicted",
+        "needs_expert_review",
+    ] = "insufficient"
+    headline: str = ""
+    statement_refs: list[str] = Field(default_factory=list)
+    key_finding_refs: list[str] = Field(default_factory=list)
+
+
+class ResearchConflict(ResearchModel):
+    id: str
+    claim_ref: str
+    finding_refs: list[str] = Field(default_factory=list)
+    support_evidence_refs: list[str] = Field(default_factory=list)
+    conflict_evidence_refs: list[str] = Field(default_factory=list)
+    message: str = ""
+    review_required: bool = True
+
+
+class ResearchLimitation(ResearchModel):
+    id: str
+    code: str
+    message: str
+    gap_refs: list[str] = Field(default_factory=list)
+    evidence_refs: list[str] = Field(default_factory=list)
+
+
+class ResearchMethods(ResearchModel):
+    profile: str = ""
+    policy_id: str = ""
+    policy_version: str = ""
+    execution_route: str = ""
+    rounds_completed: int = 0
+    query_count: int = 0
+    source_types: list[DocumentKind] = Field(default_factory=list)
+    counterevidence_claim_refs: list[str] = Field(default_factory=list)
+    evidence_set_revision: int = 0
+    stop_reason: str = ""
+    synthesis_mode: Literal[
+        "deterministic", "model", "model_fallback"
+    ] = "deterministic"
+    synthesis_version: str = "research-synthesis.v1"
+
+
+class CitationAudit(ResearchModel):
+    status: Literal["passed", "failed"] = "failed"
+    version: str = "citation-audit.v1"
+    factual_statement_count: int = 0
+    cited_factual_statement_count: int = 0
+    citation_coverage_rate: float = Field(0.0, ge=0.0, le=1.0)
+    uncited_statement_refs: list[str] = Field(default_factory=list)
+    invalid_finding_refs: list[str] = Field(default_factory=list)
+    invalid_evidence_refs: list[str] = Field(default_factory=list)
+    invalid_locator_refs: list[str] = Field(default_factory=list)
+    unsupported_statement_refs: list[str] = Field(default_factory=list)
+    missing_supported_finding_refs: list[str] = Field(default_factory=list)
+    conflict_omission_refs: list[str] = Field(default_factory=list)
+    audited_at: datetime | None = None
+
+
+class ResearchArtifact(ResearchModel):
+    artifact_id: str
+    kind: Literal["dossier_json", "report_markdown", "evidence_csv", "evidence_jsonl"]
+    media_type: str
+    filename: str
+    href: str
+    size_bytes: int = Field(..., ge=0)
+    sha256: str
+    evidence_set_revision: int = Field(..., ge=0)
+    renderer_version: str
+    created_at: datetime
+    expires_at: datetime
+    citation_audit_status: Literal["passed", "failed"]
+
+
+class ResearchSynthesisSnapshot(ResearchModel):
+    operation_id: str
+    status: Literal["pending", "ready"]
+    summary: ResearchSummary | None = None
+    statements: list[ResearchStatement] = Field(default_factory=list)
+    citation_audit: CitationAudit | None = None
+    mode: Literal[
+        "deterministic", "model", "model_fallback"
+    ] = "deterministic"
+    model: str = ""
+    failure_code: str | None = None
+    model_requests: int = 0
+    model_input_tokens: int = 0
+    model_output_tokens: int = 0
+    created_at: datetime
+    completed_at: datetime | None = None
 
 
 class ResearchDossier(ResearchModel):
@@ -292,7 +402,14 @@ class ResearchDossier(ResearchModel):
     query_trace: list[str] = Field(default_factory=list)
     plan: ObjectivePlan | None = None
     rounds: list[RoundResult] = Field(default_factory=list)
+    summary: ResearchSummary | None = None
+    statements: list[ResearchStatement] = Field(default_factory=list)
+    conflicts: list[ResearchConflict] = Field(default_factory=list)
+    limitations_detail: list[ResearchLimitation] = Field(default_factory=list)
+    methods: ResearchMethods | None = None
+    citation_audit: CitationAudit | None = None
     artifacts: dict[str, str] = Field(default_factory=dict)
+    artifact_index: list[ResearchArtifact] = Field(default_factory=list)
 
 
 class ResearchStop(ResearchModel):

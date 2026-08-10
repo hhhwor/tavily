@@ -213,6 +213,10 @@ POST /search {query, top_k, ranking_profile?, rerank_threshold_mode?, ...}
 | `PATENT_FULLTEXT_INDEX` | `epo_fulltext_read` | 专利原文索引/读别名 | 使用只读别名，禁止复用不含全文的 DOCDB 索引 |
 | `PATENT_FULLTEXT_ENABLED` | 未设置=`auto` | 未设置时随 URL 自动启用；`true` 要求 URL 和非空 index | 原文服务就绪后启用 |
 | `PATENT_FULLTEXT_VERIFY_TLS` | **`true`** | 校验专利原文服务 TLS 证书 | 保持 `true` |
+| `RESEARCH_SYNTHESIS_ENABLED` | **`false`** | 可选 SiliconFlow 结构化综合；关闭或失败时使用确定性综合 | 先保持关闭，评测通过后按环境开启 |
+| `RESEARCH_SYNTHESIS_MODEL` | `Qwen/Qwen2.5-7B-Instruct` | 结构化综合模型；只能引用 qualified finding ID | 与评测基线绑定 |
+| `RESEARCH_SYNTHESIS_TIMEOUT` | `20` | 单次综合 HTTP 总超时秒数，仍受 Research 剩余 deadline 限制 | 不超过目标 profile 收尾预算 |
+| `RESEARCH_ARTIFACT_RETENTION_SECONDS` | `604800` | JSON/Markdown/CSV/JSONL artifact 保留期，默认 7 天 | 按许可与隐私策略缩短 |
 | `CACHE_ENABLED` | **`true`** | provider 召回级缓存(避免重复调搜索源 API);时效查询不缓存 | 同默认 |
 | `CACHE_BACKEND` | `memory` | 进程内 LRU+TTL(预留 `redis`,未实现时回退 memory) | 多实例/持久化再换 redis |
 | `CACHE_TTL` | `21600` | 非时效结果缓存 TTL(秒,默认 6h) | 同默认 |

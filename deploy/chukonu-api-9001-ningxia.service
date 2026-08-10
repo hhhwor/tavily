@@ -1,0 +1,23 @@
+[Unit]
+Description=Chukonu OpenAlex API on Ningxia port 9001
+Wants=network-online.target
+After=network-online.target docker.service
+
+[Service]
+Type=simple
+User=ec2-user
+Group=ec2-user
+WorkingDirectory=/home/ec2-user/chuonu-search-solution/patent_search_engine
+EnvironmentFile=/etc/chukonu-api-9001.env
+Environment=HOME=/home/ec2-user
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/home/ec2-user/chuonu-search-solution/patent_search_engine/.venv/bin/python run_server.py
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=90
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

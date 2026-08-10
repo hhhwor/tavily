@@ -9,6 +9,7 @@ from src.application.commands import (
     SearchCommand,
     SearchFilters,
 )
+from src.application.ports.research_store import StoredResearchArtifact
 from src.application.research_service import ResearchService
 from src.application.search_service import SearchService
 from src.config import Settings
@@ -113,6 +114,16 @@ class SearchEngine:
                 research_id,
                 task_revision=task_revision,
             )
+        )
+
+    def get_research_artifact(
+        self,
+        research_id: str,
+        artifact_id: str,
+    ) -> StoredResearchArtifact:
+        return self._research_service.get_artifact(
+            research_id,
+            artifact_id,
         )
 
     def close(self) -> None:

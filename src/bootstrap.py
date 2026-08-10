@@ -32,6 +32,7 @@ from src.infrastructure.resilience import ResilienceManager
 from src.infrastructure.runtime import SystemClock
 from src.infrastructure.sqlite_research_store import SqliteResearchStore
 from src.infrastructure.sqlite_seed_store import SqliteSearchSeedStore
+from src.infrastructure.siliconflow_synthesis import SiliconFlowSynthesisGateway
 from src.providers.base import SearchProvider
 from src.ranking.factory import build_text_scorer
 from src.ranking.ports import Reranker
@@ -382,6 +383,16 @@ def build_container(
             seed_ttl_seconds=config.search_seed_ttl_seconds,
         )
         verify_service = VerifyService(verifier)
+        synthesis_gateway = (
+            SiliconFlowSynthesisGateway(
+                api_key=config.siliconflow_api_key,
+                base_url=config.siliconflow_base_url,
+                model=config.research_synthesis_model,
+                timeout=config.research_synthesis_timeout,
+                http_session=http,
+            )
+            if config.research_synthesis_enabled else None
+        )
         research_document_readers = {}
         if config.patent_fulltext_enabled:
             research_document_readers["patent"] = PatentDocumentReader(
@@ -409,6 +420,10 @@ def build_container(
                 ),
             ),
             document_readers=research_document_readers,
+            synthesis_gateway=synthesis_gateway,
+            artifact_retention_seconds=(
+                config.research_artifact_retention_seconds
+            ),
         )
         research_dispatcher = ResearchDispatcher(
             research_service.run,

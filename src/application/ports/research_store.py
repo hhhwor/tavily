@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+from dataclasses import dataclass
 from typing import Any, Protocol, Sequence
 
 from src.domain.document_read import DocumentReadResult
@@ -9,6 +10,8 @@ from src.domain.evidence import Evidence, EvidenceLocator
 from src.domain.research import (
     ObjectivePlan,
     ResearchRoundCheckpoint,
+    ResearchArtifact,
+    ResearchSynthesisSnapshot,
     ResearchTaskEnvelope,
     RoundResult,
 )
@@ -25,6 +28,12 @@ class ResearchIdempotencyConflict(ValueError):
 
 class ResearchRevisionConflict(ValueError):
     pass
+
+
+@dataclass(frozen=True, slots=True)
+class StoredResearchArtifact:
+    metadata: ResearchArtifact
+    content: bytes
 
 
 class ResearchStore(Protocol):
@@ -114,6 +123,44 @@ class ResearchStore(Protocol):
         research_id: str,
         locator: EvidenceLocator,
     ) -> str | None: ...
+
+    def begin_synthesis(
+        self,
+        research_id: str,
+        *,
+        attempt: int,
+        snapshot: ResearchSynthesisSnapshot,
+    ) -> bool: ...
+
+    def get_synthesis(
+        self,
+        research_id: str,
+        *,
+        operation_id: str,
+    ) -> ResearchSynthesisSnapshot | None: ...
+
+    def save_synthesis(
+        self,
+        research_id: str,
+        *,
+        attempt: int,
+        snapshot: ResearchSynthesisSnapshot,
+    ) -> None: ...
+
+    def save_artifact(
+        self,
+        research_id: str,
+        *,
+        metadata: ResearchArtifact,
+        content: bytes,
+    ) -> None: ...
+
+    def get_artifact(
+        self,
+        research_id: str,
+        *,
+        artifact_id: str,
+    ) -> StoredResearchArtifact | None: ...
 
     def save(
         self,

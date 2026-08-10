@@ -19,6 +19,10 @@ from src.application.ports.search_seed import SearchSeedExpired, SearchSeedNotFo
 from src.bootstrap import Container, build_container
 from src.application.research_service import ResearchRequestError
 from src.application.research_dispatcher import ResearchQueueFull
+from src.application.research_artifacts import (
+    ResearchArtifactExpired,
+    ResearchArtifactNotFound,
+)
 from src.interfaces.public_models import (
     PublicResearchTaskEnvelope,
     PublicSearchResponse,
@@ -81,6 +85,10 @@ def _translate_error(exc: Exception) -> HTTPException:
         return HTTPException(status_code=409, detail=str(exc))
     if isinstance(exc, (SearchSeedNotFound, ResearchTaskNotFound)):
         return HTTPException(status_code=404, detail="资源不存在")
+    if isinstance(exc, ResearchArtifactNotFound):
+        return HTTPException(status_code=404, detail="artifact 不存在")
+    if isinstance(exc, ResearchArtifactExpired):
+        return HTTPException(status_code=410, detail="artifact 已过保留期")
     if isinstance(exc, SearchSeedExpired):
         return HTTPException(status_code=410, detail="search seed 已过期，请重新搜索")
     return HTTPException(status_code=500, detail="服务内部错误")
@@ -239,6 +247,40 @@ def create_app(
             return runtime().engine.cancel_research(
                 research_id,
                 task_revision=req.task_revision if req else None,
+            )
+        except Exception as exc:
+            raise _translate_error(exc) from exc
+
+    @application.get(
+        "/research/{research_id}/artifacts/{artifact_id}",
+        response_class=Response,
+    )
+    def get_research_artifact(
+        research_id: str,
+        artifact_id: str,
+        if_none_match: str | None = Header(None, alias="If-None-Match"),
+    ) -> Response:
+        try:
+            stored = runtime().engine.get_research_artifact(
+                research_id,
+                artifact_id,
+            )
+            metadata = stored.metadata
+            etag = f'"{metadata.sha256}"'
+            headers = {
+                "ETag": etag,
+                "Cache-Control": "private, max-age=0, must-revalidate",
+                "Content-Disposition": (
+                    f'attachment; filename="{metadata.filename}"'
+                ),
+                "X-Content-Type-Options": "nosniff",
+            }
+            if if_none_match == etag:
+                return Response(status_code=304, headers=headers)
+            return Response(
+                content=stored.content,
+                media_type=metadata.media_type,
+                headers=headers,
             )
         except Exception as exc:
             raise _translate_error(exc) from exc

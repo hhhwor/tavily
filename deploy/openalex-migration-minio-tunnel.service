@@ -1,0 +1,14 @@
+[Unit]
+Description=SSH tunnel from source Elasticsearch network to Ningxia migration MinIO
+After=network-online.target docker.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=ec2-user
+ExecStart=/usr/bin/ssh -NT -i /home/ec2-user/ningxia-hhq.pem -o BatchMode=yes -o ExitOnForwardFailure=yes -o ServerAliveInterval=30 -o ServerAliveCountMax=3 -L 172.18.0.1:19000:127.0.0.1:19000 ec2-user@ec2-161-189-133-95.cn-northwest-1.compute.amazonaws.com.cn
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

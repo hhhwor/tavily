@@ -126,6 +126,10 @@ class Settings:
     research_queue_retry_after_seconds: int = 1
     research_recall_max_workers: int = 4
     research_ranking_max_workers: int = 2
+    research_synthesis_enabled: bool = False
+    research_synthesis_model: str = "Qwen/Qwen2.5-7B-Instruct"
+    research_synthesis_timeout: int = 20
+    research_artifact_retention_seconds: int = 604800
 
     ranking_profile: str = "quality"
     rerank_backend: str = "siliconflow"
@@ -291,6 +295,13 @@ class Settings:
             )
 
         rewrite_model = env.get("REWRITE_MODEL", "Qwen/Qwen2.5-7B-Instruct")
+        synthesis_enabled = _bool(
+            env, "RESEARCH_SYNTHESIS_ENABLED", False
+        )
+        if synthesis_enabled and not env.get("SILICONFLOW_API_KEY"):
+            raise ValueError(
+                "RESEARCH_SYNTHESIS_ENABLED=true 时必须配置 SILICONFLOW_API_KEY"
+            )
         return cls(
             qianfan_api_key=env.get("QIANFAN_API_KEY", ""),
             tencent_secret_id=env.get("TENCENT_SECRET_ID", ""),
@@ -334,6 +345,19 @@ class Settings:
             ),
             research_ranking_max_workers=_int(
                 env, "RESEARCH_RANKING_MAX_WORKERS", 2, minimum=1
+            ),
+            research_synthesis_enabled=synthesis_enabled,
+            research_synthesis_model=env.get(
+                "RESEARCH_SYNTHESIS_MODEL", "Qwen/Qwen2.5-7B-Instruct"
+            ),
+            research_synthesis_timeout=_int(
+                env, "RESEARCH_SYNTHESIS_TIMEOUT", 20, minimum=1
+            ),
+            research_artifact_retention_seconds=_int(
+                env,
+                "RESEARCH_ARTIFACT_RETENTION_SECONDS",
+                604800,
+                minimum=1,
             ),
             ranking_profile=ranking.profile,
             rerank_backend=rerank_backend,

@@ -1,10 +1,10 @@
 # Research 功能落地技术路线
 
-> 状态：实施建议稿
+> 状态：M0–M3 单机基线已实施，M4 待推进
 >
 > 基线：当前 `search.v1 / research.v1` 工作树
 >
-> 日期：2026-08-03
+> 日期：2026-08-04
 >
 > 关联文档：[可信研究接口设计](./agent-search-trust-layer-design.md) · [架构解耦设计](./architecture-decoupling-design.md) · [当前技术路线](./tech-route-summary.md)
 
@@ -17,7 +17,7 @@ Research 不需要另建一套搜索系统，也不建议立即拆成微服务�
 3. 先兑现 privacy、policy、scope、deadline 和 budget 的执行语义。
 4. 再把固定查询列表改造成由 Coverage Gap 驱动的研究循环。
 5. 补齐 Web、Academic、Patent 三类原文深读和稳定 locator。
-6. 最后再建设分布式任务、导出 artifact、租户治理和生产级可观测性。
+6. 最后再建设分布式任务、租户治理和生产级可观测性。
 
 当前实现可视为“单机异步证据验证 MVP”，不能直接宣称已经具备穷尽式 Deep Research。近期目标应是交付一个边界明确、可恢复、可核验的 Research Dossier，而不是追求更长的自动生成报告。
 
@@ -32,24 +32,28 @@ Research 不需要另建一套搜索系统，也不建议立即拆成微服务�
 - Research 复用 Discovery、EvidenceAssembler、TrustAnnotator、PDF Gateway 和 VerifyService。
 - Evidence 已区分 provenance、locator、quality、citation、patent metadata。
 - ClaimVerifier 已支持支持/冲突/提及/不明确关系、逐字引文校验和独立来源门禁。
-- 当前生命周期集中在 [research_service.py](../src/application/research_service.py)。
+- Research 已按 Coordinator/Runner/Planner/Coverage 拆分，并按 gap 保存逐轮 checkpoint。
+- Academic/Web/Patent 原文 reader、版本身份归并和可解引用 locator 已接入。
+- 结构化 summary/finding/conflict/limitation/methods、引用审计和四类 artifact 已接入。
+- 可选外部 synthesis 受 privacy router、deadline、单 operation 幂等和确定性回退约束。
+- 当前生命周期由 [research_service.py](../src/application/research_service.py) 作为兼容门面协调。
 - 公开任务合同位于 [domain/research.py](../src/domain/research.py)。
 - SQLite 任务实现位于 [sqlite_research_store.py](../src/infrastructure/sqlite_research_store.py)。
 - 运行时装配与恢复入口位于 [bootstrap.py](../src/bootstrap.py)。
 
-主要实现缺口：
+当前落地状态与剩余边界：
 
-| 范围 | 当前行为 | 必须达到的行为 |
+| 范围 | M0–M3 当前行为 | M4/后续边界 |
 |---|---|---|
-| Privacy | restricted 只修改 resolved 元数据 | 每次外部调用前执行 egress/model/cache 决策 |
-| Policy | policy_id 只记录、不驱动行为 | policy 决定证据门禁、反证、日期口径、停止条件 |
-| Scope | 部分 scope 只过滤 seed | 所有新增 evidence 也经过统一 post-retrieval gate |
-| Planning | 固定反证 query + 原问题 | 从 claim/coverage gap 生成下一轮 action |
-| Deep read | 仅 Academic PDF 单次 enrich | Web/PDF/Patent 统一 reader，支持续读和稳定 locator |
-| Identity | DOI/URL/family_id 简单去重 | 论文版本、转载链、专利族和 ownership 关系归并 |
-| Progress | 只持久化 expanding 和 final | 每阶段、每轮 checkpoint，真实 phase/progress |
-| Durability | 进程内无界线程池 | 有界队列；生产使用 lease/heartbeat worker |
-| Output | finding + evidence，artifact 为空 | 结构化结论、冲突、限制、执行轨迹和可选导出 |
+| Privacy | restricted 在 rewrite/rerank/verify/synthesis/cache 边界执行本地或 disabled 路由 | tenant egress policy、对象级授权和访问审计 |
+| Policy | policy 驱动来源要求、证据门禁、反证、独立性和停止条件 | policy 灰度、租户覆盖和版本退役治理 |
+| Scope | seed 与所有新增 Evidence 均执行统一 post-retrieval gate | 更多 time basis/分类体系需先补行为实现再开放 |
+| Planning | 原子 claim、Coverage Gap 和历史 gain 驱动下一轮 action | 分布式 planner 调度和人工审批节点 |
+| Deep read | Academic/Web/Patent 统一 reader，支持续读、版本、许可与稳定 locator | OCR 服务治理、更大文档的对象存储和异步解析 |
+| Identity | 论文 work/version、Web 转载/ownership、Patent family/version 分离归并 | 跨租户 identity registry 和人工 merge/split |
+| Progress | 阶段可观察，每轮 plan/action/evidence/gain/usage 事务 checkpoint | 跨实例 event stream、trace 和 stuck-task 告警 |
+| Durability | SQLite/WAL、有界队列、启动恢复、synthesis/artifact 幂等 | 共享数据库、durable queue、lease/heartbeat 和重复投递治理 |
+| Output | 结构化结论、冲突、限制、方法、引用审计和四类 artifact | 对象级授权、后台物理删除、备份和跨实例 artifact storage |
 
 ## 3. 功能边界
 
@@ -339,6 +343,16 @@ API 语义要求：
 
 ## 11. 分阶段实施
 
+当前实施状态：
+
+| 阶段 | 状态 | 已交付能力 |
+|---|---|---|
+| M0 | 已完成 | 执行上下文、隐私路由、策略与 scope 门禁、deadline、预算、有界队列和资源隔离 |
+| M1 | 已完成 | Coordinator/Runner/Planner/Coverage 拆分、gap 驱动循环、逐轮 checkpoint、needs_input/feedback |
+| M2 | 已完成 | Academic/Web/Patent 原文读取、稳定版本与 locator、证据采纳门禁、身份归并 |
+| M3 | 已完成 | 结构化 Dossier、受控 synthesis、引用审计、四类 artifact、50 条质量语料与门禁 |
+| M4 | 未开始 | 多租户、多实例、对象级授权、物理删除和生产可观测性 |
+
 ### M0：执行语义加固
 
 目标：先保证已公开参数不会说一套、执行另一套。
@@ -353,6 +367,19 @@ API 语义要求：
 6. 统一 source failure、deadline、candidate/read budget 的 stop/state 语义。
 7. 给 dispatcher 增加队列容量、queue TTL、拒绝和统计。
 8. 为 Research 增加 workload class 和独立并发配额，避免占满 Search 的 recall/ranking 容量。
+
+已落地改动：
+
+- 新增 [`research_execution.py`](../src/application/research_execution.py)，提供线程安全的 `BudgetLedger`、可提交/释放的预算预留、`CancellationToken`、`Deadline` 绑定的 `ExecutionContext`；round、候选、深读文档/页数/字节、模型请求和 token 都进入统一 usage。
+- 新增 [`model_router.py`](../src/application/model_router.py) 和对应 port。standard 任务可以走配置的外部 rewrite/rerank/verify/synthesis，restricted 任务只允许本地或 disabled 路径；没有本地 verify 路径时在任务创建阶段返回 `PRIVACY_POLICY_UNSATISFIABLE`。
+- 新增 [`research_policy.py`](../src/application/research_policy.py)，按四个 profile 固化 required source、验证 profile、独立来源、反证和信息增益饱和策略；policy 与 scope 不可满足时创建阶段返回 422。
+- 新增 [`research_scope.py`](../src/application/research_scope.py)，统一执行 source type、published/updated/filing/publication time basis、language、jurisdiction、license 和 classification post-filter；seed 与后续新增 Evidence 使用同一门禁。
+- Deadline 从 Research 传播到 Discovery、Recall、Ranking、Verify 和 entailment batch/retry；模型 HTTP timeout 取配置值与剩余 deadline 的较小值，超时后按结构化 stop/failure 收尾。
+- [`research_dispatcher.py`](../src/application/research_dispatcher.py) 改为有界 admission：先 reserve 再持久化任务，支持 queue capacity、queue TTL、`Retry-After`、实时统计和稳定 429，不再使用无界提交。
+- Bootstrap 为 Research 单独装配 recall/ranking executor；restricted Research 同时绕过共享 cache 的读写，避免原文或查询通过共享缓存越过 privacy 边界。
+- 统一 `objective_satisfied`、`information_gain_saturated`、`max_rounds_reached`、`max_candidates_reached`、`source_failure`、`deadline_reached` 等 stop reason 与 completed/partial/failed 的映射；公开响应继续使用 provider-neutral `research.v1`。
+
+实现验证：[`test_research_m0.py`](../tests/test_research_m0.py) 覆盖预算原子性、取消、全部 scope 字段、privacy 零外部调用、deadline、队列 TTL/429、独立资源池、restricted cache 隔离和 quick/standard/deep 收尾边界。
 
 退出门槛：
 
@@ -377,6 +404,19 @@ API 语义要求：
 6. 每轮保存 plan、action、实际 query/filter、来源结果、gain 和 usage。
 7. 实现真实 `needs_input` 与结构化 feedback。
 
+已落地改动：
+
+- 将原大类拆成 [`research_coordinator.py`](../src/application/research_coordinator.py)、[`research_runner.py`](../src/application/research_runner.py)、[`research_planner.py`](../src/application/research_planner.py) 和 [`research_coverage.py`](../src/application/research_coverage.py)；`ResearchService` 保留为兼容门面。
+- `ResearchCoordinator` 负责幂等创建、任务读取、feedback、cancel、队列提交和进程启动恢复；`ResearchRunner` 只执行一个 durable attempt，并在每个阶段检查取消、deadline 和预算。
+- 新增 `ObjectivePlan`、`CoverageTarget`、`ResearchAction`、`CoverageGain`、`RoundResult` 和 `ResearchRoundCheckpoint`。未显式传 claims 时，Planner 对问题做确定性原子化并生成稳定 claim/action/gap ID。
+- Coverage 按 source、claim、required feature、time、language、jurisdiction、classification 和 license 生成矩阵与 gap；Planner 只针对 gap 生成 search、counter_search、deep_read、citation_expand、family_expand 等 action。
+- 每轮保存 action、实际 query/filter、来源结果、failure、coverage before/after、gain、usage、query trace、source snapshot、反证状态和 evidence set revision；停止由目标满足、预算或连续信息增益饱和决定。
+- SQLite 增加 `research_attempts`、`research_evidence_sets`、`research_rounds` 和 `research_events`；round 与 evidence set 在一个事务中 checkpoint，恢复时从最后完整 round 继续，不重复采纳已提交轮次。
+- prior-art 等存在关键歧义的目标进入真实 `needs_input`，返回 typed questions；带 `task_revision` 的 feedback 生成下一 plan revision/attempt，未消除歧义则继续 needs_input，消除后重新入队。
+- 轮询可观察 planning、expanding、deep_reading、verifying、coverage_analysis 等 phase，以及 rounds、evidence、gap、scope exclusion 和 checkpoint 时间；终态转换带 revision guard。
+
+实现验证：[`test_research_m1.py`](../tests/test_research_m1.py) 覆盖原子 claim、gap/action 可追溯性、八类 coverage、gain、事务 checkpoint、重启续跑、needs_input/feedback、取消和不可解引用 seed 降级。
+
 退出门槛：
 
 - 每个扩展 action 都能回溯到 gap；
@@ -394,6 +434,20 @@ API 语义要求：
 1. Academic PDF cursor/locator/version；
 2. Web 原页安全读取、content hash 和转载归并；
 3. Patent claims/specification/family/citation。
+
+已落地改动：
+
+- 新增统一 [`DocumentReader`](../src/application/ports/document_reader.py) port，以及 `DocumentVersion`、`DocumentChunk`、`DocumentReadResult`、diagnostics 等内部合同；原文读取结果明确区分 ready/partial/failed、版本完整性、parser、许可和 storage mode。
+- Academic reader 支持 PDF cursor 续读、page/chunk/char locator、content hash、parser version 和稳定 document version；只观察到部分 chunk 的版本标记为 incomplete，不能成为 qualified support。
+- Web reader 使用 [`safe_web_fetch.py`](../src/infrastructure/safe_web_fetch.py) 执行 SSRF 防护、重定向逐跳校验、DNS/IP 检查、TLS、压缩比、响应体大小和总 deadline 限制；正文按 canonical paragraph 建立 content hash、version 和 locator。
+- `noarchive`、许可不足、解析失败、重定向/网络安全拒绝等不会被静默丢弃，而是降级 evidence quality，并进入 diagnostics 与 coverage gap。
+- Patent reader 与只读 fulltext ES adapter 支持 claims、specification 段落、publication/application/priority、family members、patent/NPL citations；Planner 在 prior-art profile 中按 family 再 citation 的顺序扩展。
+- 新增 [`evidence_adoption.py`](../src/application/evidence_adoption.py)，只从稳定且完整的原文 chunk 生成 citable Evidence；abstract、snippet、provider extract 和关系发现记录只能用于 discovery，不能单独支持关键 claim。
+- 新增 [`document_identity.py`](../src/application/document_identity.py)，分别计算 academic work/version、Web canonical/syndication/ownership 和 Patent family/version 身份；版本去重与独立来源计数分离，转载稿和同族成员不会虚增独立支持数。
+- SQLite 增加 `research_document_reads` 和独立 `research_document_chunks`，全文不写入 task 单行 JSON；`resolve_locator` 按 research/version/chunk/char 范围解引用，Runner 在 verify 前再次降级不可解析 locator。
+- Coverage/Planner 接入 abstract-only、原文不可用、版本不完整、许可、专利 claims/family/citation 等 gap，使深读和关系扩展仍由 gap 驱动并进入 round checkpoint。
+
+实现验证：[`test_research_m2_academic.py`](../tests/test_research_m2_academic.py)、[`test_research_m2_web.py`](../tests/test_research_m2_web.py)、[`test_research_m2_patent.py`](../tests/test_research_m2_patent.py) 和 [`test_research_m2_identity.py`](../tests/test_research_m2_identity.py) 覆盖全文续读、安全抓取、版本/locator 解引用、许可降级、专利扩展与身份去重。
 
 退出门槛：
 
@@ -413,6 +467,23 @@ API 语义要求：
 3. 导出 Markdown、JSON、Evidence CSV/JSONL，artifact 使用受权访问和保留期。
 4. 建立不少于 50 条人工标注 Research corpus。
 5. 按 profile 评测 claim support、locator、identity、counterevidence、gap disclosure。
+
+已落地改动：
+
+- 扩展 `ResearchDossier`，增加 structured `summary`、`statements`、带稳定 ID 的 findings、`conflicts`、结构化 `limitations_detail`、`methods`、`citation_audit` 和 typed `artifact_index`；保留原 `artifacts` map 兼容 `research.v1`。
+- 新增 [`research_dossier_builder.py`](../src/application/research_dossier_builder.py)，从 ClaimAssessment、Coverage、Boundary 和 resolved policy 确定性构建 Dossier；finding/statement/conflict/limitation ID 由稳定输入计算，结构化 Dossier 是综合与导出的唯一事实源。
+- 新增内部 synthesis port/contract 和可选 SiliconFlow adapter。外部综合默认关闭，开启时最多一次请求、输入只含 qualified support/contradiction 和稳定 finding ID，最多每 finding 五条证据，HTTP timeout 受剩余 deadline 限制。
+- factual synthesis 只能逐字复制单个 supported finding 的 claim 并引用该 finding；模型生成未知 finding、改写事实、遗漏 supported finding、遗漏冲突、产生无 locator 引用或返回非法结构时，统一回退到确定性综合。
+- restricted 或禁用模型时不发生 synthesis egress；模型失败、deadline、引用审计失败也不影响结构化结果，Dossier 的 methods/failures 明确记录 deterministic、model 或 model_fallback。
+- SQLite 增加 `research_syntheses`。Runner 在 egress 前保存 pending operation 和保守 usage intent，ready snapshot 保存 statements/audit/token；恢复遇到 pending 时不重放外部调用，遇到 ready 时重新审计当前 evidence，失败则本地修复。
+- 新增 [`citation_audit.py`](../src/application/citation_audit.py)，对 factual/analysis statement、supported finding 覆盖、冲突双方、qualified relation、Evidence、quote、version 和 locator 失败关闭；审计未通过时禁止生成 artifact。
+- 新增 [`research_artifacts.py`](../src/application/research_artifacts.py)，确定性导出 Dossier JSON、Markdown、Evidence CSV 和 Evidence JSONL；artifact ID/sha256 与 evidence revision/renderer version 绑定，重复执行幂等，CSV 对公式注入字符做转义。
+- SQLite 增加 `research_artifacts` BLOB 与 metadata；`GET /research/{research_id}/artifacts/{artifact_id}` 沿用 API token 鉴权，返回 ETag、attachment、`nosniff` 和 private cache policy，并按 `RESEARCH_ARTIFACT_RETENTION_SECONDS` 对过期访问返回 410。
+- 新增 `RESEARCH_SYNTHESIS_ENABLED`、`RESEARCH_SYNTHESIS_MODEL`、`RESEARCH_SYNTHESIS_TIMEOUT` 和 `RESEARCH_ARTIFACT_RETENTION_SECONDS` 配置；外部 synthesis 必须显式开启且配置 SiliconFlow key。
+- `eval/golden/research_quality_corpus.json` 固定 50 条、每个 profile 至少 10 条的标注场景；[`research_quality_gate.py`](../eval/research_quality_gate.py) 按 profile 校验 status、claim support precision、locator、identity、counterevidence、冲突、gap 和 unsupported statement rate，并已接入统一 stability gate。
+- tenant/principal 对象级授权、artifact 后台物理删除和跨实例 storage 仍属于 M4，不在 M3 单机基线中提前实现。
+
+实现验证：[`test_research_m3.py`](../tests/test_research_m3.py) 覆盖稳定 ID、冲突保留、引用失败关闭、合法/非法模型综合、restricted 零调用、单次 deadline、配置门禁、operation 恢复、artifact 幂等/过期和鉴权下载。M0–M3 全量回归为 270 passed；Search 与 Research quality gate 均通过，50 条 Research corpus 的安全指标为 1.0，unsupported statement rate 为 0.0。
 
 退出门槛：
 

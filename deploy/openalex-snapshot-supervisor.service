@@ -1,0 +1,14 @@
+[Unit]
+Description=Supervise resumable OpenAlex snapshot migration to Ningxia
+After=network-online.target docker.service openalex-migration-minio-tunnel.service
+Wants=network-online.target openalex-migration-minio-tunnel.service
+
+[Service]
+Type=simple
+User=root
+ExecStart=/usr/local/sbin/run-openalex-snapshot-supervisor
+Restart=on-failure
+RestartSec=30
+
+[Install]
+WantedBy=multi-user.target
