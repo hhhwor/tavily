@@ -1,10 +1,19 @@
-# FY 法律垂直搜索接入设计
+# FY 法律垂直搜索接入设计（历史提案，已废弃）
 
-> 状态：设计提案，尚未实现
+> 状态：本提案的「复合 Web provider + `verticals`」方案已废弃，不能作为
+> 当前实现或客户端契约使用。
 >
 > 日期：2026-08-10
 >
-> 范围：在现有 `web-search` 的 `/search` 与 MCP `search` 中接入法研（FY）法律检索；不改变现有通用 Web、Academic、Patent 搜索语义。
+> 当前实现：FY MCP 是第四种内部证据类型 `legal`，请求只使用
+> `source_types:["legal"]` 显式强制路由；不再接受 `verticals`。未显式指定
+> `source_types` 时，`FY_LAW_MCP_DETECT=true` 的 L0 规则会命中法律意图并
+> 与通用 Web 并行召回。权威实现见 `src/domain/documents.py`、
+> `src/application/query_planner.py`、`src/application/recall.py` 与
+> `src/providers/fy_law_mcp.py`。
+
+> 本文其余内容保留为早期多 REST endpoint 方案的取舍记录；其中所有
+> `verticals`、`fy_legal`、`FY_LEGAL_*` 描述均不适用于当前系统。
 
 ## 1. 结论
 

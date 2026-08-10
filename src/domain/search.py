@@ -87,6 +87,7 @@ class SearchPlan(BaseModel):
     time_sensitive: bool = False
     academic: bool = False
     patent: bool = False
+    legal: bool = False
     providers: Tuple[str, ...] = ()
     top_k: int = 10
     failures: Tuple[SearchFailure, ...] = ()

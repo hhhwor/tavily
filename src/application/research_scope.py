@@ -60,8 +60,10 @@ def exclusion_reason(item: Evidence, scope: ResearchScope) -> str | None:
         value.casefold() for value in scope.languages
     }:
         return "LANGUAGE_OUT_OF_SCOPE"
-    if scope.jurisdictions and item.type == "patent":
-        country = item.patent.country if item.patent else ""
+    if scope.jurisdictions and item.type in {"patent", "legal"}:
+        country = (
+            item.patent.country if item.type == "patent" and item.patent else "CN"
+        )
         if country.upper() not in {
             value.upper() for value in scope.jurisdictions
         }:

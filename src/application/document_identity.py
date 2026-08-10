@@ -54,6 +54,19 @@ def patent_document_version_id(
     return f"patent-version:{digest}"
 
 
+def legal_document_version_id(
+    law_title: str,
+    item: str,
+    content_hash: str,
+) -> str:
+    digest = hashlib.sha256(
+        "|".join((law_title.casefold(), item.casefold(), content_hash)).encode(
+            "utf-8"
+        )
+    ).hexdigest()
+    return f"legal-version:{digest}"
+
+
 def independent_work_id(item: Evidence) -> str:
     if item.type == "academic":
         return academic_independent_work_id(item)
@@ -64,6 +77,14 @@ def independent_work_id(item: Evidence) -> str:
             or item.result_id
         )
         return f"patent-family:{value}"
+    if item.type == "legal":
+        law = item.legal
+        value = "|".join((
+            item.title,
+            law.item if law is not None else "",
+            item.result_id,
+        ))
+        return f"legal-work:{value}"
     if item.provenance is not None:
         value = (
             item.provenance.syndication_group

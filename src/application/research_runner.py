@@ -1352,6 +1352,7 @@ class ResearchRunner:
             outcome.ranked.web,
             outcome.ranked.academic,
             outcome.ranked.patent,
+            outcome.ranked.legal,
         )[:limit]
         trust = self._trust_annotator.annotate(
             mode="annotate",
@@ -1369,6 +1370,7 @@ class ResearchRunner:
             len(outcome.recalled.web),
             len(outcome.recalled.academic),
             len(outcome.recalled.patent),
+            len(outcome.recalled.legal),
         ))
         return (
             list(trust.evidence),

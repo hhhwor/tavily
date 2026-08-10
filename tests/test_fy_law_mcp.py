@@ -154,8 +154,9 @@ def test_provider_exposes_law_metadata_as_public_evidence():
     ])
 
     results = _provider(http).search("民法典第一千零八十四条")
-    evidence = EvidenceAssembler().assemble(results, (), ())
+    evidence = EvidenceAssembler().assemble((), (), (), results)
 
+    assert evidence[0].type == "legal"
     assert evidence[0].legal is not None
     assert evidence[0].legal.model_dump() == {
         "law_type": "中央法规",
@@ -211,16 +212,16 @@ def test_provider_reloads_token_file_for_each_search_and_reports_anonymous_statu
     assert str(token_path) not in json.dumps(status)
 
 
-def test_registry_keeps_legal_provider_out_of_default_web_route():
+def test_registry_exposes_legal_provider_as_its_own_document_kind():
     provider = _provider(_Http([]))
     registry = SourceRegistry([provider])
 
-    assert registry.ids_for_verticals("web") == ()
-    assert registry.ids_for_verticals("web", ("legal",)) == ("fy_law_mcp",)
-    assert registry.has_vertical("web", "legal") is True
+    assert registry.ids("web") == ()
+    assert registry.ids("legal") == ("fy_law_mcp",)
+    assert registry.has_kind("legal") is True
 
 
-def test_legal_vertical_uses_only_legal_web_provider_and_disables_auto_other_domains():
+def test_explicit_legal_source_type_forces_only_legal_routing():
     planner = QueryPlanner(Settings(
         openalex_enabled=False,
         patent_es_enabled=False,
@@ -229,16 +230,17 @@ def test_legal_vertical_uses_only_legal_web_provider_and_disables_auto_other_dom
     ))
 
     planned = planner.plan(
-        SearchCommand("民法典子女抚养", verticals=("legal",)),
-        ("fy_law_mcp",),
+        SearchCommand("民法典子女抚养", source_types=("legal",)),
+        ("general-web",),
         academic_available=False,
         patent_available=False,
         legal_available=True,
     )
 
-    assert planned.active_provider_names == ("fy_law_mcp",)
+    assert planned.active_provider_names == ()
     assert planned.do_academic is False
     assert planned.do_patent is False
+    assert planned.do_legal is True
 
 
 def test_missing_legal_provider_has_a_routing_failure():
@@ -250,7 +252,7 @@ def test_missing_legal_provider_has_a_routing_failure():
     ))
 
     planned = planner.plan(
-        SearchCommand("民法典", verticals=("legal",)),
+        SearchCommand("民法典", source_types=("legal",)),
         (),
         academic_available=False,
         patent_available=False,
@@ -259,6 +261,28 @@ def test_missing_legal_provider_has_a_routing_failure():
 
     assert planned.active_provider_names == ()
     assert [item.code for item in planned.failures] == ["PROVIDER_UNAVAILABLE"]
+    assert planned.failures[0].type == "legal"
+
+
+def test_legal_keywords_auto_route_alongside_general_web():
+    planner = QueryPlanner(Settings(
+        openalex_enabled=False,
+        patent_es_enabled=False,
+        ranking_profile="fast",
+        rerank_threshold_mode="off",
+    ))
+
+    planned = planner.plan(
+        SearchCommand("民法典第一千零八十四条如何规定"),
+        ("general-web",),
+        academic_available=False,
+        patent_available=False,
+        legal_available=True,
+    )
+
+    assert planned.active_provider_names == ("general-web",)
+    assert planned.plan.legal is True
+    assert planned.do_legal is True
 
 
 def test_legal_settings_are_secret_safe_and_required_when_enabled():
@@ -283,7 +307,7 @@ def test_legal_settings_are_secret_safe_and_required_when_enabled():
         Settings.from_env({"FY_LAW_MCP_ENABLED": "true"})
 
 
-def test_container_registers_only_the_legal_route_when_enabled():
+def test_container_registers_legal_provider_under_legal_document_kind():
     container = build_container(
         Settings(
             openalex_enabled=False,
@@ -301,9 +325,7 @@ def test_container_registers_only_the_legal_route_when_enabled():
         assert [item.descriptor.id for item in container.engine.providers] == [
             "fy_law_mcp"
         ]
-        assert container.engine.source_registry.ids_for_verticals("web") == ()
-        assert container.engine.source_registry.ids_for_verticals(
-            "web", ("legal",)
-        ) == ("fy_law_mcp",)
+        assert container.engine.source_registry.ids("web") == ()
+        assert container.engine.source_registry.ids("legal") == ("fy_law_mcp",)
     finally:
         container.close()

@@ -149,7 +149,7 @@ class EvidenceQuality(BaseModel):
 class Evidence(BaseModel):
     id: str
     result_id: str
-    type: Literal["web", "academic", "patent"]
+    type: Literal["web", "academic", "patent", "legal"]
     source: str = ""
     title: str = ""
     url: str = ""
@@ -172,7 +172,7 @@ class AnswerabilityGap(BaseModel):
     code: str
     severity: Literal["info", "warning", "blocking"] = "warning"
     message: str
-    type: Optional[Literal["web", "academic", "patent"]] = None
+    type: Optional[Literal["web", "academic", "patent", "legal"]] = None
     source: Optional[str] = None
 
 

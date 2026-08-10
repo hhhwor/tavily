@@ -11,6 +11,7 @@ from src.application.commands import (
     SearchFilters,
 )
 from src.application.academic_document_reader import AcademicDocumentReader
+from src.application.legal_document_reader import LegalDocumentReader
 from src.application.discovery_service import DiscoveryService
 from src.application.evidence_adoption import EvidenceAdoptionGate
 from src.application.evidence_assembler import EvidenceAssembler
@@ -121,6 +122,7 @@ class ResearchService:
             "academic": academic_reader,
             "web": WebDocumentReader(SafeWebFetcher()),
             "patent": PatentDocumentReader(UnavailablePatentTextGateway()),
+            "legal": LegalDocumentReader(),
         }
         readers.update(document_readers or {})
         self._artifact_service = ResearchArtifactService(

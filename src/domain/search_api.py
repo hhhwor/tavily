@@ -50,6 +50,7 @@ class SourceTypeCounts(SearchApiModel):
     web: int = Field(0, ge=0)
     academic: int = Field(0, ge=0)
     patent: int = Field(0, ge=0)
+    legal: int = Field(0, ge=0)
 
 
 class SearchStageCounts(SearchApiModel):

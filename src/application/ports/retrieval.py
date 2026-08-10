@@ -18,7 +18,6 @@ RetrievalCapability = Literal[
     "open_access_metadata",
 ]
 SnapshotCapability = Literal["provider_managed", "service_index", "index_alias"]
-RouteTag = Literal["legal"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -27,7 +26,6 @@ class SourceDescriptor:
 
     id: str
     kind: DocumentKind
-    route_tags: frozenset[RouteTag] = frozenset()
     capabilities: frozenset[RetrievalCapability] = frozenset()
     snapshot_capability: SnapshotCapability = "provider_managed"
     default_snapshot: str = "provider-managed"
@@ -42,7 +40,6 @@ class SourceDescriptor:
             raise ValueError("SourceDescriptor.id 必须是非空且已清理的稳定标识")
         if self.max_candidates is not None and self.max_candidates <= 0:
             raise ValueError("SourceDescriptor.max_candidates 必须大于 0")
-        object.__setattr__(self, "route_tags", frozenset(self.route_tags))
         object.__setattr__(self, "capabilities", frozenset(self.capabilities))
         object.__setattr__(self, "jurisdictions", tuple(self.jurisdictions))
 

@@ -178,6 +178,11 @@ class RecallCoordinator:
                 (source, self._request(planned.search_query, planned.plan.recency, filters))
                 for source in self._registry.sources("patent")
             )
+        if planned.do_legal:
+            tasks.extend(
+                (source, self._request(planned.search_query, planned.plan.recency, filters))
+                for source in self._registry.sources("legal")
+            )
         if candidate_budget is not None:
             remaining_budget = max(0, candidate_budget)
             bounded_tasks: list[tuple[RetrievalSource, RetrievalRequest]] = []
@@ -197,6 +202,7 @@ class RecallCoordinator:
         web: list[RetrievedDocument] = []
         academic: list[RetrievedDocument] = []
         patent: list[RetrievedDocument] = []
+        legal: list[RetrievedDocument] = []
         batches: list[RetrievalBatch] = []
         providers_used: list[str] = []
         failures = []
@@ -235,6 +241,8 @@ class RecallCoordinator:
                     academic.extend(items)
                 elif descriptor.kind == "patent":
                     patent.extend(items)
+                elif descriptor.kind == "legal":
+                    legal.extend(items)
                 else:
                     web.extend(items)
                 if items or descriptor.count_empty_as_used:
@@ -282,6 +290,7 @@ class RecallCoordinator:
             web=tuple(web),
             academic=tuple(academic),
             patent=tuple(patent),
+            legal=tuple(legal),
             batches=tuple(batches),
             providers_used=tuple(providers_used),
             planned_sources=tuple(

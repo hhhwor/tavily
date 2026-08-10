@@ -90,7 +90,7 @@ class SearchService:
         requested = SearchService._requested_filters(command).model_dump(
             mode="json", exclude_none=True
         )
-        kinds = command.source_types or ("web", "academic", "patent")
+        kinds = command.source_types or ("web", "academic", "patent", "legal")
         result: dict[str, SourceFilterExecution] = {}
         for kind in kinds:
             relevant = [batch for batch in batches if batch.source.kind == kind]
@@ -135,7 +135,7 @@ class SearchService:
         counts = Counter(item.type for item in evidence)
         return SourceTypeCounts(**{
             name: counts.get(name, 0)
-            for name in ("web", "academic", "patent")
+            for name in ("web", "academic", "patent", "legal")
         })
 
     @staticmethod
@@ -189,6 +189,7 @@ class SearchService:
             outcome.ranked.web,
             academic,
             outcome.ranked.patent,
+            outcome.ranked.legal,
         )
         selected = select_evidence(
             assembled,
@@ -212,11 +213,13 @@ class SearchService:
                 web=len(outcome.recalled.web),
                 academic=len(outcome.recalled.academic),
                 patent=len(outcome.recalled.patent),
+                legal=len(outcome.recalled.legal),
             ),
             ranked=SourceTypeCounts(
                 web=len(outcome.ranked.web),
                 academic=len(outcome.ranked.academic),
                 patent=len(outcome.ranked.patent),
+                legal=len(outcome.ranked.legal),
             ),
             assembled=self._source_type_counts(assembled),
             selected=self._source_type_counts(evidence),
@@ -227,6 +230,7 @@ class SearchService:
             expected_web=bool(outcome.planned.active_provider_names),
             expected_academic=outcome.planned.do_academic,
             expected_patent=outcome.planned.do_patent,
+            expected_legal=outcome.planned.do_legal,
             include_pdf_text=False,
         )
         expected_types: list[DocumentKind] = []
@@ -236,6 +240,8 @@ class SearchService:
             expected_types.append("academic")
         if outcome.planned.do_patent:
             expected_types.append("patent")
+        if outcome.planned.do_legal:
+            expected_types.append("legal")
         assessment = RetrievalAssessment(
             status={
                 "answerable": "usable",
@@ -295,6 +301,8 @@ class SearchService:
             planned_source_types.append("academic")
         if outcome.planned.do_patent:
             planned_source_types.append("patent")
+        if outcome.planned.do_legal:
+            planned_source_types.append("legal")
         snapshot = SearchSeedSnapshot(
             requested_source_types=(
                 list(command.source_types)

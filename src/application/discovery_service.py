@@ -49,10 +49,10 @@ class DiscoveryService:
         query_time = self._clock.now()
         planned = self._query_planner.plan(
             command,
-            self._source_registry.ids_for_verticals("web", command.verticals),
+            self._source_registry.ids("web"),
             academic_available=self._source_registry.has_kind("academic"),
             patent_available=self._source_registry.has_kind("patent"),
-            legal_available=self._source_registry.has_vertical("web", "legal"),
+            legal_available=self._source_registry.has_kind("legal"),
             deadline=active_deadline,
             allow_external_models=allow_external_models,
         )

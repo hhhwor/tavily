@@ -48,8 +48,7 @@ def test_rest_schema_maps_once_to_authoritative_search_command():
     request = SearchRequest.model_validate({
         "query": "query",
         "limit": 7,
-        "source_types": ["academic", "patent"],
-        "verticals": [],
+        "source_types": ["academic", "patent", "legal"],
         "filters": {
             "published_from": "2024-01-01",
             "languages": ["zh", "en"],
@@ -62,8 +61,7 @@ def test_rest_schema_maps_once_to_authoritative_search_command():
 
     assert command.query == "query"
     assert command.limit == 7
-    assert command.source_types == ("academic", "patent")
-    assert command.verticals == ()
+    assert command.source_types == ("academic", "patent", "legal")
     assert command.filters.languages == ("zh", "en")
     assert command.filters.jurisdictions == ("CN",)
     assert command.filters.legal_status == "现行有效"
@@ -72,10 +70,12 @@ def test_rest_schema_maps_once_to_authoritative_search_command():
 def test_search_request_is_strict_and_has_no_execution_tuning_fields():
     schema = SearchRequest.model_json_schema()["properties"]
     assert set(schema) == {
-        "query", "limit", "source_types", "verticals", "filters"
+        "query", "limit", "source_types", "filters"
     }
     with pytest.raises(ValidationError):
         SearchRequest.model_validate({"query": "q", "top_k": 3})
+    with pytest.raises(ValidationError):
+        SearchRequest.model_validate({"query": "q", "verticals": ["legal"]})
     with pytest.raises(ValidationError):
         SearchRequest.model_validate({
             "query": "q",
@@ -114,10 +114,10 @@ def test_mcp_presenter_is_lossless_search_v1_identity_projection():
 
     assert payload["schema_version"] == "search.v1"
     assert payload["result_set"]["counts_by_stage"] == {
-        "recalled": {"web": 0, "academic": 0, "patent": 0},
-        "ranked": {"web": 0, "academic": 0, "patent": 0},
-        "assembled": {"web": 0, "academic": 0, "patent": 0},
-        "selected": {"web": 0, "academic": 0, "patent": 0},
+        "recalled": {"web": 0, "academic": 0, "patent": 0, "legal": 0},
+        "ranked": {"web": 0, "academic": 0, "patent": 0, "legal": 0},
+        "assembled": {"web": 0, "academic": 0, "patent": 0, "legal": 0},
+        "selected": {"web": 0, "academic": 0, "patent": 0, "legal": 0},
     }
     assert restored == response
 

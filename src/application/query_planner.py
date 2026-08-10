@@ -25,6 +25,7 @@ class QueryPlannerSettings(Protocol):
     rewrite_cache_size: int
     openalex_academic_detect: bool
     patent_detect: bool
+    fy_law_mcp_detect: bool
     openalex_query_rewrite: bool
 
 
@@ -64,9 +65,7 @@ class QueryPlanner:
         names = tuple(provider_names) if auto_route or "web" in requested else ()
         force_academic = None if auto_route else "academic" in requested
         force_patent = None if auto_route else "patent" in requested
-        if command.verticals and auto_route:
-            force_academic = False
-            force_patent = False
+        force_legal = None if auto_route else "legal" in requested
         plan = self._plan_query(
             command.query,
             list(names),
@@ -76,6 +75,8 @@ class QueryPlanner:
             force_academic=force_academic,
             patent_detect=self._settings.patent_detect,
             force_patent=force_patent,
+            legal_detect=self._settings.fy_law_mcp_detect,
+            force_legal=force_legal,
         )
 
         failures: list[SearchFailure] = list(plan.failures)
@@ -114,6 +115,7 @@ class QueryPlanner:
         active_names = tuple(name for name in names if name in plan.providers)
         do_academic = bool(academic_available and plan.academic)
         do_patent = bool(patent_available and plan.patent)
+        do_legal = bool(legal_available and plan.legal)
         failures = list(plan.failures)
 
         if plan.academic and not academic_available:
@@ -132,13 +134,13 @@ class QueryPlanner:
                 code="PROVIDER_UNAVAILABLE",
                 message="专利检索被请求或自动触发,但 Patent ES provider 未启用。",
             ))
-        if "legal" in command.verticals and not legal_available:
+        if plan.legal and not legal_available:
             failures.append(search_failure(
                 stage="routing",
                 source="fy_law_mcp",
-                source_type="web",
+                source_type="legal",
                 code="PROVIDER_UNAVAILABLE",
-                message="法律法规 MCP 检索被请求,但 FY provider 未启用。",
+                message="法律法规检索被请求或自动触发,但 FY provider 未启用。",
             ))
 
         search_query = plan.rewritten_query or plan.normalized_query
@@ -180,6 +182,7 @@ class QueryPlanner:
             active_provider_names=active_names,
             do_academic=do_academic,
             do_patent=do_patent,
+            do_legal=do_legal,
             failures=tuple(failures),
         )
 

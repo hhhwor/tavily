@@ -117,6 +117,7 @@ class Settings:
     fy_law_mcp_token: str = field(default="", repr=False)
     fy_law_mcp_token_file: str = ""
     fy_law_mcp_enabled: bool = False
+    fy_law_mcp_detect: bool = True
 
     default_top_k: int = 10
     per_provider_k: int = 10
@@ -342,6 +343,7 @@ class Settings:
             fy_law_mcp_token=fy_law_mcp_token,
             fy_law_mcp_token_file=fy_law_mcp_token_file,
             fy_law_mcp_enabled=fy_law_mcp_enabled,
+            fy_law_mcp_detect=_bool(env, "FY_LAW_MCP_DETECT", True),
             default_top_k=_int(env, "SEARCH_TOP_K", 10, minimum=1),
             per_provider_k=_int(env, "SEARCH_PER_PROVIDER_K", 10, minimum=1),
             provider_timeout=_int(env, "SEARCH_PROVIDER_TIMEOUT", 15, minimum=1),

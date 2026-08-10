@@ -81,7 +81,7 @@ class _ResilientDeadlineBoundScorer:
 
 
 class RankingService:
-    """选择文本 scorer，并对三个来源域进行可独立降级的重排。"""
+    """选择文本 scorer，并对四个来源域进行可独立降级的重排。"""
 
     def __init__(
         self,
@@ -198,6 +198,7 @@ class RankingService:
             else scorer
         )
         web_reranker = WebReranker(deadline_scorer, **reranker_options)
+        legal_reranker = WebReranker(deadline_scorer, **reranker_options)
         academic_reranker = AcademicReranker(deadline_scorer, **reranker_options)
         patent_reranker = PatentReranker(deadline_scorer, **reranker_options)
         context = build_rerank_context(
@@ -224,6 +225,12 @@ class RankingService:
             else RetrievedDocument.from_result(document, "patent")
             for document in recalled.patent
         ]
+        retrieved_legal = [
+            document
+            if isinstance(document, RetrievedDocument)
+            else RetrievedDocument.from_result(document, "legal")
+            for document in recalled.legal
+        ]
         web = [document.to_result() for document in retrieved_web]
         academic = [
             result
@@ -235,6 +242,7 @@ class RankingService:
             for result in (document.to_result() for document in retrieved_patent)
             if isinstance(result, PatentResult)
         ]
+        legal = [document.to_result() for document in retrieved_legal]
 
         def rank_web() -> list[SearchResult]:
             return web_reranker.rerank_with_context(
@@ -253,15 +261,23 @@ class RankingService:
             )
             return [item for item in ranked if isinstance(item, PatentResult)]
 
+        def rank_legal() -> list[SearchResult]:
+            return legal_reranker.rerank_with_context(
+                planned.search_query, legal, top_k, context
+            )
+
         jobs = [("web", rank_web)]
         if academic:
             jobs.append(("academic", rank_academic))
         if patent:
             jobs.append(("patent", rank_patent))
+        if legal:
+            jobs.append(("legal", rank_legal))
 
         ranked_web: list[RankedDocument] = []
         ranked_academic: list[RankedDocument] = []
         ranked_patent: list[RankedDocument] = []
+        ranked_legal: list[RankedDocument] = []
         failures = []
 
         def ranking_failure(kind: DocumentKind, exc: Exception):
@@ -286,6 +302,8 @@ class RankingService:
                 return retrieved_academic
             if kind == "patent":
                 return retrieved_patent
+            if kind == "legal":
+                return retrieved_legal
             return retrieved_web
 
         def key_for(document: RetrievedDocument | SearchResult) -> str:
@@ -350,12 +368,14 @@ class RankingService:
             ]
 
         def assign(kind: DocumentKind, items, *, already_immutable: bool = False) -> None:
-            nonlocal ranked_web, ranked_academic, ranked_patent
+            nonlocal ranked_web, ranked_academic, ranked_patent, ranked_legal
             documents = items if already_immutable else immutable_ranked(kind, items)
             if kind == "academic":
                 ranked_academic = list(documents)
             elif kind == "patent":
                 ranked_patent = list(documents)
+            elif kind == "legal":
+                ranked_legal = list(documents)
             else:
                 ranked_web = list(documents)
 
@@ -424,6 +444,7 @@ class RankingService:
             web=tuple(ranked_web),
             academic=tuple(ranked_academic),
             patent=tuple(ranked_patent),
+            legal=tuple(ranked_legal),
             options=options,
             reranker=scorer.name,
             failures=tuple(failures),

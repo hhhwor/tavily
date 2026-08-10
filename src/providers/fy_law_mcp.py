@@ -46,8 +46,7 @@ class FyLawMcpProvider(SearchProvider):
     name = "fy_law_mcp"
     descriptor = SourceDescriptor(
         id=name,
-        kind="web",
-        route_tags=frozenset({"legal"}),
+        kind="legal",
         capabilities=frozenset({"full_content", "snippet"}),
         default_snapshot="mcp-server:法律法规检索服务",
         data_license="FY-provider-terms",

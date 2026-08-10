@@ -200,7 +200,7 @@ POST /search {query, top_k, ranking_profile?, rerank_threshold_mode?, ...}
 | `OPENALEX_API_KEY` | 空 | 可选 `X-API-Key`(Chukonu 服务未配 `SE4AI_API_KEYS` 时全部放行,留空即可) | 服务开鉴权时再配 |
 | `OPENALEX_ENABLED` | 未设置=`auto` | `false` 强制关；`true` 要求 URL；未设置按 URL 自动启用 | 需要临时停用时显式 `false` |
 | `OPENALEX_QUERY_REWRITE` | **`true`** | 学术 query 中→英改写(NL→检索词,缓解中文召回弱) | 同默认 |
-| `OPENALEX_ACADEMIC_DETECT` | **`true`** | L0 学术意图自动识别开关(关掉则仅 `include_academic=true` 触发) | 同默认 |
+| `OPENALEX_ACADEMIC_DETECT` | **`true`** | L0 学术意图自动识别开关(关掉则仅显式 `source_types` 触发) | 同默认 |
 | `OPENALEX_PER_PAGE` | `25` | 学术单次召回数(≤100) | 同默认 |
 | `OPENALEX_TOPIC_FILTER` / `OPENALEX_MAILTO` | — | 旧公网 API 残留项,当前 Chukonu 后端未用 | 忽略 |
 | `PATENT_ES_URL` | 空 | 专利只读 ES 地址(如 `https://search.houdutech.cn:9243`);缺失则专利能力关闭 | 配上即启用专利检索 |
@@ -208,7 +208,8 @@ POST /search {query, top_k, ranking_profile?, rerank_threshold_mode?, ...}
 | `PATENT_ES_ENABLED` | 未设置=`auto` | `false` 强制关；`true` 要求 URL；未设置按 URL 自动启用 | 需要临时停用时显式 `false` |
 | `PATENT_ES_VERIFY_TLS` | **`true`** | 校验 TLS 证书(houdutech 证书已覆盖域名) | 同默认 |
 | `PATENT_ES_PER_PAGE` | `25` | 专利单次召回数(≤100) | 同默认 |
-| `PATENT_DETECT` | **`true`** | L0 专利意图自动识别开关(关掉则仅 `include_patent=true` 触发) | 同默认 |
+| `PATENT_DETECT` | **`true`** | L0 专利意图自动识别开关(关掉则仅显式 `source_types` 触发) | 同默认 |
+| `FY_LAW_MCP_DETECT` | **`true`** | L0 法律意图自动识别开关；命中时在通用 Web 之外追加 FY 法规源 | 同默认 |
 | `PATENT_FULLTEXT_URL` | 空 | Research 专利原文只读 ES 地址；缺失时 claims/specification 深读明确不可用 | 接入包含 claims/description 的独立只读服务 |
 | `PATENT_FULLTEXT_INDEX` | `epo_fulltext_read` | 专利原文索引/读别名 | 使用只读别名，禁止复用不含全文的 DOCDB 索引 |
 | `PATENT_FULLTEXT_ENABLED` | 未设置=`auto` | 未设置时随 URL 自动启用；`true` 要求 URL 和非空 index | 原文服务就绪后启用 |

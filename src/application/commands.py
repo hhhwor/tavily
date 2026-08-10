@@ -56,7 +56,6 @@ class SearchCommand:
     limit: int = 10
     source_types: tuple[DocumentKind, ...] | None = None
     filters: SearchFilters = field(default_factory=SearchFilters)
-    verticals: tuple[Literal["legal"], ...] = ()
 
     def __post_init__(self) -> None:
         if not self.query.strip():
@@ -68,18 +67,6 @@ class SearchCommand:
             if not normalized:
                 raise ValueError("source_types 不能是空数组")
             object.__setattr__(self, "source_types", normalized)
-        normalized_verticals = tuple(
-            dict.fromkeys(str(value).strip().lower() for value in self.verticals)
-        )
-        if any(value != "legal" for value in normalized_verticals):
-            raise ValueError("verticals 目前仅支持 legal")
-        if (
-            normalized_verticals
-            and self.source_types is not None
-            and "web" not in self.source_types
-        ):
-            raise ValueError("verticals=legal 需要包含 web source_types")
-        object.__setattr__(self, "verticals", normalized_verticals)
 
 
 @dataclass(frozen=True, slots=True)

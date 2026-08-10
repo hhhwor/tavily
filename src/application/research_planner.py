@@ -224,7 +224,7 @@ class ResearchPlanner:
             elif question.field == "scope.source_types":
                 accepted = [
                     value for value in values
-                    if value in {"web", "academic", "patent"}
+                    if value in {"web", "academic", "patent", "legal"}
                 ]
                 if not accepted:
                     remaining.append(question)
@@ -408,7 +408,7 @@ class ResearchPlanner:
                 query = f"{query} {gap.code.lower().replace('_', ' ')}"
             source_types: list[DocumentKind] = []
             if gap.dimension == "source_type" and gap.value in {
-                "web", "academic", "patent"
+                "web", "academic", "patent", "legal"
             }:
                 source_types = [gap.value]
             kind = (
@@ -513,6 +513,10 @@ class ResearchPlanner:
                 item.type == "patent"
                 and item.patent is not None
                 and bool(item.patent.publication_number)
+            ) or (
+                item.type == "legal"
+                and item.legal is not None
+                and bool(item.passage.text)
             )
             if not readable:
                 continue

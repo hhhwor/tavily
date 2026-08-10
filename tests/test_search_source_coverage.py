@@ -58,6 +58,7 @@ def _execute(limit: int):
         "academic", 1, first_score=0.20
     )
     recalled_patent, ranked_patent = _documents("patent", 1, first_score=0.10)
+    recalled_legal, ranked_legal = _documents("legal", 1, first_score=0.15)
     planned = PlannedQuery(
         plan=SearchPlan(
             raw_query="mixed query",
@@ -69,6 +70,7 @@ def _execute(limit: int):
         active_provider_names=("web-source",),
         do_academic=True,
         do_patent=True,
+        do_legal=True,
     )
     options = resolve_ranking_options(
         default_profile="quality",
@@ -82,8 +84,11 @@ def _execute(limit: int):
             web=recalled_web,
             academic=recalled_academic,
             patent=recalled_patent,
-            planned_sources=("web-source", "academic-source", "patent-source"),
-            candidate_budget=8,
+            legal=recalled_legal,
+            planned_sources=(
+                "web-source", "academic-source", "patent-source", "legal-source"
+            ),
+            candidate_budget=9,
         ),
         ranked=RankingOutcome(
             options=options,
@@ -91,6 +96,7 @@ def _execute(limit: int):
             web=ranked_web,
             academic=ranked_academic,
             patent=ranked_patent,
+            legal=ranked_legal,
         ),
     )
 
@@ -126,7 +132,7 @@ def _execute(limit: int):
     return service.execute(SearchCommand(
         "mixed query",
         limit=limit,
-        source_types=("web", "academic", "patent"),
+        source_types=("web", "academic", "patent", "legal"),
     ))
 
 
@@ -134,18 +140,19 @@ def test_explicit_mixed_sources_reserve_coverage_before_global_fill():
     response = _execute(limit=6)
 
     assert response.result_set.counts_by_type == {
-        "web": 4,
+        "web": 3,
         "academic": 1,
         "patent": 1,
+        "legal": 1,
     }
     assert response.result_set.counts_by_stage.model_dump() == {
-        "recalled": {"web": 6, "academic": 1, "patent": 1},
-        "ranked": {"web": 6, "academic": 1, "patent": 1},
-        "assembled": {"web": 6, "academic": 1, "patent": 1},
-        "selected": {"web": 4, "academic": 1, "patent": 1},
+        "recalled": {"web": 6, "academic": 1, "patent": 1, "legal": 1},
+        "ranked": {"web": 6, "academic": 1, "patent": 1, "legal": 1},
+        "assembled": {"web": 6, "academic": 1, "patent": 1, "legal": 1},
+        "selected": {"web": 3, "academic": 1, "patent": 1, "legal": 1},
     }
     assert [item.type for item in response.evidence] == [
-        "web", "web", "web", "web", "academic", "patent"
+        "web", "web", "web", "academic", "legal", "patent"
     ]
     assert response.retrieval_assessment.status == "usable"
     assert response.retrieval_assessment.gaps == []
@@ -159,9 +166,10 @@ def test_limit_smaller_than_available_source_types_reports_dropped_coverage():
         "web": 2,
         "academic": 0,
         "patent": 0,
+        "legal": 0,
     }
     dropped = [
         gap for gap in response.retrieval_assessment.gaps
         if gap.code == "SOURCE_TYPE_DROPPED_BY_LIMIT"
     ]
-    assert [gap.type for gap in dropped] == ["academic", "patent"]
+    assert [gap.type for gap in dropped] == ["academic", "patent", "legal"]
