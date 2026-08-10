@@ -30,6 +30,9 @@ class SearchFilterRequest(StrictRequest):
     published_to: date | None = None
     languages: list[str] = Field(default_factory=list, max_length=10)
     jurisdictions: list[str] = Field(default_factory=list, max_length=20)
+    legal_status: Literal[
+        "尚未生效", "现行有效", "已被修改", "失效", "待核实"
+    ] | None = None
 
     @model_validator(mode="after")
     def validate_dates(self) -> "SearchFilterRequest":
@@ -59,6 +62,7 @@ class SearchRequest(StrictRequest):
                 published_to=self.filters.published_to,
                 languages=tuple(self.filters.languages),
                 jurisdictions=tuple(self.filters.jurisdictions),
+                legal_status=self.filters.legal_status,
             ),
         )
 

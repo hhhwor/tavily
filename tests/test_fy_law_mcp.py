@@ -6,6 +6,8 @@ import json
 import pytest
 
 from src.application.commands import SearchCommand
+from src.application.evidence_assembler import EvidenceAssembler
+from src.application.ports.retrieval import RetrievalRequest
 from src.application.query_planner import QueryPlanner
 from src.application.source_registry import SourceRegistry
 from src.bootstrap import build_container
@@ -121,6 +123,94 @@ def test_provider_rejects_jsonrpc_tool_errors_without_leaking_token():
     assert "mcp-test-token" not in str(exc_info.value)
 
 
+def test_provider_passes_requested_legal_status_to_fy_tool():
+    http = _Http([
+        _Response({"jsonrpc": "2.0", "result": {"protocolVersion": "2025-03-26"}}),
+        _Response({}),
+        _Response({
+            "jsonrpc": "2.0",
+            "result": {"content": [{"type": "text", "text": json.dumps(_law_record())}]},
+        }),
+    ])
+
+    results = _provider(http).search_request(RetrievalRequest(
+        query="民法典第一千零八十四条",
+        candidate_budget=3,
+        legal_status="失效",
+    ))
+
+    assert len(results) == 1
+    assert http.calls[-1]["json"]["params"]["arguments"]["status"] == "失效"
+
+
+def test_provider_exposes_law_metadata_as_public_evidence():
+    http = _Http([
+        _Response({"jsonrpc": "2.0", "result": {"protocolVersion": "2025-03-26"}}),
+        _Response({}),
+        _Response({
+            "jsonrpc": "2.0",
+            "result": {"content": [{"type": "text", "text": json.dumps(_law_record())}]},
+        }),
+    ])
+
+    results = _provider(http).search("民法典第一千零八十四条")
+    evidence = EvidenceAssembler().assemble(results, (), ())
+
+    assert evidence[0].legal is not None
+    assert evidence[0].legal.model_dump() == {
+        "law_type": "中央法规",
+        "status": "现行有效",
+        "department": "全国人民代表大会",
+        "directory": ["第五编婚姻家庭", "第一千零八十四条"],
+        "item": "第一千零八十四条",
+    }
+
+
+def test_provider_reloads_token_file_for_each_search_and_reports_anonymous_status(
+    tmp_path,
+):
+    token_path = tmp_path / "fy-law-mcp.token"
+    token_path.write_text("first-token", encoding="utf-8")
+    http = _Http([
+        _Response({"jsonrpc": "2.0", "result": {"protocolVersion": "2025-03-26"}}),
+        _Response({}),
+        _Response({
+            "jsonrpc": "2.0",
+            "result": {"content": [{"type": "text", "text": json.dumps(_law_record())}]},
+        }),
+        _Response({"jsonrpc": "2.0", "result": {"protocolVersion": "2025-03-26"}}),
+        _Response({}),
+        _Response({
+            "jsonrpc": "2.0",
+            "result": {"content": [{"type": "text", "text": json.dumps(_law_record())}]},
+        }),
+    ])
+    provider = FyLawMcpProvider(
+        endpoint="https://fy.example.test/354347/mcp_law_service",
+        token="",
+        token_file=str(token_path),
+        http_session=http,
+    )
+
+    provider.search("民法典")
+    token_path.write_text("rotated-token", encoding="utf-8")
+    provider.search("民法典")
+
+    assert [
+        item["headers"]["COP-FYOP-AUTHORIZATION"] for item in http.calls[:3]
+    ] == ["first-token"] * 3
+    assert [
+        item["headers"]["COP-FYOP-AUTHORIZATION"] for item in http.calls[3:]
+    ] == ["rotated-token"] * 3
+    status = provider.runtime_status()
+    assert status["token_source"] == "file"
+    assert status["last_success_at"] is not None
+    assert status["last_result_count"] == 1
+    assert "first-token" not in json.dumps(status)
+    assert "rotated-token" not in json.dumps(status)
+    assert str(token_path) not in json.dumps(status)
+
+
 def test_registry_keeps_legal_provider_out_of_default_web_route():
     provider = _provider(_Http([]))
     registry = SourceRegistry([provider])
@@ -182,6 +272,13 @@ def test_legal_settings_are_secret_safe_and_required_when_enabled():
     assert configured.fy_law_mcp_url.endswith("/mcp_law_service")
     assert configured.enabled_providers == ("fy_law_mcp",)
     assert "mcp-test-token" not in repr(configured)
+    file_configured = Settings.from_env({
+        "FY_LAW_MCP_ENABLED": "true",
+        "FY_LAW_MCP_TOKEN_FILE": "/run/secrets/fy-law-mcp.token",
+        "OPENALEX_ENABLED": "false",
+    })
+    assert file_configured.fy_law_mcp_token == ""
+    assert file_configured.fy_law_mcp_token_file == "/run/secrets/fy-law-mcp.token"
     with pytest.raises(ValueError, match="FY_LAW_MCP_TOKEN"):
         Settings.from_env({"FY_LAW_MCP_ENABLED": "true"})
 

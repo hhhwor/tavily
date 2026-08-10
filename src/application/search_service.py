@@ -82,6 +82,7 @@ class SearchService:
             published_to=filters.published_to,
             languages=list(filters.languages),
             jurisdictions=list(filters.jurisdictions),
+            legal_status=filters.legal_status,
         )
 
     @staticmethod

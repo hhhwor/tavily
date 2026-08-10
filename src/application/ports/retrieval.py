@@ -58,6 +58,7 @@ class RetrievalRequest:
     time_to: datetime | None = None
     languages: tuple[str, ...] = ()
     jurisdictions: tuple[str, ...] = ()
+    legal_status: str | None = None
     timeout_seconds: float | None = None
 
     def __post_init__(self) -> None:
@@ -71,6 +72,8 @@ class RetrievalRequest:
             raise ValueError("RetrievalRequest.time_from 不能晚于 time_to")
         object.__setattr__(self, "languages", tuple(self.languages))
         object.__setattr__(self, "jurisdictions", tuple(self.jurisdictions))
+        if self.legal_status is not None:
+            object.__setattr__(self, "legal_status", str(self.legal_status).strip())
 
     @property
     def language(self) -> str | None:

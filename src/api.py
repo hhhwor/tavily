@@ -153,10 +153,16 @@ def create_app(
         settings = current.settings
         engine = current.engine
         classifier = getattr(engine.claim_verifier, "classifier", None)
+        registry = getattr(engine, "source_registry", None)
+        legal_provider = registry.get("fy_law_mcp") if registry is not None else None
+        legal_status = getattr(legal_provider, "runtime_status", None)
         return {
             "status": "ok",
             "capabilities": ["search", "research"],
             "providers": list(settings.enabled_providers),
+            "legal_mcp": (
+                legal_status() if callable(legal_status) else {"enabled": False}
+            ),
             "academic": engine.academic_provider is not None,
             "patent": engine.patent_provider is not None,
             "reranker": getattr(engine.text_scorer, "name", "unknown"),

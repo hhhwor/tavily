@@ -113,6 +113,7 @@ def _web_providers(
         providers.append(FyLawMcpProvider(
             endpoint=settings.fy_law_mcp_url,
             token=settings.fy_law_mcp_token,
+            token_file=settings.fy_law_mcp_token_file,
             timeout=settings.provider_timeout,
             http_session=http,
         ))

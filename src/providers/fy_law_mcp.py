@@ -3,6 +3,9 @@ from __future__ import annotations
 
 import json
 import re
+from datetime import datetime, timezone
+from pathlib import Path
+from threading import RLock
 from typing import Any, Mapping, Optional, Sequence
 from uuid import uuid4
 
@@ -58,23 +61,43 @@ class FyLawMcpProvider(SearchProvider):
         *,
         endpoint: str = _DEFAULT_ENDPOINT,
         token: str,
+        token_file: str = "",
         timeout: int = 15,
         http_session: Optional[requests.Session] = None,
     ) -> None:
         self.endpoint = endpoint.rstrip("/")
         self.token = token.strip()
+        self.token_file = Path(token_file) if token_file.strip() else None
         self.timeout = timeout
         self._http = http_session or requests
+        self._status_lock = RLock()
+        self._last_success_at: str | None = None
+        self._last_failure_code: str | None = None
+        self._last_auth_failure_at: str | None = None
+        self._last_result_count: int | None = None
         if not self.endpoint:
             raise ValueError("缺少 FY 法规 MCP 地址: FY_LAW_MCP_URL")
-        if not self.token:
-            raise ValueError("缺少 FY 法规 MCP Token: FY_LAW_MCP_TOKEN")
+        if not self.token and self.token_file is None:
+            raise ValueError(
+                "缺少 FY 法规 MCP Token: FY_LAW_MCP_TOKEN 或 "
+                "FY_LAW_MCP_TOKEN_FILE"
+            )
 
     def actual_filters(self, request: RetrievalRequest) -> Mapping[str, Any]:
         return {
             "tool": "flfg_iterative_search_tool",
-            "status": _DEFAULT_STATUS,
+            "status": request.legal_status or _DEFAULT_STATUS,
         }
+
+    def applied_request_filters(
+        self,
+        request: RetrievalRequest,
+    ) -> Mapping[str, Any]:
+        return (
+            {"legal_status": request.legal_status}
+            if request.legal_status
+            else {}
+        )
 
     def limitations(self, request: RetrievalRequest) -> tuple[str, ...]:
         limitations = list(super().limitations(request))
@@ -97,7 +120,7 @@ class FyLawMcpProvider(SearchProvider):
     def search_request(self, request: RetrievalRequest) -> list[SearchResult]:
         arguments = {
             "query": self._query_arguments(request.query),
-            "status": _DEFAULT_STATUS,
+            "status": request.legal_status or _DEFAULT_STATUS,
         }
         try:
             response = self._call_tool(
@@ -106,11 +129,61 @@ class FyLawMcpProvider(SearchProvider):
                 request,
             )
             records = self._records(response)
-        except ExternalServiceError:
+        except ExternalServiceError as exc:
+            self._record_failure(exc.code)
             raise
         except Exception as exc:
-            raise external_http_error(self.name, "mcp_law_search", exc) from exc
-        return self._normalize(records)[:request.candidate_budget]
+            error = external_http_error(self.name, "mcp_law_search", exc)
+            self._record_failure(error.code)
+            raise error from exc
+        results = self._normalize(records)[:request.candidate_budget]
+        self._record_success(len(results))
+        return results
+
+    def runtime_status(self) -> dict[str, Any]:
+        """返回可进入 health 的匿名运行状态，不泄露 endpoint 或 token。"""
+        with self._status_lock:
+            return {
+                "enabled": True,
+                "token_source": "file" if self.token_file is not None else "environment",
+                "last_success_at": self._last_success_at,
+                "last_failure_code": self._last_failure_code,
+                "last_auth_failure_at": self._last_auth_failure_at,
+                "last_result_count": self._last_result_count,
+            }
+
+    def _record_success(self, result_count: int) -> None:
+        with self._status_lock:
+            self._last_success_at = datetime.now(timezone.utc).isoformat()
+            self._last_failure_code = None
+            self._last_result_count = result_count
+
+    def _record_failure(self, code: str) -> None:
+        with self._status_lock:
+            self._last_failure_code = code
+            if code.endswith("AUTH_FAILED") or code == "MCP_TOKEN_UNAVAILABLE":
+                self._last_auth_failure_at = datetime.now(timezone.utc).isoformat()
+
+    def _token_snapshot(self) -> str:
+        if self.token_file is None:
+            return self.token
+        try:
+            token = self.token_file.read_text(encoding="utf-8").strip()
+        except OSError as exc:
+            raise ExternalServiceError(
+                provider=self.name,
+                code="MCP_TOKEN_UNAVAILABLE",
+                recoverable=False,
+                cause=exc,
+            ) from exc
+        if not token:
+            raise ExternalServiceError(
+                provider=self.name,
+                code="MCP_TOKEN_UNAVAILABLE",
+                recoverable=False,
+                cause=ValueError("FY MCP token file is empty"),
+            )
+        return token
 
     def _call_tool(
         self,
@@ -118,16 +191,18 @@ class FyLawMcpProvider(SearchProvider):
         arguments: Mapping[str, Any],
         request: RetrievalRequest,
     ) -> Mapping[str, Any]:
-        session_id = self._initialize(request)
-        self._notify_initialized(request, session_id)
+        token = self._token_snapshot()
+        session_id = self._initialize(request, token)
+        self._notify_initialized(request, token, session_id)
         return self._rpc(
             method="tools/call",
             params={"name": tool_name, "arguments": dict(arguments)},
             request=request,
+            token=token,
             session_id=session_id,
         )
 
-    def _initialize(self, request: RetrievalRequest) -> str:
+    def _initialize(self, request: RetrievalRequest, token: str) -> str:
         response = self._rpc(
             method="initialize",
             params={
@@ -139,6 +214,7 @@ class FyLawMcpProvider(SearchProvider):
                 },
             },
             request=request,
+            token=token,
         )
         result = response.get("result")
         if not isinstance(result, Mapping):
@@ -148,12 +224,14 @@ class FyLawMcpProvider(SearchProvider):
     def _notify_initialized(
         self,
         request: RetrievalRequest,
+        token: str,
         session_id: str,
     ) -> None:
         self._rpc(
             method="notifications/initialized",
             params=None,
             request=request,
+            token=token,
             session_id=session_id,
             notification=True,
         )
@@ -164,6 +242,7 @@ class FyLawMcpProvider(SearchProvider):
         method: str,
         params: Mapping[str, Any] | None,
         request: RetrievalRequest,
+        token: str,
         session_id: str = "",
         notification: bool = False,
     ) -> Mapping[str, Any]:
@@ -173,7 +252,7 @@ class FyLawMcpProvider(SearchProvider):
         if params is not None:
             payload["params"] = dict(params)
         headers = {
-            "COP-FYOP-AUTHORIZATION": self.token,
+            "COP-FYOP-AUTHORIZATION": token,
             "Content-Type": "application/json",
             "Accept": "application/json, text/event-stream",
         }

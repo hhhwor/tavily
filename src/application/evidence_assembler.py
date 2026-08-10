@@ -21,6 +21,7 @@ from src.domain.evidence import (
     EvidenceAccess,
     EvidenceCitation,
     EvidenceDiagnostics,
+    EvidenceLegal,
     EvidencePassage,
     EvidencePatent,
     EvidenceScores,
@@ -51,6 +52,24 @@ def _citation_label(
         suffix = " et al." if len(authors) > 1 else ""
         return f"{first}{suffix}, {year}" if year else f"{first}{suffix}"
     return f"{title[:48]}, {year}" if year else title[:64]
+
+
+def _legal_metadata(result: SearchResult) -> EvidenceLegal | None:
+    raw = result.raw or {}
+    if result.source != "fy_law_mcp" and not any(
+        raw.get(name) for name in ("law_type", "status", "department", "item")
+    ):
+        return None
+    directory = raw.get("directory") or []
+    if not isinstance(directory, (list, tuple)):
+        directory = [directory]
+    return EvidenceLegal(
+        law_type=str(raw.get("law_type") or ""),
+        status=str(raw.get("status") or ""),
+        department=str(raw.get("department") or ""),
+        directory=[str(item) for item in directory if str(item).strip()],
+        item=str(raw.get("item") or ""),
+    )
 
 
 class EvidenceAssembler:
@@ -130,6 +149,7 @@ class EvidenceAssembler:
                     label=result.site or result.title[:64],
                     venue=result.site,
                 ),
+                legal=_legal_metadata(result),
                 scores=EvidenceScores(
                     relevance=relevance,
                     source_rank=rank,

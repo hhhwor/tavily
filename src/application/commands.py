@@ -13,6 +13,17 @@ from src.domain.research import (
     ResearchScope,
 )
 
+LegalStatus = Literal[
+    "尚未生效",
+    "现行有效",
+    "已被修改",
+    "失效",
+    "待核实",
+]
+_LEGAL_STATUSES = frozenset({
+    "尚未生效", "现行有效", "已被修改", "失效", "待核实",
+})
+
 
 @dataclass(frozen=True, slots=True)
 class SearchFilters:
@@ -22,6 +33,7 @@ class SearchFilters:
     published_to: date | None = None
     languages: tuple[str, ...] = ()
     jurisdictions: tuple[str, ...] = ()
+    legal_status: LegalStatus | None = None
 
     def __post_init__(self) -> None:
         if self.published_from and self.published_to:
@@ -29,6 +41,11 @@ class SearchFilters:
                 raise ValueError("published_from 不能晚于 published_to")
         object.__setattr__(self, "languages", tuple(self.languages))
         object.__setattr__(self, "jurisdictions", tuple(self.jurisdictions))
+        if self.legal_status is not None:
+            status = str(self.legal_status).strip()
+            if status not in _LEGAL_STATUSES:
+                raise ValueError("legal_status 不受支持")
+            object.__setattr__(self, "legal_status", status)
 
 
 @dataclass(frozen=True, slots=True)

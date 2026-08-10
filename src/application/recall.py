@@ -81,6 +81,7 @@ class RecallCoordinator:
             ",".join(request.jurisdictions),
             request.time_from.isoformat() if request.time_from else "",
             request.time_to.isoformat() if request.time_to else "",
+            request.legal_status or "",
             request.query,
         ))
         cached = self._cache.get(key)
@@ -145,6 +146,7 @@ class RecallCoordinator:
             time_to=time_to,
             languages=languages,
             jurisdictions=filters.jurisdictions,
+            legal_status=filters.legal_status,
         )
 
     def recall(
