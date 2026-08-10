@@ -59,12 +59,14 @@ class SearchEngine:
         *,
         limit: int = 10,
         source_types: tuple[DocumentKind, ...] | None = None,
+        verticals: tuple[str, ...] = (),
         filters: SearchFilters | None = None,
     ) -> PublicSearchResponse:
         return self.execute(SearchCommand(
             query=query,
             limit=limit,
             source_types=source_types,
+            verticals=verticals,
             filters=filters or SearchFilters(),
         ))
 

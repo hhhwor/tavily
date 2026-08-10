@@ -113,6 +113,9 @@ class Settings:
     aliyun_web_search_region: str = "global"
     serpapi_api_key: str = field(default="", repr=False)
     serpapi_enabled: bool = False
+    fy_law_mcp_url: str = "https://api.cjbdi.com:8443/354347/mcp_law_service"
+    fy_law_mcp_token: str = field(default="", repr=False)
+    fy_law_mcp_enabled: bool = False
 
     default_top_k: int = 10
     per_provider_k: int = 10
@@ -224,6 +227,16 @@ class Settings:
             raise ValueError(
                 "SERPAPI_ENABLED=true 时必须配置 SERPAPI_API_KEY"
             )
+        fy_law_mcp_enabled = _bool(env, "FY_LAW_MCP_ENABLED", False)
+        fy_law_mcp_url = env.get(
+            "FY_LAW_MCP_URL",
+            "https://api.cjbdi.com:8443/354347/mcp_law_service",
+        ).strip()
+        fy_law_mcp_token = env.get("FY_LAW_MCP_TOKEN", "").strip()
+        if fy_law_mcp_enabled and not fy_law_mcp_url:
+            raise ValueError("FY_LAW_MCP_ENABLED=true 时必须配置 FY_LAW_MCP_URL")
+        if fy_law_mcp_enabled and not fy_law_mcp_token:
+            raise ValueError("FY_LAW_MCP_ENABLED=true 时必须配置 FY_LAW_MCP_TOKEN")
         aliyun_id = env.get("ALIBABA_CLOUD_ACCESS_KEY_ID", "")
         aliyun_secret = env.get("ALIBABA_CLOUD_ACCESS_KEY_SECRET", "")
         if bool(aliyun_id) != bool(aliyun_secret):
@@ -318,6 +331,9 @@ class Settings:
             aliyun_web_search_region=aliyun_region,
             serpapi_api_key=env.get("SERPAPI_API_KEY", ""),
             serpapi_enabled=serpapi_enabled,
+            fy_law_mcp_url=fy_law_mcp_url,
+            fy_law_mcp_token=fy_law_mcp_token,
+            fy_law_mcp_enabled=fy_law_mcp_enabled,
             default_top_k=_int(env, "SEARCH_TOP_K", 10, minimum=1),
             per_provider_k=_int(env, "SEARCH_PER_PROVIDER_K", 10, minimum=1),
             provider_timeout=_int(env, "SEARCH_PROVIDER_TIMEOUT", 15, minimum=1),
@@ -488,6 +504,8 @@ class Settings:
             names.append("aliyun")
         if self.serpapi_enabled and self.serpapi_api_key:
             names.append("serpapi")
+        if self.fy_law_mcp_enabled:
+            names.append("fy_law_mcp")
         return tuple(names)
 
     @property

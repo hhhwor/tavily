@@ -48,6 +48,7 @@ def test_rest_schema_maps_once_to_authoritative_search_command():
         "query": "query",
         "limit": 7,
         "source_types": ["academic", "patent"],
+        "verticals": [],
         "filters": {
             "published_from": "2024-01-01",
             "languages": ["zh", "en"],
@@ -60,13 +61,16 @@ def test_rest_schema_maps_once_to_authoritative_search_command():
     assert command.query == "query"
     assert command.limit == 7
     assert command.source_types == ("academic", "patent")
+    assert command.verticals == ()
     assert command.filters.languages == ("zh", "en")
     assert command.filters.jurisdictions == ("CN",)
 
 
 def test_search_request_is_strict_and_has_no_execution_tuning_fields():
     schema = SearchRequest.model_json_schema()["properties"]
-    assert set(schema) == {"query", "limit", "source_types", "filters"}
+    assert set(schema) == {
+        "query", "limit", "source_types", "verticals", "filters"
+    }
     with pytest.raises(ValidationError):
         SearchRequest.model_validate({"query": "q", "top_k": 3})
 

@@ -107,6 +107,15 @@ def _web_providers(
             timeout=settings.provider_timeout,
             http_session=http,
         ))
+    if settings.fy_law_mcp_enabled:
+        from src.providers.fy_law_mcp import FyLawMcpProvider
+
+        providers.append(FyLawMcpProvider(
+            endpoint=settings.fy_law_mcp_url,
+            token=settings.fy_law_mcp_token,
+            timeout=settings.provider_timeout,
+            http_session=http,
+        ))
     return providers
 
 

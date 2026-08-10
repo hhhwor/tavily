@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from types import MappingProxyType
-from typing import Iterable
+from typing import Iterable, Literal
 
 from src.application.ports.retrieval import RetrievalSource, SourceDescriptor
 from src.domain.documents import DocumentKind
@@ -35,6 +35,37 @@ class SourceRegistry:
 
     def ids(self, kind: DocumentKind | None = None) -> tuple[str, ...]:
         return tuple(descriptor.id for descriptor in self.descriptors(kind))
+
+    def ids_for_verticals(
+        self,
+        kind: DocumentKind,
+        verticals: Iterable[Literal["legal"]] = (),
+    ) -> tuple[str, ...]:
+        """按垂直路由标签选择来源。
+
+        未指定 vertical 时仅返回通用来源；指定 vertical 时仅返回匹配标签的
+        来源，避免法律 provider 进入每一次普通 Web 搜索。
+        """
+        requested = frozenset(verticals)
+        return tuple(
+            descriptor.id
+            for descriptor in self.descriptors(kind)
+            if (
+                bool(descriptor.route_tags & requested)
+                if requested
+                else not descriptor.route_tags
+            )
+        )
+
+    def has_vertical(
+        self,
+        kind: DocumentKind,
+        vertical: Literal["legal"],
+    ) -> bool:
+        return any(
+            vertical in descriptor.route_tags
+            for descriptor in self.descriptors(kind)
+        )
 
     def has_kind(self, kind: DocumentKind) -> bool:
         return any(True for _ in self.sources(kind))

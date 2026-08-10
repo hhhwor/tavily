@@ -52,6 +52,7 @@ class QueryPlanner:
         *,
         academic_available: bool,
         patent_available: bool,
+        legal_available: bool = False,
         deadline: Deadline | None = None,
         allow_external_models: bool = True,
     ) -> PlannedQuery:
@@ -63,6 +64,9 @@ class QueryPlanner:
         names = tuple(provider_names) if auto_route or "web" in requested else ()
         force_academic = None if auto_route else "academic" in requested
         force_patent = None if auto_route else "patent" in requested
+        if command.verticals and auto_route:
+            force_academic = False
+            force_patent = False
         plan = self._plan_query(
             command.query,
             list(names),
@@ -127,6 +131,14 @@ class QueryPlanner:
                 source_type="patent",
                 code="PROVIDER_UNAVAILABLE",
                 message="专利检索被请求或自动触发,但 Patent ES provider 未启用。",
+            ))
+        if "legal" in command.verticals and not legal_available:
+            failures.append(search_failure(
+                stage="routing",
+                source="fy_law_mcp",
+                source_type="web",
+                code="PROVIDER_UNAVAILABLE",
+                message="法律法规 MCP 检索被请求,但 FY provider 未启用。",
             ))
 
         search_query = plan.rewritten_query or plan.normalized_query

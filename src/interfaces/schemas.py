@@ -43,6 +43,7 @@ class SearchRequest(StrictRequest):
     query: str = Field(..., min_length=1, max_length=2000)
     limit: int = Field(10, ge=1, le=20)
     source_types: list[DocumentKind] | None = Field(None, min_length=1)
+    verticals: list[Literal["legal"]] = Field(default_factory=list, max_length=1)
     filters: SearchFilterRequest = Field(default_factory=SearchFilterRequest)
 
     def to_command(self) -> SearchCommand:
@@ -52,6 +53,7 @@ class SearchRequest(StrictRequest):
             source_types=(
                 tuple(self.source_types) if self.source_types is not None else None
             ),
+            verticals=tuple(self.verticals),
             filters=SearchFilters(
                 published_from=self.filters.published_from,
                 published_to=self.filters.published_to,

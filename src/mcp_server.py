@@ -56,12 +56,14 @@ def build_mcp(engine: SearchEngine, settings: Optional[Settings] = None) -> Fast
         query: str,
         limit: int = 10,
         source_types: Optional[list[Literal["web", "academic", "patent"]]] = None,
+        verticals: Optional[list[Literal["legal"]]] = None,
         filters: Optional[dict[str, Any]] = None,
     ) -> dict[str, Any]:
         request = SearchRequest.model_validate({
             "query": query,
             "limit": limit,
             "source_types": source_types,
+            "verticals": verticals or [],
             "filters": filters or {},
         })
         response = await anyio.to_thread.run_sync(
