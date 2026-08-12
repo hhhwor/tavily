@@ -18,6 +18,7 @@ from src.domain.evidence import (
 )
 from src.domain.failures import SearchFailure
 from src.domain.search import AcademicResult, PatentResult, SearchPlan, SearchResult
+from src.domain.intent import IntentDecision
 from src.domain.trust import (
     CandidateClaim,
     ClaimAssessment,

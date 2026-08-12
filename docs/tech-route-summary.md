@@ -185,6 +185,11 @@ POST /search {query, top_k, ranking_profile?, rerank_threshold_mode?, ...}
 | `RERANK_THRESHOLD_MODE` | **`prefer`** | `off`=关闭；`prefer`=达标优先并回填；`strict`=硬过滤 | `prefer`；只在确需空结果时使用 `strict` |
 | `RERANK_ENABLED` | 兼容字段 | `false → fast`；`true` 使用非 fast 默认档 | 新调用改用 `RANKING_PROFILE` |
 | `REWRITE_ENABLED` | **`false`** | L0 LLM 查询改写 | 视查询分布评测后再定 |
+| `INTENT_CLASSIFIER_ENABLED` | **`false`** | 用 Qwen3-8B 为未显式指定 `source_types` 的查询做结构化意图识别；失败、超时、低置信均回退 L0 规则 | 小流量评测通过后设为 `true` |
+| `INTENT_CLASSIFIER_MODEL` | `Qwen/Qwen3-8B` | SiliconFlow 意图识别模型；Qwen3 请求固定关闭思考模式 | 同默认 |
+| `INTENT_CLASSIFIER_TIMEOUT` | `8` | 单次分类 HTTP 总超时秒数，仍受搜索剩余 deadline 限制 | 5–8 |
+| `INTENT_CLASSIFIER_MIN_CONFIDENCE` | `0.70` | 低于此值不采用模型路由，保留规则结果 | `0.70` 起步，按标注集校准 |
+| `INTENT_CLASSIFIER_CACHE_SIZE` / `INTENT_CLASSIFIER_CACHE_TTL` | `1024` / `3600` | 归一化查询的进程内意图缓存条数 / TTL（秒） | 同默认 |
 | `FUSION_ENABLED` | 兼容字段 | 非 fast 场景中 `true → quality`、`false → semantic` | 新调用改用 `RANKING_PROFILE` |
 | `CHUNK_MAX_CHARS` / `CHUNK_OVERLAP` | `400` / `50` | 分块大小与重叠 | 同默认 |
 | `SEARCH_TOP_K` / `SEARCH_PER_PROVIDER_K` | `10` / `10` | 返回条数 / 每源召回数 | 同默认 |

@@ -28,6 +28,9 @@ from src.infrastructure.cache import InMemoryCache, build_cache
 from src.infrastructure.openalex_pdf import OpenAlexPdfGateway
 from src.infrastructure.patent_es_fulltext import PatentEsFullTextGateway
 from src.infrastructure.query_rewriter import SiliconFlowQueryRewriter
+from src.infrastructure.siliconflow_intent_classifier import (
+    SiliconFlowIntentClassifier,
+)
 from src.infrastructure.resilience import ResilienceManager
 from src.infrastructure.runtime import SystemClock
 from src.infrastructure.sqlite_research_store import SqliteResearchStore
@@ -356,9 +359,24 @@ def build_container(
             ),
             http_session=http,
         )
+        intent_classifier = None
+        if config.intent_classifier_enabled and config.siliconflow_api_key:
+            intent_classifier = SiliconFlowIntentClassifier(
+                config.siliconflow_api_key,
+                config.siliconflow_base_url,
+                config.intent_classifier_model,
+                cache=InMemoryCache(
+                    config.intent_classifier_cache_size,
+                    monotonic=clock.monotonic,
+                ),
+                http_session=http,
+                cache_ttl=config.intent_classifier_cache_ttl,
+                timeout=config.intent_classifier_timeout,
+            )
         query_planner = QueryPlanner(
             config,
             query_rewriter,
+            intent_classifier=intent_classifier,
             resilience=resilience,
         )
         recall = RecallCoordinator(

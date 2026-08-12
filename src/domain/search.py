@@ -88,6 +88,9 @@ class SearchPlan(BaseModel):
     academic: bool = False
     patent: bool = False
     legal: bool = False
+    intent: Optional[str] = None
+    intent_confidence: Optional[float] = None
+    legal_mode: Optional[str] = None
     providers: Tuple[str, ...] = ()
     top_k: int = 10
     failures: Tuple[SearchFailure, ...] = ()

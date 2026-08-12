@@ -147,6 +147,12 @@ class Settings:
 
     siliconflow_api_key: str = field(default="", repr=False)
     siliconflow_base_url: str = "https://api.siliconflow.cn/v1"
+    intent_classifier_enabled: bool = False
+    intent_classifier_model: str = "Qwen/Qwen3-8B"
+    intent_classifier_timeout: int = 8
+    intent_classifier_cache_size: int = 1024
+    intent_classifier_cache_ttl: int = 3600
+    intent_classifier_min_confidence: float = 0.70
     chunk_max_chars: int = 400
     chunk_overlap: int = 50
 
@@ -316,6 +322,20 @@ class Settings:
             )
 
         rewrite_model = env.get("REWRITE_MODEL", "Qwen/Qwen2.5-7B-Instruct")
+        intent_classifier_enabled = _bool(
+            env, "INTENT_CLASSIFIER_ENABLED", False
+        )
+        if intent_classifier_enabled and not env.get("SILICONFLOW_API_KEY"):
+            raise ValueError(
+                "INTENT_CLASSIFIER_ENABLED=true 时必须配置 SILICONFLOW_API_KEY"
+            )
+        intent_classifier_min_confidence = _float(
+            env, "INTENT_CLASSIFIER_MIN_CONFIDENCE", 0.70
+        )
+        if not 0.0 <= intent_classifier_min_confidence <= 1.0:
+            raise ValueError(
+                "INTENT_CLASSIFIER_MIN_CONFIDENCE 必须在 0 到 1 之间"
+            )
         synthesis_enabled = _bool(
             env, "RESEARCH_SYNTHESIS_ENABLED", False
         )
@@ -397,6 +417,20 @@ class Settings:
             siliconflow_base_url=env.get(
                 "SILICONFLOW_BASE_URL", "https://api.siliconflow.cn/v1"
             ),
+            intent_classifier_enabled=intent_classifier_enabled,
+            intent_classifier_model=env.get(
+                "INTENT_CLASSIFIER_MODEL", "Qwen/Qwen3-8B"
+            ),
+            intent_classifier_timeout=_int(
+                env, "INTENT_CLASSIFIER_TIMEOUT", 8, minimum=1
+            ),
+            intent_classifier_cache_size=_int(
+                env, "INTENT_CLASSIFIER_CACHE_SIZE", 1024, minimum=1
+            ),
+            intent_classifier_cache_ttl=_int(
+                env, "INTENT_CLASSIFIER_CACHE_TTL", 3600, minimum=1
+            ),
+            intent_classifier_min_confidence=intent_classifier_min_confidence,
             chunk_max_chars=_int(env, "CHUNK_MAX_CHARS", 400, minimum=1),
             chunk_overlap=_int(env, "CHUNK_OVERLAP", 50, minimum=0),
             rewrite_enabled=_bool(env, "REWRITE_ENABLED", False),

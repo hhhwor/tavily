@@ -84,6 +84,24 @@ def test_qwen3_0_6b_is_the_default_rerank_model():
     assert Settings.from_env({}).rerank_model == expected
 
 
+def test_intent_classifier_has_opt_in_qwen3_8b_defaults_and_validates_key():
+    defaults = Settings.from_env({})
+    configured = Settings.from_env({
+        "SILICONFLOW_API_KEY": "test-key",
+        "INTENT_CLASSIFIER_ENABLED": "true",
+        "INTENT_CLASSIFIER_MIN_CONFIDENCE": "0.75",
+    })
+
+    assert defaults.intent_classifier_enabled is False
+    assert defaults.intent_classifier_model == "Qwen/Qwen3-8B"
+    assert configured.intent_classifier_enabled is True
+    assert configured.intent_classifier_min_confidence == 0.75
+    with pytest.raises(ValueError, match="SILICONFLOW_API_KEY"):
+        Settings.from_env({"INTENT_CLASSIFIER_ENABLED": "true"})
+    with pytest.raises(ValueError, match="INTENT_CLASSIFIER_MIN_CONFIDENCE"):
+        Settings.from_env({"INTENT_CLASSIFIER_MIN_CONFIDENCE": "1.01"})
+
+
 def test_doubao_credentials_enable_provider_without_leaking_from_repr():
     configured = Settings.from_env({
         "ASK_ECHO_SEARCH_INFINITY_API_KEY": "doubao-test-key",
@@ -272,6 +290,23 @@ def test_container_injects_shared_session_and_isolated_executors():
     assert container.recall_executor._shutdown is True
     assert container.ranking_executor._shutdown is True
     assert container.pdf_executor._shutdown is True
+
+
+def test_container_injects_enabled_intent_classifier_with_shared_session():
+    container = build_container(
+        _safe_settings(
+            siliconflow_api_key="test-key",
+            intent_classifier_enabled=True,
+        ),
+        include_mcp=False,
+    )
+    try:
+        classifier = container.engine._search_service._discovery._query_planner._intent_classifier
+        assert classifier is not None
+        assert classifier._http is container.http_session
+        assert classifier._model == "Qwen/Qwen3-8B"
+    finally:
+        container.close()
 
 
 def test_create_app_defers_factory_and_closes_runtime():
