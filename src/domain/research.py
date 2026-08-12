@@ -136,6 +136,15 @@ class ResearchAction(ResearchModel):
     candidate_ids: list[str] = Field(default_factory=list)
     related_document_ids: list[str] = Field(default_factory=list)
     expected_gain: list[str] = Field(default_factory=list)
+    strategy: Literal[
+        "direct_source",
+        "counter_source",
+        "fulltext_read",
+        "citation_expand",
+        "family_expand",
+    ] = "direct_source"
+    attempt_key: str = ""
+    priority: int = Field(100, ge=0, le=1000)
 
 
 class ResearchProgress(ResearchModel):
@@ -205,7 +214,9 @@ class ResearchCoverage(ResearchModel):
 
 class CoverageGain(ResearchModel):
     new_independent_evidence: int = 0
+    new_qualified_evidence_refs: list[str] = Field(default_factory=list)
     newly_improved_targets: list[str] = Field(default_factory=list)
+    resolved_gap_refs: list[str] = Field(default_factory=list)
     new_conflicts: int = 0
     locator_upgrades: int = 0
     score: int = 0
@@ -215,9 +226,40 @@ class CoverageGain(ResearchModel):
         return self.score > 0
 
 
+class ResearchProviderOutcome(ResearchModel):
+    """One provider's observable result within a Research action."""
+
+    provider_id: str
+    status: Literal["completed", "empty", "failed"] = "empty"
+    raw_candidates: int = 0
+    failure_codes: list[str] = Field(default_factory=list)
+
+
+class ResearchActionOutcome(ResearchModel):
+    """Auditable result of one planned Research action.
+
+    ``status`` describes execution, while ``gain`` records whether the action
+    materially improved one of its target gaps.  Keeping both prevents a
+    provider response with unrelated candidates from looking like progress.
+    """
+
+    action_id: str
+    target_gap_refs: list[str] = Field(default_factory=list)
+    status: Literal["completed", "empty", "failed"] = "empty"
+    provider_ids: list[str] = Field(default_factory=list)
+    provider_outcomes: list[ResearchProviderOutcome] = Field(
+        default_factory=list
+    )
+    raw_candidates: int = 0
+    adopted_candidates: int = 0
+    failure_codes: list[str] = Field(default_factory=list)
+    gain: CoverageGain = Field(default_factory=CoverageGain)
+
+
 class RoundResult(ResearchModel):
     round: int = Field(..., ge=1)
     actions: list[ResearchAction] = Field(default_factory=list)
+    action_outcomes: list[ResearchActionOutcome] = Field(default_factory=list)
     actual_queries: list[str] = Field(default_factory=list)
     actual_filters: list[dict[str, Any]] = Field(default_factory=list)
     source_results: dict[str, int] = Field(default_factory=dict)
@@ -243,6 +285,7 @@ class ResearchRoundCheckpoint(ResearchModel):
     source_attempts: int = 0
     source_successes: int = 0
     saturation_rounds: int = 0
+    saturation_strategies: list[str] = Field(default_factory=list)
     usage: ResearchUsage = Field(default_factory=ResearchUsage)
     committed_at: datetime
 
@@ -418,6 +461,7 @@ class ResearchStop(ResearchModel):
         "information_gain_saturated",
         "max_rounds_reached",
         "max_candidates_reached",
+        "search_space_exhausted",
         "source_failure",
         "deadline_reached",
         "queue_ttl_exceeded",

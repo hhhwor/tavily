@@ -34,6 +34,20 @@ _LEADING_CONNECTOR = re.compile(r"^(?:以及|并且|同时|而且|且)\s*")
 _LEADING_REQUEST = re.compile(
     r"^(?:请|请你)?(?:分析|研究|评估|说明|比较|调查|总结|判断)[:：\s]*"
 )
+_QUERY_FINGERPRINT = re.compile(r"[\W_]+", re.UNICODE)
+_SOURCE_PRIORITY: tuple[DocumentKind, ...] = (
+    "academic", "patent", "legal", "web",
+)
+_GAP_PRIORITIES = {
+    "PATENT_FAMILY_NOT_READ": 0,
+    "PATENT_CITATIONS_NOT_READ": 1,
+    "PATENT_NPL_CITATIONS_NOT_SEARCHED": 2,
+    "NO_CITABLE_SUPPORT": 4,
+    "ABSTRACT_ONLY": 4,
+    "NO_STABLE_LOCATOR": 4,
+    "NO_SUPPORTING_EVIDENCE": 5,
+    "COUNTEREVIDENCE_NOT_SEARCHED": 6,
+}
 
 
 def _stable_id(prefix: str, value: str) -> str:
@@ -262,13 +276,15 @@ class ResearchPlanner:
         max_actions: int = 1,
         evidence: Sequence[Evidence] = (),
         allow_deep_read: bool = True,
+        counterevidence_only: bool = False,
     ) -> list[ResearchAction]:
-        used_queries = {
-            query
-            for result in history
-            for query in result.actual_queries
-        }
         claim_by_id = {claim.id: claim for claim in plan.claims}
+        gap_by_id = {gap.id: gap for gap in coverage.gaps}
+        attempted_keys = {
+            self._previous_attempt_key(action, gap_by_id)
+            for result in history
+            for action in result.actions
+        }
         attempted_deep_reads = {
             candidate_id
             for result in history
@@ -301,11 +317,7 @@ class ResearchPlanner:
         ordered_gaps = sorted(
             enumerate(coverage.gaps),
             key=lambda row: (
-                {
-                    "PATENT_FAMILY_NOT_READ": 0,
-                    "PATENT_CITATIONS_NOT_READ": 1,
-                    "PATENT_NPL_CITATIONS_NOT_SEARCHED": 2,
-                }.get(row[1].code, 3),
+                self._gap_priority(row[1]),
                 row[0],
             ),
         )
@@ -319,23 +331,19 @@ class ResearchPlanner:
                     for evidence_id in gap.evidence_refs
                     if evidence_id in evidence_by_id
                 ), None)
-                if query and query not in used_queries and candidate is not None:
-                    identity = "|".join((
-                        str(round_number),
-                        "citation_expand",
-                        gap.id,
-                        query,
-                    ))
-                    actions.append(ResearchAction(
-                        id=_stable_id("action", identity),
-                        round=round_number,
-                        kind="citation_expand",
-                        target_gap_refs=[gap.id],
-                        source_types=["academic"],
-                        query=query,
-                        candidate_ids=[candidate.id],
-                        expected_gain=[f"npl:{query}"],
-                    ))
+                action = self._new_action(
+                    gap,
+                    round_number=round_number,
+                    kind="citation_expand",
+                    strategy="citation_expand",
+                    source_types=["academic"],
+                    query=query,
+                    candidate_ids=[candidate.id] if candidate is not None else [],
+                    expected_gain=[f"npl:{query}"] if query else [],
+                    attempted_keys=attempted_keys,
+                ) if query and candidate is not None else None
+                if action is not None:
+                    actions.append(action)
                     if len(actions) >= max_actions:
                         break
                 continue
@@ -347,26 +355,24 @@ class ResearchPlanner:
             ) if allow_deep_read else None
             if relation_action is not None:
                 kind, candidate, related_document = relation_action
-                identity = "|".join((
-                    str(round_number),
-                    kind,
-                    gap.id,
-                    related_document,
-                ))
-                actions.append(ResearchAction(
-                    id=_stable_id("action", identity),
-                    round=round_number,
+                action = self._new_action(
+                    gap,
+                    round_number=round_number,
                     kind=kind,
-                    target_gap_refs=[gap.id],
+                    strategy=(
+                        "family_expand"
+                        if kind == "family_expand" else "citation_expand"
+                    ),
                     source_types=["patent"],
                     candidate_ids=[candidate.id],
                     related_document_ids=[related_document],
-                    expected_gain=[
-                        f"{gap.dimension}:{related_document}"
-                    ],
-                ))
-                if len(actions) >= max_actions:
-                    break
+                    expected_gain=[f"{gap.dimension}:{related_document}"],
+                    attempted_keys=attempted_keys,
+                )
+                if action is not None:
+                    actions.append(action)
+                    if len(actions) >= max_actions:
+                        break
                 continue
             if gap.code in {
                 "PATENT_FAMILY_NOT_READ",
@@ -380,62 +386,190 @@ class ResearchPlanner:
                 deep_read_works,
             ) if allow_deep_read else None
             if candidate is not None:
-                identity = "|".join((
-                    str(round_number),
-                    "deep_read",
-                    gap.id,
-                    candidate.id,
-                ))
-                actions.append(ResearchAction(
-                    id=_stable_id("action", identity),
-                    round=round_number,
+                action = self._new_action(
+                    gap,
+                    round_number=round_number,
                     kind="deep_read",
-                    target_gap_refs=[gap.id],
+                    strategy="fulltext_read",
                     source_types=[candidate.type],
                     candidate_ids=[candidate.id],
                     expected_gain=[
                         f"locator:{candidate.result_id}",
                         f"version:{candidate.result_id}",
                     ],
-                ))
-                if len(actions) >= max_actions:
-                    break
+                    attempted_keys=attempted_keys,
+                )
+                if action is not None:
+                    actions.append(action)
+                    if len(actions) >= max_actions:
+                        break
+                continue
+            if counterevidence_only and "COUNTER" not in gap.code:
                 continue
             query = self._query_for_gap(plan, gap, claim_by_id)
             if not query:
                 continue
-            if query in used_queries:
-                query = f"{query} {gap.code.lower().replace('_', ' ')}"
-            source_types: list[DocumentKind] = []
-            if gap.dimension == "source_type" and gap.value in {
-                "web", "academic", "patent", "legal"
-            }:
-                source_types = [gap.value]
             kind = (
                 "counter_search"
                 if "COUNTER" in gap.code
                 else "search"
             )
-            identity = "|".join((
-                str(round_number),
-                kind,
-                gap.id,
-                query,
-            ))
-            actions.append(ResearchAction(
-                id=_stable_id("action", identity),
-                round=round_number,
-                kind=kind,
-                target_gap_refs=[gap.id],
-                source_types=source_types,
-                query=query,
-                expected_gain=[
-                    f"{gap.dimension or 'claim'}:{gap.value or gap.code}"
-                ],
-            ))
+            strategy = (
+                "counter_source"
+                if kind == "counter_search" else "direct_source"
+            )
+            for source_type in self._source_types_for_gap(plan, gap):
+                action = self._new_action(
+                    gap,
+                    round_number=round_number,
+                    kind=kind,
+                    strategy=strategy,
+                    source_types=[source_type],
+                    query=query,
+                    expected_gain=[
+                        f"{gap.dimension or 'claim'}:{gap.value or gap.code}"
+                    ],
+                    attempted_keys=attempted_keys,
+                )
+                if action is None:
+                    continue
+                actions.append(action)
+                break
             if len(actions) >= max_actions:
                 break
         return actions
+
+    @staticmethod
+    def _gap_priority(gap: CoverageGap) -> int:
+        return _GAP_PRIORITIES.get(gap.code, 100)
+
+    @staticmethod
+    def _source_types_for_gap(
+        plan: ObjectivePlan,
+        gap: CoverageGap,
+    ) -> list[DocumentKind]:
+        if gap.dimension == "source_type" and gap.value in _SOURCE_PRIORITY:
+            return [gap.value]
+        scoped = [
+            target.value
+            for target in plan.coverage_targets
+            if target.dimension == "source_type"
+            and target.value in _SOURCE_PRIORITY
+        ]
+        preferred: list[DocumentKind] = []
+        if plan.profile == "literature_review":
+            preferred.append("academic")
+        elif plan.profile == "prior_art_landscape":
+            preferred.append("patent")
+        for source_type in _SOURCE_PRIORITY:
+            if source_type in scoped or not scoped:
+                preferred.append(source_type)
+        return list(dict.fromkeys(preferred))
+
+    def _previous_attempt_key(
+        self,
+        action: ResearchAction,
+        gap_by_id: dict[str, CoverageGap],
+    ) -> str:
+        if action.attempt_key:
+            return action.attempt_key
+        gap = next((
+            gap_by_id[gap_id]
+            for gap_id in action.target_gap_refs
+            if gap_id in gap_by_id
+        ), None)
+        if gap is None:
+            return action.id
+        return self._attempt_key(
+            gap,
+            strategy=self._strategy_for_kind(action.kind),
+            source_types=action.source_types,
+            query=action.query,
+            candidate_ids=action.candidate_ids,
+            related_document_ids=action.related_document_ids,
+        )
+
+    @staticmethod
+    def _strategy_for_kind(kind: str) -> str:
+        return {
+            "counter_search": "counter_source",
+            "deep_read": "fulltext_read",
+            "family_expand": "family_expand",
+            "citation_expand": "citation_expand",
+        }.get(kind, "direct_source")
+
+    @classmethod
+    def _new_action(
+        cls,
+        gap: CoverageGap,
+        *,
+        round_number: int,
+        kind: str,
+        strategy: str,
+        source_types: list[DocumentKind],
+        attempted_keys: set[str],
+        query: str | None = None,
+        candidate_ids: list[str] | None = None,
+        related_document_ids: list[str] | None = None,
+        expected_gain: list[str] | None = None,
+    ) -> ResearchAction | None:
+        candidate_ids = candidate_ids or []
+        related_document_ids = related_document_ids or []
+        attempt_key = cls._attempt_key(
+            gap,
+            strategy=strategy,
+            source_types=source_types,
+            query=query,
+            candidate_ids=candidate_ids,
+            related_document_ids=related_document_ids,
+        )
+        if attempt_key in attempted_keys:
+            return None
+        identity = "|".join((
+            str(round_number), kind, attempt_key,
+        ))
+        return ResearchAction(
+            id=_stable_id("action", identity),
+            round=round_number,
+            kind=kind,
+            target_gap_refs=[gap.id],
+            source_types=source_types,
+            query=query,
+            candidate_ids=candidate_ids,
+            related_document_ids=related_document_ids,
+            expected_gain=expected_gain or [],
+            strategy=strategy,
+            attempt_key=attempt_key,
+            priority=cls._gap_priority(gap),
+        )
+
+    @staticmethod
+    def _attempt_key(
+        gap: CoverageGap,
+        *,
+        strategy: str,
+        source_types: Sequence[DocumentKind],
+        query: str | None,
+        candidate_ids: Sequence[str],
+        related_document_ids: Sequence[str],
+    ) -> str:
+        scope = gap.claim_ref or ":".join((
+            gap.dimension or "gap", gap.value or gap.code,
+        ))
+        query_fingerprint = _QUERY_FINGERPRINT.sub(
+            " ", (query or "").casefold()
+        ).strip()
+        material = "|".join((
+            scope,
+            strategy,
+            ",".join(source_types),
+            query_fingerprint,
+            ",".join(candidate_ids),
+            ",".join(related_document_ids),
+        ))
+        return "attempt_" + hashlib.sha256(
+            material.encode("utf-8")
+        ).hexdigest()[:16]
 
     @staticmethod
     def _patent_relation_action(

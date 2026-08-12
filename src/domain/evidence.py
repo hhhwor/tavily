@@ -17,6 +17,13 @@ class EvidencePassage(BaseModel):
 
 
 class EvidenceCitation(BaseModel):
+    """Citation identity and public link state for one evidence item.
+
+    ``link_status`` deliberately reports only what the search pipeline can
+    establish without fetching the original document.  It must not be used as
+    a substitute for ``EvidenceQuality`` or for claim verification.
+    """
+
     label: str = ""
     authors: List[str] = Field(default_factory=list)
     year: Optional[int] = None
@@ -24,6 +31,11 @@ class EvidenceCitation(BaseModel):
     doi: Optional[str] = None
     work_id: Optional[str] = None
     publication_number: Optional[str] = None
+    source_url: str = ""
+    canonical_url: str = ""
+    link_status: Literal[
+        "citable", "traceable", "missing", "invalid"
+    ] = "missing"
 
 
 class EvidencePatent(BaseModel):
@@ -66,6 +78,22 @@ class EvidenceScores(BaseModel):
     confidence: Optional[float] = None
 
 
+class EvidenceFulltext(BaseModel):
+    """Public summary of an original-document read and its completeness."""
+
+    status: Literal[
+        "not_requested", "ready", "partial", "failed", "unavailable"
+    ] = "not_requested"
+    source_url: str = ""
+    expected_pages: Optional[int] = None
+    observed_pages: int = 0
+    expected_chars: Optional[int] = None
+    extracted_chars: int = 0
+    completeness_ratio: Optional[float] = None
+    truncation_reasons: List[str] = Field(default_factory=list)
+    attempts: int = 0
+
+
 class EvidenceAccess(BaseModel):
     is_open: bool = False
     license: Optional[str] = None
@@ -73,6 +101,7 @@ class EvidenceAccess(BaseModel):
     pdf_status: Optional[str] = None
     original_status: Optional[str] = None
     next_cursor: Optional[str] = None
+    fulltext: EvidenceFulltext = Field(default_factory=EvidenceFulltext)
 
 
 class EvidenceDiagnostics(BaseModel):
@@ -100,6 +129,7 @@ class EvidenceFieldProvenance(BaseModel):
 
 
 class EvidenceProvenance(BaseModel):
+    source_url: str = ""
     canonical_url: str = ""
     publisher_id: str = ""
     publisher_name: str = ""

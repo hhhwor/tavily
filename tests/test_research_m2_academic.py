@@ -3,6 +3,7 @@ from __future__ import annotations
 import time
 from datetime import datetime, timezone
 
+import pytest
 from fastapi.testclient import TestClient
 
 from src.api import create_app
@@ -77,7 +78,8 @@ class _PdfGateway:
         paper = paper.model_copy(update={
             "pdf_status": "ready",
             "pdf_text": "研究背景与实验设计。",
-            "pdf_text_length": 48,
+            "pdf_pages": 2,
+            "pdf_text_length": 28,
             "pdf_returned_chars": 10,
             "pdf_chunk_index": 0,
             "pdf_page_from": 1,
@@ -111,6 +113,53 @@ class _PdfGateway:
             content_hash="sha256:upstream-version-1",
             parser_version="grobid-1.2",
         )
+
+
+class _TruncatedPdfGateway:
+    def enrich(self, papers, **kwargs):
+        ranked = papers[0]
+        paper = ranked.to_result()
+        assert isinstance(paper, AcademicResult)
+        paper = paper.model_copy(update={
+            "pdf_status": "ready",
+            "pdf_text": "第一页正文。",
+            "pdf_pages": 3,
+            "pdf_text_length": 18,
+            "pdf_chunk_index": 0,
+            "pdf_page_from": 1,
+            "pdf_page_to": 1,
+            "pdf_content_hash": "sha256:upstream-version-1",
+            "pdf_parser_version": "grobid-1.2",
+            "pdf_version_id": "upstream-version-1",
+        })
+        return PdfEnrichmentOutcome(
+            academic=(EnrichedDocument.from_result(ranked, paper),),
+        )
+
+    def read_page(self, *args, **kwargs):
+        raise AssertionError("a complete cursor must not be fabricated")
+
+
+class _RetryPdfGateway(_PdfGateway):
+    def __init__(self) -> None:
+        super().__init__()
+        self._first = True
+
+    def enrich(self, papers, **kwargs):
+        if self._first:
+            self._first = False
+            self.enrich_calls += 1
+            ranked = papers[0]
+            paper = ranked.to_result()
+            assert isinstance(paper, AcademicResult)
+            paper = paper.model_copy(update={
+                "pdf_status": "timeout",
+                "pdf_error_code": "DOWNLOAD_TIMEOUT",
+            })
+            return PdfEnrichmentOutcome(
+                academic=(EnrichedDocument.from_result(ranked, paper),),
+            )
+        return super().enrich(papers, **kwargs)
 
 
 def _candidate() -> Evidence:
@@ -250,6 +299,8 @@ def test_planner_routes_abstract_gap_to_deep_read():
     )[0]
 
     assert action.kind == "deep_read"
+    assert action.strategy == "fulltext_read"
+    assert action.attempt_key
     assert action.candidate_ids == [candidate.id]
     assert action.query is None
     assert action.target_gap_refs
@@ -298,6 +349,8 @@ def test_incomplete_version_is_not_qualified_and_failure_becomes_gap():
             ),
         ),
     )
+    assert marked.access.fulltext.status == "failed"
+    assert marked.access.fulltext.truncation_reasons == ["PDF_TEXT_TIMEOUT"]
     claim = CandidateClaim(id="claim_1", text="固态电池界面阻抗降低")
     coverage = CoverageEvaluator().evaluate(
         ObjectivePlan(question=claim.text, claims=[claim]),
@@ -308,6 +361,58 @@ def test_incomplete_version_is_not_qualified_and_failure_becomes_gap():
         )],
     )
     assert any(gap.code == "PDF_TEXT_TIMEOUT" for gap in coverage.gaps)
+
+
+def test_reader_marks_page_and_text_truncation_and_exposes_it_on_evidence():
+    clock = _Clock()
+    candidate = _candidate()
+    result = AcademicDocumentReader(
+        _TruncatedPdfGateway(),
+        now=clock.now,
+    ).read(candidate, context=_context(clock))
+
+    assert result.status == "partial"
+    assert result.version is not None
+    assert result.version.stable is False
+    assert result.integrity.expected_pages == 3
+    assert result.integrity.observed_pages == 1
+    assert result.integrity.expected_chars == 18
+    assert result.integrity.extracted_chars == len("第一页正文。")
+    assert result.integrity.completeness_ratio == pytest.approx(1 / 3)
+    assert set(result.integrity.truncation_reasons) == {
+        "PDF_PAGE_COUNT_MISMATCH",
+        "PDF_TEXT_TRUNCATED",
+    }
+    assert result.diagnostics.failure_code == "PDF_PAGE_COUNT_MISMATCH"
+
+    adopted = EvidenceAdoptionGate().adopt(candidate, result)
+    assert adopted
+    assert all(
+        item.quality is not None
+        and item.quality.can_support_key_claim is False
+        for item in adopted
+    )
+    fulltext = adopted[0].access.fulltext
+    assert fulltext.status == "partial"
+    assert fulltext.source_url == "https://example.test/paper.pdf"
+    assert fulltext.completeness_ratio == pytest.approx(1 / 3)
+    assert "PDF_TEXT_TRUNCATED" in fulltext.truncation_reasons
+
+
+def test_reader_retries_a_transient_initial_pdf_failure_once():
+    clock = _Clock()
+    gateway = _RetryPdfGateway()
+
+    result = AcademicDocumentReader(
+        gateway,
+        now=clock.now,
+    ).read(_candidate(), context=_context(clock))
+
+    assert result.status == "ready"
+    assert result.diagnostics.attempts == 2
+    assert result.diagnostics.retried is True
+    assert "PDF_INITIAL_READ_RETRY" in result.diagnostics.warnings
+    assert gateway.enrich_calls == 2
 
 
 def test_document_chunks_are_stored_outside_task_and_locator_resolves(tmp_path):
@@ -426,3 +531,14 @@ def test_research_runner_executes_gap_driven_academic_deep_read(tmp_path):
             research_id,
             locator,
         ) == pdf_evidence["passage"]["text"]
+        assert pdf_evidence["access"]["fulltext"] == {
+            "status": "ready",
+            "source_url": "https://example.test/paper.pdf",
+            "expected_pages": 2,
+            "observed_pages": 2,
+            "expected_chars": 28,
+            "extracted_chars": 28,
+            "completeness_ratio": 1.0,
+            "truncation_reasons": [],
+            "attempts": 1,
+        }

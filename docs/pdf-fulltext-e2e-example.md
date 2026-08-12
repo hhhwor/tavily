@@ -151,6 +151,10 @@ with tempfile.TemporaryDirectory(prefix="tavily-pdf-e2e-") as temp_dir:
             if item.passage.snippet_type == "pdf_text"
         ]
         assert pdf_evidence
+        assert all(
+            item.access.fulltext.status == "ready"
+            for item in pdf_evidence
+        )
 
         resolved_count = 0
         for item in pdf_evidence:
@@ -191,6 +195,13 @@ with tempfile.TemporaryDirectory(prefix="tavily-pdf-e2e-") as temp_dir:
             f"version={locator.version_id} "
             f"page={locator.page_from}-{locator.page_to} "
             f"chunk={locator.chunk_index}"
+        )
+        fulltext = sample.access.fulltext
+        print(
+            f"PDF_INTEGRITY expected_pages={fulltext.expected_pages} "
+            f"observed_pages={fulltext.observed_pages} "
+            f"ratio={fulltext.completeness_ratio} "
+            f"attempts={fulltext.attempts}"
         )
         print(f"QUOTE={quote}")
         print(
@@ -251,6 +262,7 @@ Research 状态为 `partial` 不代表 PDF 获取失败。本案例使用 `quick
 | `PDF_URL_MISSING` | 命中论文没有可用的 OA PDF 直链 | 更换开放获取论文，或检查 OpenAlex OA 字段 |
 | `PDF_TEXT_TIMEOUT` / `DOWNLOAD_TIMEOUT` | PDF 下载或分页读取超时 | OpenAlex PDF 服务、外网连接和 PDF 超时预算 |
 | `PDF_TEXT_READ_FAILED` | 已解析正文分页读取失败 | `/openalex/pdf/text/{work_id}` 服务和缓存状态 |
+| `PDF_TEXT_TRUNCATED` / `PDF_PAGE_COUNT_MISMATCH` | 已取到部分文本，但总字符数或页数显示不完整 | 检查 `access.fulltext`、cursor 续读及 OpenAlex PDF 服务返回的 totals |
 | 没有 `pdf_text` 证据 | PDF 未解析，或正文未被 Research 采纳 | Research failures、coverage gaps、PDF parser 日志 |
 | locator 解引用结果不一致 | 正文版本或持久化索引不一致 | `version_id`、`chunk_index`、页码和 SQLite document read 记录 |
 | `citation_audit.status=failed` | 最终陈述存在缺引、无效引用或不可解引用定位 | `invalid_locator_refs`、`unsupported_statement_refs` |

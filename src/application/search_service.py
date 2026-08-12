@@ -17,6 +17,7 @@ from src.application.trust_annotator import TrustAnnotator
 from src.domain.documents import DocumentKind, EnrichedDocument
 from src.domain.evidence import AnswerabilityGap, Evidence
 from src.domain.search_api import (
+    CitationMix,
     FailureDetail,
     QualityMix,
     RequestedFilters,
@@ -128,6 +129,14 @@ class SearchService:
         return QualityMix(**{
             name: counts.get(name, 0)
             for name in ("citable", "limited", "discovery_only", "unavailable")
+        })
+
+    @staticmethod
+    def _citation_mix(evidence: list[Evidence]) -> CitationMix:
+        counts = Counter(item.citation.link_status for item in evidence)
+        return CitationMix(**{
+            name: counts.get(name, 0)
+            for name in ("citable", "traceable", "missing", "invalid")
         })
 
     @staticmethod
@@ -249,6 +258,7 @@ class SearchService:
                 "not_answerable": "unusable",
             }[answerability.status],
             quality_mix=self._quality_mix(evidence),
+            citation_mix=self._citation_mix(evidence),
             gaps=[
                 *answerability.gaps,
                 *self._stage_gaps(

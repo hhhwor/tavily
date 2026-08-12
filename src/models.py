@@ -8,6 +8,7 @@ from src.domain.evidence import (
     EvidenceCitation,
     EvidenceDiagnostics,
     EvidenceFieldProvenance,
+    EvidenceFulltext,
     EvidenceLocator,
     EvidencePassage,
     EvidencePatent,
@@ -27,6 +28,6 @@ from src.domain.trust import (
     TrustAssessment,
 )
 from src.domain.research import ResearchTaskEnvelope
-from src.domain.search_api import SearchResponse
+from src.domain.search_api import CitationMix, SearchResponse
 
 __all__ = [name for name in globals() if not name.startswith("_")]

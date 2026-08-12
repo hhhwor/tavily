@@ -19,6 +19,7 @@ class ResolvedPolicy:
     counterevidence_required: bool
     verification_profile: str
     saturation_rounds: int = 2
+    counterevidence_candidate_reserve_fraction: float = 0.25
 
 
 _POLICIES = {

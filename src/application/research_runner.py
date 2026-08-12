@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from collections import Counter
 import hashlib
+from math import ceil
 from typing import Mapping, Sequence
 
 from src.application.commands import SearchCommand, SearchFilters
@@ -10,6 +11,7 @@ from src.application.discovery_service import DiscoveryService
 from src.application.document_identity import evidence_version_key
 from src.application.evidence_adoption import EvidenceAdoptionGate
 from src.application.evidence_assembler import EvidenceAssembler
+from src.application.outcomes import DiscoveryOutcome
 from src.application.ports.document_reader import DocumentReader
 from src.application.ports.model_router import ModelRouter, ResolvedModelRoute
 from src.application.ports.research_store import ResearchStore
@@ -39,14 +41,17 @@ from src.domain.errors import public_error_message
 from src.domain.failures import SearchFailure
 from src.domain.research import (
     AssessmentDimension,
+    CoverageGain,
     EvidenceFunnel,
     ObjectivePlan,
     ResearchAssessment,
     ResearchAction,
+    ResearchActionOutcome,
     ResearchCoverage,
     ResearchDossier,
     ResearchFinding,
     ResearchProgress,
+    ResearchProviderOutcome,
     ResearchRoundCheckpoint,
     ResearchStop,
     ResearchSynthesisSnapshot,
@@ -147,6 +152,10 @@ class ResearchRunner:
         budget = resolved.budget
         assert budget.max_rounds and budget.max_candidates is not None
         assert budget.max_deep_reads is not None and budget.deadline_ms
+        counter_candidate_reserve = self._counter_candidate_reserve(
+            policy,
+            budget.max_candidates,
+        )
         queued_ms = max(
             0,
             int((self._clock.now() - accepted_at).total_seconds() * 1000),
@@ -187,7 +196,11 @@ class ResearchRunner:
             budget=ledger,
         )
         if restored is None:
-            seed_candidates = list(seed_snapshot.evidence)[:budget.max_candidates]
+            seed_limit = max(
+                0,
+                budget.max_candidates - counter_candidate_reserve,
+            )
+            seed_candidates = list(seed_snapshot.evidence)[:seed_limit]
             evidence, seed_scope_reasons = filter_evidence(
                 seed_candidates,
                 resolved.scope,
@@ -207,6 +220,7 @@ class ResearchRunner:
             source_attempts = 0
             source_successes = 0
             saturation_rounds = 0
+            saturation_strategies: list[str] = []
             evidence_set_revision = task.evidence_set_revision
             history: list[RoundResult] = []
         else:
@@ -220,6 +234,7 @@ class ResearchRunner:
             source_attempts = checkpoint.source_attempts
             source_successes = checkpoint.source_successes
             saturation_rounds = checkpoint.saturation_rounds
+            saturation_strategies = list(checkpoint.saturation_strategies)
             evidence_set_revision = checkpoint.evidence_set_revision
             history = self._task_store.list_rounds(research_id)
             seed_scope_reasons = list(checkpoint.scope_exclusion_reasons)
@@ -259,6 +274,18 @@ class ResearchRunner:
             if (ledger.remaining("rounds") or 0) <= 0:
                 break
             round_number = ledger.used("rounds") + 1
+            counter_reserve_remaining = (
+                self._counter_candidate_reserve_remaining(
+                    policy,
+                    coverage,
+                    budget.max_candidates,
+                    ledger,
+                )
+            )
+            remaining_candidates = min(
+                ledger.remaining("raw_candidates") or 0,
+                ledger.remaining("adopted_candidates") or 0,
+            )
             actions = self._planner.next_actions(
                 plan,
                 coverage,
@@ -267,6 +294,10 @@ class ResearchRunner:
                 evidence=evidence,
                 allow_deep_read=(
                     (ledger.remaining("deep_read_documents") or 0) > 0
+                ),
+                counterevidence_only=(
+                    counter_reserve_remaining > 0
+                    and remaining_candidates <= counter_reserve_remaining
                 ),
             )
             if not actions:
@@ -292,8 +323,13 @@ class ResearchRunner:
                     ledger.remaining("raw_candidates") or 0,
                     ledger.remaining("adopted_candidates") or 0,
                 )
+                if action.kind != "counter_search":
+                    room = max(0, room - counter_reserve_remaining)
                 if room <= 0:
-                    candidate_budget_reached = True
+                    if counter_reserve_remaining:
+                        no_actions = True
+                    else:
+                        candidate_budget_reached = True
                     break
                 candidate_reservation = ledger.reserve(
                     "adopted_candidates",
@@ -325,6 +361,7 @@ class ResearchRunner:
                     )
                     round_raw_candidates = 0
                     round_snapshots: dict[str, str] = {}
+                    provider_outcomes: list[ResearchProviderOutcome] = []
                 else:
                     assert candidate_reservation is not None
                     (
@@ -335,6 +372,7 @@ class ResearchRunner:
                         read_bytes,
                         round_raw_candidates,
                         round_snapshots,
+                        provider_outcomes,
                     ) = self._expand(
                         action.query or plan.question,
                         resolved,
@@ -420,12 +458,26 @@ class ResearchRunner:
                 evidence,
                 before_assessments,
                 assessments,
+                target_gap_refs=action.target_gap_refs,
             )
-            saturation_rounds = 0 if gain.improved else saturation_rounds + 1
+            if gain.improved:
+                saturation_strategies = []
+            elif action.strategy not in saturation_strategies:
+                saturation_strategies.append(action.strategy)
+            saturation_rounds = len(saturation_strategies)
             usage = ResearchUsage.model_validate(ledger.snapshot())
             result = RoundResult(
                 round=round_number,
                 actions=actions,
+                action_outcomes=[self._action_outcome(
+                    action,
+                    gain=gain,
+                    provider_outcomes=provider_outcomes,
+                    raw_candidates=round_raw_candidates,
+                    adopted_candidates=added,
+                    failures=round_failures,
+                    read_count=read_count,
+                )],
                 actual_queries=[action.query] if action.query else [],
                 actual_filters=(
                     [self._filter_payload(resolved)] if search_action else []
@@ -453,6 +505,7 @@ class ResearchRunner:
                 source_attempts=source_attempts,
                 source_successes=source_successes,
                 saturation_rounds=saturation_rounds,
+                saturation_strategies=saturation_strategies,
                 usage=usage,
                 committed_at=self._clock.now(),
             )
@@ -464,11 +517,11 @@ class ResearchRunner:
                 evidence,
                 coverage,
             )
-            effective_saturation = min(
-                policy.saturation_rounds,
-                budget.max_rounds,
-            )
-            if saturation_rounds >= effective_saturation:
+            if (
+                saturation_rounds >= policy.saturation_rounds
+                and (ledger.remaining("rounds") or 0) > 0
+                and not self._has_unattempted_blocking_gap(coverage, history)
+            ):
                 break
 
         if cancellation.cancelled:
@@ -513,15 +566,14 @@ class ResearchRunner:
             stop_reason = "objective_satisfied"
         elif candidate_budget_reached:
             stop_reason = "max_candidates_reached"
-        elif saturation_rounds >= min(
-            policy.saturation_rounds,
-            budget.max_rounds,
-        ) or no_actions:
-            stop_reason = "information_gain_saturated"
+        elif no_actions:
+            stop_reason = "search_space_exhausted"
         elif rounds_completed >= budget.max_rounds:
             stop_reason = "max_rounds_reached"
-        else:
+        elif saturation_rounds >= policy.saturation_rounds:
             stop_reason = "information_gain_saturated"
+        else:
+            stop_reason = "search_space_exhausted"
         dossier = ResearchDossier(
             findings=[
                 ResearchFinding(
@@ -613,12 +665,11 @@ class ResearchRunner:
             ))
         if stop_reason == "source_failure":
             state = "partial" if evidence else "failed"
-        elif coverage.gaps and stop_reason in {
-            "deadline_reached",
-            "max_rounds_reached",
-            "max_candidates_reached",
-        }:
-            state = "partial" if evidence else "failed"
+        elif coverage.gaps:
+            # A completed attempt that reaches a deliberate search boundary is
+            # inconclusive, not an execution failure.  ``failed`` is reserved
+            # for source-wide or unexpected execution failures.
+            state = "partial"
         else:
             state = "completed"
         if artifact_failure and state == "completed":
@@ -1322,6 +1373,7 @@ class ResearchRunner:
         int,
         int,
         dict[str, str],
+        list[ResearchProviderOutcome],
     ]:
         context.checkpoint()
         command = SearchCommand(
@@ -1387,6 +1439,7 @@ class ResearchRunner:
                 batch.source.id: batch.snapshot
                 for batch in outcome.recalled.batches
             },
+            self._provider_outcomes(outcome),
         )
 
     @staticmethod
@@ -1419,6 +1472,129 @@ class ResearchRunner:
             "languages": list(filters.languages),
             "jurisdictions": list(filters.jurisdictions),
         }
+
+    @staticmethod
+    def _counter_candidate_reserve(
+        policy: ResolvedPolicy,
+        max_candidates: int,
+    ) -> int:
+        if not policy.counterevidence_required or max_candidates <= 0:
+            return 0
+        fraction = min(
+            1.0,
+            max(0.0, policy.counterevidence_candidate_reserve_fraction),
+        )
+        return min(max_candidates, max(1, ceil(max_candidates * fraction)))
+
+    @classmethod
+    def _counter_candidate_reserve_remaining(
+        cls,
+        policy: ResolvedPolicy,
+        coverage: ResearchCoverage,
+        max_candidates: int,
+        ledger: BudgetLedger,
+    ) -> int:
+        if not any(
+            gap.code == "COUNTEREVIDENCE_NOT_SEARCHED" and gap.retryable
+            for gap in coverage.gaps
+        ):
+            return 0
+        available = min(
+            ledger.remaining("raw_candidates") or 0,
+            ledger.remaining("adopted_candidates") or 0,
+        )
+        return min(
+            available,
+            cls._counter_candidate_reserve(policy, max_candidates),
+        )
+
+    @staticmethod
+    def _has_unattempted_blocking_gap(
+        coverage: ResearchCoverage,
+        history: Sequence[RoundResult],
+    ) -> bool:
+        attempted_gap_refs = {
+            gap_ref
+            for result in history
+            for action in result.actions
+            for gap_ref in action.target_gap_refs
+        }
+        return any(
+            gap.severity == "blocking"
+            and gap.retryable
+            and gap.id not in attempted_gap_refs
+            for gap in coverage.gaps
+        )
+
+    @staticmethod
+    def _action_outcome(
+        action: ResearchAction,
+        *,
+        gain: CoverageGain,
+        provider_outcomes: Sequence[ResearchProviderOutcome],
+        raw_candidates: int,
+        adopted_candidates: int,
+        failures: Sequence[SearchFailure],
+        read_count: int,
+    ) -> ResearchActionOutcome:
+        """Persist execution facts separately from gap-specific progress."""
+        failure_codes = list(dict.fromkeys(
+            failure.code for failure in failures if failure.code
+        ))
+        if raw_candidates or adopted_candidates or read_count:
+            status = "completed"
+        elif failure_codes:
+            status = "failed"
+        else:
+            status = "empty"
+        return ResearchActionOutcome(
+            action_id=action.id,
+            target_gap_refs=list(action.target_gap_refs),
+            status=status,
+            provider_ids=[item.provider_id for item in provider_outcomes],
+            provider_outcomes=list(provider_outcomes),
+            raw_candidates=raw_candidates,
+            adopted_candidates=adopted_candidates,
+            failure_codes=failure_codes,
+            gain=gain,
+        )
+
+    @staticmethod
+    def _provider_outcomes(
+        outcome: DiscoveryOutcome,
+    ) -> list[ResearchProviderOutcome]:
+        """Expose each planned provider's empty/success/failure result."""
+        failures = [
+            *outcome.planned.failures,
+            *outcome.recalled.failures,
+            *outcome.ranked.failures,
+        ]
+        batches_by_source = {
+            batch.source.id: batch
+            for batch in outcome.recalled.batches
+        }
+        results: list[ResearchProviderOutcome] = []
+        for provider_id in outcome.recalled.planned_sources:
+            batch = batches_by_source.get(provider_id)
+            failure_codes = list(dict.fromkeys(
+                failure.code
+                for failure in failures
+                if failure.source == provider_id and failure.code
+            ))
+            raw_candidates = len(batch.documents) if batch is not None else 0
+            if raw_candidates:
+                status = "completed"
+            elif failure_codes:
+                status = "failed"
+            else:
+                status = "empty"
+            results.append(ResearchProviderOutcome(
+                provider_id=provider_id,
+                status=status,
+                raw_candidates=raw_candidates,
+                failure_codes=failure_codes,
+            ))
+        return results
 
     @staticmethod
     def _merge(current: list[Evidence], new: Sequence[Evidence]) -> int:

@@ -9,6 +9,7 @@ from src.domain.document_read import DocumentChunk, DocumentReadResult
 from src.domain.evidence import (
     Evidence,
     EvidenceDiagnostics,
+    EvidenceFulltext,
     EvidenceLocator,
     EvidencePassage,
     EvidenceProvenance,
@@ -74,7 +75,43 @@ class EvidenceAdoptionGate:
             "partial": True,
             "failure_code": code,
         })
+        updated.access = updated.access.model_copy(update={
+            "pdf_status": (
+                result.status
+                if updated.type == "academic" else updated.access.pdf_status
+            ),
+            "original_status": result.status,
+            "fulltext": self._fulltext_state(updated, result),
+        })
         return updated
+
+    @staticmethod
+    def _fulltext_state(
+        candidate: Evidence,
+        result: DocumentReadResult,
+    ) -> EvidenceFulltext:
+        integrity = result.integrity
+        return EvidenceFulltext(
+            status=result.status,
+            source_url=(
+                result.version.canonical_uri
+                if result.version is not None
+                else candidate.access.fulltext.source_url
+            ),
+            expected_pages=integrity.expected_pages,
+            observed_pages=integrity.observed_pages,
+            expected_chars=integrity.expected_chars,
+            extracted_chars=integrity.extracted_chars,
+            completeness_ratio=integrity.completeness_ratio,
+            truncation_reasons=(
+                list(integrity.truncation_reasons)
+                or (
+                    [result.diagnostics.failure_code]
+                    if result.diagnostics.failure_code else []
+                )
+            ),
+            attempts=result.diagnostics.attempts,
+        )
 
     def _select_excerpt(
         self,
@@ -267,6 +304,7 @@ class EvidenceAdoptionGate:
                 "original_status": result.status,
                 "next_cursor": result.next_cursor,
                 "license": version.license or candidate.access.license,
+                "fulltext": self._fulltext_state(candidate, result),
             }),
             "diagnostics": EvidenceDiagnostics(
                 warnings=list(dict.fromkeys(warnings)),

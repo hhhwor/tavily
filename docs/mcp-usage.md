@@ -49,8 +49,28 @@ Agent 应先检查：
 2. `result_set.counts_by_stage`，确认各来源在召回、排序、组装和最终选择阶段的数量；
 3. `retrieval_assessment.status` 与 `gaps[]`；
 4. `query.filter_execution` 是否真正应用了所需过滤器；
-5. `evidence[].quality`；
-6. 需要事实核验、反证或全文时，转入 `research`。
+5. `retrieval_assessment.citation_mix`；它统计 `citable/traceable/missing/invalid`，
+   与 `quality_mix` 分开，不能把“有 DOI 或稳定链接”误解为“已验证结论”；
+6. `evidence[].citation`：`source_url` 是检索返回地址，`canonical_url` 是已归一化的
+   公共引用地址，`link_status` 表示本次搜索能确认的引用状态；
+7. `evidence[].quality`；
+8. 需要事实核验、反证或全文时，转入 `research`。
+
+`search` 不会为了验证每个链接而同步抓取原网页，以维持单轮秒级边界。因此
+`traceable` 只表示 URL 语法有效、已去除追踪参数，不能证明页面仍可访问或正文支持某项
+claim；这些检查由 `research` 的原文读取与引用审计阶段完成。`citable` 表示有 DOI 或
+带稳定链接的专利公开号，仍需结合 `evidence[].quality` 判断能否支撑关键 claim。
+
+`research` 深读产生的 evidence 还会在 `access.fulltext` 返回全文读取状态：
+
+- `status`：`ready / partial / failed / unavailable`；
+- `expected_pages / observed_pages`、`expected_chars / extracted_chars` 与
+  `completeness_ratio`：上游提供总量时才计算；
+- `truncation_reasons`：如 `PDF_TEXT_TRUNCATED`、`PDF_PAGE_COUNT_MISMATCH`；
+- `attempts`：初次 PDF 获取的实际尝试次数。
+
+任何 `partial`、截断或版本不完整的全文均保留为可审计线索，但不会升级为可支撑关键
+claim 的 `citable` evidence。
 
 ## 2. `research`
 
@@ -107,7 +127,17 @@ Agent 应先检查：
 - `conflicted`
 - `needs_expert_review`
 
-每个 finding 的引用可在 `dossier.evidence_index` 按 evidence ID 解引用。剩余问题位于 `dossier.coverage.gaps`，停止原因位于顶层 `stop`。接口不返回单一 `trust_score`。
+每个 finding 的引用可在 `dossier.evidence_index` 按 evidence ID 解引用。剩余问题位于 `dossier.coverage.gaps`，停止原因位于顶层 `stop`。每个 `dossier.rounds[].actions[]` 都有 `strategy`、稳定的 `attempt_key` 和 priority；同一 gap、来源和查询指纹不会重复执行。每个 `dossier.rounds[].action_outcomes[]` 还会记录动作的 provider、原始/采纳候选数、失败码，以及只针对该动作 `target_gap_refs` 计算的有效增益；无关的新增材料不会被误报为研究进展。接口不返回单一 `trust_score`。
+
+常见停止原因包括：
+
+- `max_rounds_reached`：轮次预算已用尽；
+- `max_candidates_reached`：候选预算已用尽；
+- `search_space_exhausted`：规划器已没有可执行的 gap 动作；
+- `information_gain_saturated`：尚有轮次预算，且不同检索策略连续未改善各自目标 gap；
+- `objective_satisfied`：必需 coverage target 已满足。
+
+需要主动反证的 policy 会为 `counter_source` 保留 25% 候选容量：种子采纳和普通检索不能提前占完该容量。学术、专利和全文缺口也会分别优先路由到对应来源、族/引文扩展或 `fulltext_read`，而不是反复执行泛化网页查询。
 
 ### 2.3 Feedback 与取消
 

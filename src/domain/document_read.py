@@ -39,7 +39,7 @@ class DocumentVersion(DocumentReadModel):
 
     @property
     def stable(self) -> bool:
-        return self.content_hash_scope != "observed_chunks"
+        return self.complete and self.content_hash_scope != "observed_chunks"
 
 
 class DocumentChunk(DocumentReadModel):
@@ -55,6 +55,35 @@ class DocumentReadDiagnostics(DocumentReadModel):
     failure_code: str | None = None
     message: str = ""
     retryable: bool = True
+    attempts: int = Field(1, ge=1)
+    retried: bool = False
+
+
+class DocumentReadIntegrity(DocumentReadModel):
+    """Observed completeness for a bounded original-document read.
+
+    Counts are optional because a source may not declare its total pages or
+    extracted-text length.  A partial read is never inferred as complete just
+    because it has a content hash or a usable first page.
+    """
+
+    expected_pages: int | None = Field(None, ge=0)
+    observed_pages: int = Field(0, ge=0)
+    expected_chars: int | None = Field(None, ge=0)
+    extracted_chars: int = Field(0, ge=0)
+    completeness_ratio: float | None = Field(None, ge=0.0, le=1.0)
+    truncation_reasons: list[str] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def derive_completeness_ratio(self) -> "DocumentReadIntegrity":
+        ratios: list[float] = []
+        if self.expected_pages:
+            ratios.append(min(1.0, self.observed_pages / self.expected_pages))
+        if self.expected_chars:
+            ratios.append(min(1.0, self.extracted_chars / self.expected_chars))
+        if self.completeness_ratio is None and ratios:
+            self.completeness_ratio = min(ratios)
+        return self
 
 
 class DocumentReadResult(DocumentReadModel):
@@ -64,6 +93,9 @@ class DocumentReadResult(DocumentReadModel):
     next_cursor: str | None = None
     diagnostics: DocumentReadDiagnostics = Field(
         default_factory=DocumentReadDiagnostics
+    )
+    integrity: DocumentReadIntegrity = Field(
+        default_factory=DocumentReadIntegrity
     )
     pages_read: int = Field(0, ge=0)
     bytes_read: int = Field(0, ge=0)

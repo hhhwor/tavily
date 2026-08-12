@@ -358,9 +358,33 @@ class CoverageEvaluator:
         current_evidence: Sequence[Evidence],
         previous_assessments: Sequence[ClaimAssessment] = (),
         current_assessments: Sequence[ClaimAssessment] = (),
+        *,
+        target_gap_refs: Sequence[str] = (),
     ) -> CoverageGain:
+        """Measure progress attributable to the action's intended gaps.
+
+        With no target gaps this keeps the aggregate behaviour used by older
+        callers.  During a Research round, callers pass the action's gap refs:
+        unrelated documents then remain observable in the action outcome but
+        cannot reset the saturation counter.
+        """
         previous_ids = {evidence_identity(item) for item in previous_evidence}
         current_ids = {evidence_identity(item) for item in current_evidence}
+        target_ids = set(target_gap_refs)
+        previous_gaps = {
+            item.id: item
+            for item in previous_coverage.gaps
+        }
+        target_gaps = [
+            previous_gaps[gap_id]
+            for gap_id in target_ids
+            if gap_id in previous_gaps
+        ]
+        target_keys = {
+            (item.dimension, item.value)
+            for item in target_gaps
+            if item.dimension is not None and item.value is not None
+        }
         previous_status = {
             (item.dimension, item.value): item.status
             for item in previous_coverage.matrix
@@ -374,16 +398,30 @@ class CoverageEvaluator:
         improved = [
             f"{item.dimension}:{item.value}"
             for item in current_coverage.matrix
+            if not target_ids or (item.dimension, item.value) in target_keys
             if rank[item.status] > rank.get(
                 previous_status.get((item.dimension, item.value), "missing"),
                 0,
             )
         ]
+        target_claim_ids = {
+            item.claim_ref
+            for item in target_gaps
+            if item.claim_ref is not None
+        }
+
+        def is_target_claim(assessment: ClaimAssessment) -> bool:
+            return not target_ids or assessment.claim.id in target_claim_ids
+
         previous_conflicts = sum(
-            item.status == "conflicted" for item in previous_assessments
+            item.status == "conflicted"
+            for item in previous_assessments
+            if is_target_claim(item)
         )
         current_conflicts = sum(
-            item.status == "conflicted" for item in current_assessments
+            item.status == "conflicted"
+            for item in current_assessments
+            if is_target_claim(item)
         )
         previous_locators = sum(
             bool(item.quality and item.quality.has_stable_locator)
@@ -393,13 +431,61 @@ class CoverageEvaluator:
             bool(item.quality and item.quality.has_stable_locator)
             for item in current_evidence
         )
-        new_evidence = len(current_ids - previous_ids)
+        new_evidence_ids = current_ids - previous_ids
+        new_evidence_by_id = {
+            item.id: item
+            for item in current_evidence
+            if evidence_identity(item) in new_evidence_ids
+        }
+        qualified_refs: set[str] = set()
+        if target_ids:
+            for assessment in current_assessments:
+                if assessment.claim.id not in target_claim_ids:
+                    continue
+                qualified_refs.update(
+                    relation.evidence_id
+                    for relation in assessment.relations
+                    if relation.qualified
+                    and relation.evidence_id in new_evidence_by_id
+                )
+            target_source_types = {
+                item.value
+                for item in target_gaps
+                if item.dimension == "source_type" and item.value is not None
+            }
+            source_refs = {
+                item.id
+                for item in new_evidence_by_id.values()
+                if item.type in target_source_types
+            }
+            relevant_refs = qualified_refs | source_refs
+            new_evidence = len({
+                evidence_identity(new_evidence_by_id[ref])
+                for ref in relevant_refs
+            })
+        else:
+            new_evidence = len(new_evidence_ids)
         new_conflicts = max(0, current_conflicts - previous_conflicts)
         locator_upgrades = max(0, current_locators - previous_locators)
-        score = new_evidence + len(improved) + new_conflicts + locator_upgrades
+        resolved_gap_refs = sorted(
+            target_ids - {item.id for item in current_coverage.gaps}
+        ) if target_ids else []
+        # Locator counts are useful audit data, but only target-relevant
+        # changes may keep a gap-driven search alive.  A resolved locator gap
+        # is already represented by ``resolved_gap_refs``.
+        effective_locator_upgrades = locator_upgrades if not target_ids else 0
+        score = (
+            new_evidence
+            + len(improved)
+            + len(resolved_gap_refs)
+            + new_conflicts
+            + effective_locator_upgrades
+        )
         return CoverageGain(
             new_independent_evidence=new_evidence,
+            new_qualified_evidence_refs=sorted(qualified_refs),
             newly_improved_targets=improved,
+            resolved_gap_refs=resolved_gap_refs,
             new_conflicts=new_conflicts,
             locator_upgrades=locator_upgrades,
             score=score,

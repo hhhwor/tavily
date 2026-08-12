@@ -232,7 +232,12 @@ def test_search_seed_to_research_dossier_lifecycle(tmp_path):
         finding = task["dossier"]["findings"][0]["assessment"]
         assert finding["counterevidence_searched"] is False
         assert "COUNTEREVIDENCE_NOT_SEARCHED" in finding["gaps"]
-        assert task["stop"]["reason"] == "information_gain_saturated"
+        # The quick profile has one round; an exhausted round budget is not
+        # evidence that the information space is saturated.
+        assert task["stop"]["reason"] == "max_rounds_reached"
+        outcome = task["dossier"]["rounds"][0]["action_outcomes"][0]
+        assert outcome["target_gap_refs"]
+        assert outcome["gain"]["score"] == 0
 
         assert container.research_store.cancel_requested(research_id) is False
         stale_cancel = client.post(

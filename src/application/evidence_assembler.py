@@ -21,6 +21,7 @@ from src.domain.evidence import (
     EvidenceAccess,
     EvidenceCitation,
     EvidenceDiagnostics,
+    EvidenceFulltext,
     EvidenceLegal,
     EvidencePassage,
     EvidencePatent,
@@ -70,6 +71,46 @@ def _legal_metadata(result: SearchResult) -> EvidenceLegal | None:
         directory=[str(item) for item in directory if str(item).strip()],
         item=str(raw.get("item") or ""),
     )
+
+
+def _record_url(result: SearchResult) -> str:
+    """Use a provider-returned document URL when the DTO URL is empty.
+
+    Legal providers frequently expose an official record URL only in their
+    raw payload.  Keeping it here makes it subject to the same canonical-link
+    policy as web results instead of silently dropping it at assembly time.
+    """
+    if result.url:
+        return result.url
+    raw = result.raw or {}
+    for field in (
+        "canonical_url",
+        "canonicalUrl",
+        "source_url",
+        "sourceUrl",
+        "permalink",
+        "link",
+        "url",
+    ):
+        value = raw.get(field)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return ""
+
+
+def _record_canonical_url(result: SearchResult) -> str:
+    """Preserve a source-declared canonical URL for later validation.
+
+    The assembler does not trust or normalize this value itself.  The trust
+    annotation stage validates it as an HTTP URL and removes tracking
+    parameters before it becomes public provenance.
+    """
+    raw = result.raw or {}
+    for field in ("canonical_url", "canonicalUrl", "canonical"):
+        value = raw.get(field)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return ""
 
 
 class EvidenceAssembler:
@@ -149,6 +190,8 @@ class EvidenceAssembler:
                 citation=EvidenceCitation(
                     label=result.site or result.title[:64],
                     venue=result.site,
+                    source_url=result.url,
+                    canonical_url=_record_canonical_url(result),
                 ),
                 legal=_legal_metadata(result),
                 scores=EvidenceScores(
@@ -156,7 +199,10 @@ class EvidenceAssembler:
                     source_rank=rank,
                     rerank_score=result.rerank_score,
                 ),
-                access=EvidenceAccess(is_open=bool(result.url)),
+                access=EvidenceAccess(
+                    is_open=bool(result.url),
+                    fulltext=EvidenceFulltext(source_url=result.url),
+                ),
                 diagnostics=EvidenceDiagnostics(
                     warnings=warnings,
                     partial=clipped,
@@ -182,7 +228,7 @@ class EvidenceAssembler:
                 type="legal",
                 source=result.source,
                 title=result.title,
-                url="",
+                url=_record_url(result),
                 published_date=result.date,
                 passage=EvidencePassage(
                     text=text,
@@ -193,6 +239,8 @@ class EvidenceAssembler:
                 citation=EvidenceCitation(
                     label=result.site or result.title[:64],
                     venue=result.site,
+                    source_url=_record_url(result),
+                    canonical_url=_record_canonical_url(result),
                 ),
                 legal=_legal_metadata(result) or EvidenceLegal(),
                 scores=EvidenceScores(
@@ -200,7 +248,10 @@ class EvidenceAssembler:
                     source_rank=rank,
                     rerank_score=result.rerank_score,
                 ),
-                access=EvidenceAccess(is_open=False),
+                access=EvidenceAccess(
+                    is_open=False,
+                    fulltext=EvidenceFulltext(source_url=_record_url(result)),
+                ),
                 diagnostics=EvidenceDiagnostics(
                     warnings=warnings,
                     partial=clipped,
@@ -279,6 +330,14 @@ class EvidenceAssembler:
                     venue=paper.venue,
                     doi=paper.doi or None,
                     work_id=paper.work_id or None,
+                    source_url=(
+                        paper.url
+                        or paper.oa_landing_url
+                        or paper.oa_pdf_url
+                    ),
+                    canonical_url=(
+                        paper.oa_landing_url or paper.url or paper.oa_pdf_url
+                    ),
                 ),
                 scores=EvidenceScores(
                     relevance=relevance,
@@ -294,6 +353,26 @@ class EvidenceAssembler:
                     oa_pdf_url=paper.oa_pdf_url or None,
                     pdf_status=paper.pdf_status,
                     next_cursor=paper.pdf_next_cursor,
+                    fulltext=EvidenceFulltext(
+                        status=(
+                            paper.pdf_status
+                            if paper.pdf_status in {
+                                "not_requested", "ready", "partial",
+                                "failed", "unavailable",
+                            }
+                            else "unavailable"
+                        ),
+                        source_url=paper.oa_pdf_url or paper.oa_landing_url,
+                        expected_pages=paper.pdf_pages,
+                        expected_chars=(
+                            paper.pdf_text_length or None
+                        ),
+                        extracted_chars=paper.pdf_returned_chars,
+                        truncation_reasons=(
+                            [paper.pdf_error_code]
+                            if paper.pdf_error_code else []
+                        ),
+                    ),
                 ),
                 diagnostics=EvidenceDiagnostics(
                     warnings=warnings,
@@ -339,6 +418,8 @@ class EvidenceAssembler:
                 citation=EvidenceCitation(
                     label=publication,
                     publication_number=patent.publication_number or None,
+                    source_url=patent.url,
+                    canonical_url=_record_canonical_url(patent),
                 ),
                 patent=EvidencePatent(
                     publication_number=patent.publication_number,
@@ -365,7 +446,10 @@ class EvidenceAssembler:
                         else None
                     ),
                 ),
-                access=EvidenceAccess(is_open=bool(patent.url)),
+                access=EvidenceAccess(
+                    is_open=bool(patent.url),
+                    fulltext=EvidenceFulltext(source_url=patent.url),
+                ),
                 diagnostics=EvidenceDiagnostics(
                     warnings=warnings,
                     partial=clipped,

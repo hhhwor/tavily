@@ -8,8 +8,9 @@ from __future__ import annotations
 import re
 from datetime import datetime, timezone
 from typing import Iterable, List, Mapping, Optional, Sequence
-from urllib.parse import urlsplit
+from urllib.parse import urlsplit, urlunsplit
 
+from src.application.document_identity import normalize_doi
 from src.domain.evidence import (
     Evidence,
     EvidenceFieldProvenance,
@@ -29,16 +30,84 @@ def _utc_iso(value: datetime) -> str:
     return value.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
 
 
-def _canonical_url(url: str) -> str:
-    """保留 http(s) scheme，同时复用现有 URL 身份归一化规则。"""
-    if not url:
+def _normalized_http_url(url: str) -> str:
+    """Return a safe, tracker-free HTTP URL, or an empty string.
+
+    Search is intentionally not allowed to make a second network request for
+    every result.  This function therefore validates and normalizes the link
+    syntax only; a later original-document read is responsible for redirect
+    and HTML canonical verification.
+    """
+    value = (url or "").strip()
+    if not value:
         return ""
-    original = urlsplit(url if "://" in url else f"https://{url}")
-    normalized = normalize_url(url)
+    original = urlsplit(value if "://" in value else f"https://{value}")
+    if (
+        original.scheme.casefold() not in {"http", "https"}
+        or not original.hostname
+        or original.username
+        or original.password
+    ):
+        return ""
+    normalized = normalize_url(value)
     if normalized.startswith("//"):
         scheme = original.scheme if original.scheme in {"http", "https"} else "https"
         return f"{scheme}:{normalized}"
-    return normalized
+    parsed = urlsplit(normalized)
+    if not parsed.netloc:
+        return ""
+    return urlunsplit((
+        original.scheme.casefold(),
+        parsed.netloc,
+        parsed.path,
+        parsed.query,
+        "",
+    ))
+
+
+def _raw_canonical_url(evidence: Evidence) -> str:
+    """Validate a canonical candidate retained by the assembler."""
+    return _normalized_http_url(evidence.citation.canonical_url)
+
+
+def _doi_url(value: str | None) -> str:
+    doi = normalize_doi(value)
+    if not doi or not re.fullmatch(r"10\.\d{4,9}/\S+", doi, flags=re.I):
+        return ""
+    return f"https://doi.org/{doi}"
+
+
+def _canonical_url(evidence: Evidence) -> str:
+    """Select an identifier-first canonical link for public citations."""
+    if evidence.type == "academic":
+        doi_url = _doi_url(evidence.citation.doi)
+        if doi_url:
+            return doi_url
+    return _raw_canonical_url(evidence) or _normalized_http_url(
+        evidence.url or evidence.citation.source_url
+    )
+
+
+def _link_status(
+    evidence: Evidence,
+    *,
+    source_url: str,
+    canonical_url: str,
+) -> str:
+    """Classify citation readiness without overstating evidence quality."""
+    if evidence.type == "academic" and evidence.citation.doi:
+        return "citable" if _doi_url(evidence.citation.doi) else "invalid"
+    if (
+        evidence.type == "patent"
+        and evidence.citation.publication_number
+        and canonical_url
+    ):
+        return "citable"
+    if canonical_url:
+        return "traceable"
+    if source_url:
+        return "invalid"
+    return "missing"
 
 
 def _publisher(evidence: Evidence, canonical_url: str) -> tuple[str, str, str]:
@@ -186,6 +255,15 @@ def _append_quality_warnings(evidence: Evidence, quality: EvidenceQuality) -> No
             evidence.diagnostics.warnings.append(reason)
 
 
+def _append_link_warning(evidence: Evidence, link_status: str) -> None:
+    code = {
+        "missing": "CITATION_LINK_MISSING",
+        "invalid": "CITATION_LINK_INVALID",
+    }.get(link_status)
+    if code and code not in evidence.diagnostics.warnings:
+        evidence.diagnostics.warnings.append(code)
+
+
 def annotate_evidence(
     evidence: Sequence[Evidence],
     *,
@@ -195,11 +273,18 @@ def annotate_evidence(
     timestamp = _utc_iso(retrieved_at or datetime.now(timezone.utc))
     annotated = [item.model_copy(deep=True) for item in evidence]
     for item in annotated:
-        canonical_url = _canonical_url(item.url)
+        source_url = item.citation.source_url or item.url
+        canonical_url = _canonical_url(item)
+        link_status = _link_status(
+            item,
+            source_url=source_url,
+            canonical_url=canonical_url,
+        )
         publisher_id, publisher_name, publisher_type = _publisher(item, canonical_url)
         document_id, version_id, source_record_id = _document_identity(item, canonical_url)
         origin = _content_origin(item)
         item.provenance = EvidenceProvenance(
+            source_url=source_url,
             canonical_url=canonical_url,
             publisher_id=publisher_id,
             publisher_name=publisher_name,
@@ -218,9 +303,15 @@ def annotate_evidence(
             parser_version=None,
             field_provenance=_field_provenance(item, origin),
         )
+        item.citation = item.citation.model_copy(update={
+            "source_url": source_url,
+            "canonical_url": canonical_url,
+            "link_status": link_status,
+        })
         item.locator = _locator(item, document_id, version_id)
         item.quality = _quality(item, item.locator, origin)
         _append_quality_warnings(item, item.quality)
+        _append_link_warning(item, link_status)
     return annotated
 
 

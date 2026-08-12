@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 import pytest
 
 from src.application.evidence_assembler import EvidenceAssembler
+from src.application.search_service import SearchService
 from src.bootstrap import build_container
 from src.config import Settings
 from src.models import AcademicResult, PatentResult, SearchResult
@@ -77,7 +78,15 @@ def test_phase0_annotates_web_academic_and_patent_without_reordering():
     assert web_evidence.provenance.retrieved_via == "tencent"
     assert web_evidence.provenance.content_origin == "provider_extract"
     assert web_evidence.provenance.retrieved_at == "2026-07-15T00:00:00Z"
+    assert web_evidence.provenance.source_url == (
+        "https://www.example.com/news/?utm_source=test"
+    )
     assert web_evidence.provenance.field_provenance["passage.text"].source_field == "content"
+    assert web_evidence.citation.source_url == (
+        "https://www.example.com/news/?utm_source=test"
+    )
+    assert web_evidence.citation.canonical_url == "https://example.com/news"
+    assert web_evidence.citation.link_status == "traceable"
     assert web_evidence.quality is not None
     assert web_evidence.quality.level == "limited"
     assert "PROVIDER_EXTRACT_NOT_ORIGINAL" in web_evidence.quality.reasons
@@ -94,6 +103,8 @@ def test_phase0_annotates_web_academic_and_patent_without_reordering():
     assert academic.quality is not None
     assert academic.quality.level == "discovery_only"
     assert academic.quality.can_support_key_claim is False
+    assert academic.citation.canonical_url == "https://doi.org/10.1000/example"
+    assert academic.citation.link_status == "citable"
     assert "ABSTRACT_ONLY" in academic.diagnostics.warnings
 
     patent_evidence = by_type["patent"]
@@ -104,7 +115,49 @@ def test_phase0_annotates_web_academic_and_patent_without_reordering():
     assert patent_evidence.locator.section == "abstract"
     assert patent_evidence.quality is not None
     assert patent_evidence.quality.level == "discovery_only"
+    assert patent_evidence.citation.link_status == "citable"
     assert "CLAIM_TEXT_UNAVAILABLE" in patent_evidence.diagnostics.warnings
+
+    # A resolvable bibliographic identifier does not turn an abstract into
+    # claim-grade evidence.  Link governance and evidence quality remain
+    # intentionally independent dimensions.
+    assert SearchService._citation_mix(annotated).model_dump() == {
+        "citable": 2,
+        "traceable": 1,
+        "missing": 0,
+        "invalid": 0,
+    }
+
+
+def test_phase0_preserves_source_declared_canonical_url_and_marks_bad_links():
+    canonical = SearchResult(
+        url="https://search.example/result?utm_source=search",
+        title="Canonical result",
+        content="provider extracted content",
+        source="provider",
+        raw={"canonical_url": "https://origin.example/article/?ref=feed"},
+    )
+    invalid = SearchResult(
+        url="mailto:editor@example.org",
+        title="Invalid result",
+        content="provider extracted content",
+        source="provider",
+    )
+
+    evidence = EvidenceAssembler().assemble([canonical, invalid], [], [])
+    annotated = annotate_evidence(evidence)
+    by_title = {item.title: item for item in annotated}
+
+    assert by_title["Canonical result"].citation.source_url == (
+        "https://search.example/result?utm_source=search"
+    )
+    assert by_title["Canonical result"].citation.canonical_url == (
+        "https://origin.example/article"
+    )
+    assert by_title["Canonical result"].citation.link_status == "traceable"
+    assert by_title["Invalid result"].citation.canonical_url == ""
+    assert by_title["Invalid result"].citation.link_status == "invalid"
+    assert "CITATION_LINK_INVALID" in by_title["Invalid result"].diagnostics.warnings
 
 
 def test_pdf_evidence_is_citable_only_with_stable_page_locator():

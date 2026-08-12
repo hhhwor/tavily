@@ -74,9 +74,19 @@ class QualityMix(SearchApiModel):
     unavailable: int = 0
 
 
+class CitationMix(SearchApiModel):
+    """Counts link/citation states independently from evidence quality."""
+
+    citable: int = 0
+    traceable: int = 0
+    missing: int = 0
+    invalid: int = 0
+
+
 class RetrievalAssessment(SearchApiModel):
     status: Literal["usable", "limited", "unusable"] = "unusable"
     quality_mix: QualityMix = Field(default_factory=QualityMix)
+    citation_mix: CitationMix = Field(default_factory=CitationMix)
     gaps: list[AnswerabilityGap] = Field(default_factory=list)
 
 

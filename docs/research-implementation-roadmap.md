@@ -243,7 +243,7 @@ while context.budget.can_start_round():
 
     actions = planner.next_actions(plan, coverage.gaps, history, context.budget)
     if not actions:
-        stop("information_gain_saturated")
+        stop("search_space_exhausted")
         break
 
     search_actions, read_actions = planner.partition(actions)
@@ -254,7 +254,9 @@ while context.budget.can_start_round():
     enriched = deep_read.execute(read_actions, normalized, context)
     evidence_set = identity.merge(normalized, enriched)
 
-    gain = coverage_evaluator.measure_gain(previous, evidence_set)
+    gain = coverage_evaluator.measure_gain(
+        previous, evidence_set, target_gap_refs=action.target_gap_refs
+    )
     checkpoint(round, actions, evidence_set, gain, context.usage)
 
     if gain.is_saturated(policy.saturation_rounds):
@@ -410,7 +412,8 @@ API 语义要求：
 - `ResearchCoordinator` 负责幂等创建、任务读取、feedback、cancel、队列提交和进程启动恢复；`ResearchRunner` 只执行一个 durable attempt，并在每个阶段检查取消、deadline 和预算。
 - 新增 `ObjectivePlan`、`CoverageTarget`、`ResearchAction`、`CoverageGain`、`RoundResult` 和 `ResearchRoundCheckpoint`。未显式传 claims 时，Planner 对问题做确定性原子化并生成稳定 claim/action/gap ID。
 - Coverage 按 source、claim、required feature、time、language、jurisdiction、classification 和 license 生成矩阵与 gap；Planner 只针对 gap 生成 search、counter_search、deep_read、citation_expand、family_expand 等 action。
-- 每轮保存 action、实际 query/filter、来源结果、failure、coverage before/after、gain、usage、query trace、source snapshot、反证状态和 evidence set revision；停止由目标满足、预算或连续信息增益饱和决定。
+- 每轮保存 action（`strategy/attempt_key/priority`）、其执行 outcome（provider、候选数、失败码、目标化 gain）、实际 query/filter、来源结果、failure、coverage before/after、usage、query trace、source snapshot、反证状态和 evidence set revision；相同 gap/来源/查询指纹不重复执行。停止由目标满足、预算、策略空间耗尽或连续不同策略的目标化信息增益饱和决定。
+- 对要求反证的 policy，候选预算的 25% 在 seed 采纳和普通扩展阶段保留给 `counter_source`；全文/稳定链接缺口优先深读，学术与专利缺口优先对应来源或关系扩展。
 - SQLite 增加 `research_attempts`、`research_evidence_sets`、`research_rounds` 和 `research_events`；round 与 evidence set 在一个事务中 checkpoint，恢复时从最后完整 round 继续，不重复采纳已提交轮次。
 - prior-art 等存在关键歧义的目标进入真实 `needs_input`，返回 typed questions；带 `task_revision` 的 feedback 生成下一 plan revision/attempt，未消除歧义则继续 needs_input，消除后重新入队。
 - 轮询可观察 planning、expanding、deep_reading、verifying、coverage_analysis 等 phase，以及 rounds、evidence、gap、scope exclusion 和 checkpoint 时间；终态转换带 revision guard。
