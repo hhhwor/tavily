@@ -11,6 +11,7 @@ from src.application.commands import (
     SearchFilters,
 )
 from src.application.academic_document_reader import AcademicDocumentReader
+from src.application.legal_document_reader import LegalDocumentReader
 from src.application.discovery_service import DiscoveryService
 from src.application.evidence_adoption import EvidenceAdoptionGate
 from src.application.evidence_assembler import EvidenceAssembler
@@ -23,11 +24,18 @@ from src.application.ports.document_reader import DocumentReader
 from src.application.ports.model_router import ModelRouter
 from src.application.ports.patent_text import UnavailablePatentTextGateway
 from src.application.ports.pdf_text import PdfTextGateway
-from src.application.ports.research_store import ResearchStore
+from src.application.ports.research_store import (
+    ResearchStore,
+    StoredResearchArtifact,
+)
 from src.application.ports.runtime import Clock
 from src.application.ports.search_seed import SearchSeedStore
+from src.application.ports.synthesis import SynthesisGateway
 from src.application.research_coordinator import ResearchCoordinator
 from src.application.research_coverage import CoverageEvaluator
+from src.application.citation_audit import CitationCoverageAuditor
+from src.application.research_artifacts import ResearchArtifactService
+from src.application.research_dossier_builder import StructuredDossierBuilder
 from src.application.research_dispatcher import ResearchDispatcher
 from src.application.research_errors import ResearchRequestError
 from src.application.research_planner import ResearchPlanner
@@ -41,6 +49,7 @@ from src.application.research_scope import (
     exclusion_reason,
     validate_scope,
 )
+from src.application.research_synthesis import ResearchSynthesizer
 from src.application.trust_annotator import TrustAnnotator
 from src.application.verify_service import VerifyService
 from src.application.web_document_reader import WebDocumentReader
@@ -99,6 +108,8 @@ class ResearchService:
         model_router: ModelRouter | None = None,
         policy_registry: ResearchPolicyRegistry | None = None,
         document_readers: Mapping[DocumentKind, DocumentReader] | None = None,
+        synthesis_gateway: SynthesisGateway | None = None,
+        artifact_retention_seconds: int = 604800,
     ) -> None:
         # Compatibility reference used by composition audits; execution is
         # owned by ResearchRunner.
@@ -111,8 +122,14 @@ class ResearchService:
             "academic": academic_reader,
             "web": WebDocumentReader(SafeWebFetcher()),
             "patent": PatentDocumentReader(UnavailablePatentTextGateway()),
+            "legal": LegalDocumentReader(),
         }
         readers.update(document_readers or {})
+        self._artifact_service = ResearchArtifactService(
+            store=task_store,
+            clock=clock,
+            retention_seconds=artifact_retention_seconds,
+        )
         self._runner = ResearchRunner(
             task_store=task_store,
             discovery=discovery,
@@ -126,6 +143,12 @@ class ResearchService:
             coverage_evaluator=CoverageEvaluator(),
             document_readers=readers,
             evidence_adoption=EvidenceAdoptionGate(),
+            dossier_builder=StructuredDossierBuilder(),
+            synthesizer=ResearchSynthesizer(
+                auditor=CitationCoverageAuditor(),
+                gateway=synthesis_gateway,
+            ),
+            artifact_service=self._artifact_service,
         )
         self._coordinator = ResearchCoordinator(
             seed_store=seed_store,
@@ -338,6 +361,16 @@ class ResearchService:
             research_id,
             task_revision=task_revision,
         )
+
+    def get_artifact(
+        self,
+        research_id: str,
+        artifact_id: str,
+    ) -> StoredResearchArtifact:
+        # Resolve the parent first so unknown task and mismatched artifact IDs
+        # share the same resource-not-found behavior.
+        self._coordinator.get(research_id)
+        return self._artifact_service.get(research_id, artifact_id)
 
     @staticmethod
     def _seed_exclusion_reason(

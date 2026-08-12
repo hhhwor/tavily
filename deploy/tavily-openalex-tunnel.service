@@ -1,0 +1,14 @@
+[Unit]
+Description=Expose the old host OpenAlex API to the Ningxia Tavily host
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+User=ec2-user
+ExecStart=/usr/bin/ssh -NT -i /home/ec2-user/ningxia-hhq.pem -o BatchMode=yes -o ExitOnForwardFailure=yes -o ServerAliveInterval=30 -o ServerAliveCountMax=3 -o StrictHostKeyChecking=yes -R 127.0.0.1:19001:127.0.0.1:9001 -R 127.0.0.1:9243:search.houdutech.cn:9243 ec2-user@ec2-161-189-133-95.cn-northwest-1.compute.amazonaws.com.cn
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

@@ -28,10 +28,14 @@ from src.infrastructure.cache import InMemoryCache, build_cache
 from src.infrastructure.openalex_pdf import OpenAlexPdfGateway
 from src.infrastructure.patent_es_fulltext import PatentEsFullTextGateway
 from src.infrastructure.query_rewriter import SiliconFlowQueryRewriter
+from src.infrastructure.siliconflow_intent_classifier import (
+    SiliconFlowIntentClassifier,
+)
 from src.infrastructure.resilience import ResilienceManager
 from src.infrastructure.runtime import SystemClock
 from src.infrastructure.sqlite_research_store import SqliteResearchStore
 from src.infrastructure.sqlite_seed_store import SqliteSearchSeedStore
+from src.infrastructure.siliconflow_synthesis import SiliconFlowSynthesisGateway
 from src.providers.base import SearchProvider
 from src.ranking.factory import build_text_scorer
 from src.ranking.ports import Reranker
@@ -103,6 +107,16 @@ def _web_providers(
 
         providers.append(SerpApiProvider(
             api_key=settings.serpapi_api_key,
+            timeout=settings.provider_timeout,
+            http_session=http,
+        ))
+    if settings.fy_law_mcp_enabled:
+        from src.providers.fy_law_mcp import FyLawMcpProvider
+
+        providers.append(FyLawMcpProvider(
+            endpoint=settings.fy_law_mcp_url,
+            token=settings.fy_law_mcp_token,
+            token_file=settings.fy_law_mcp_token_file,
             timeout=settings.provider_timeout,
             http_session=http,
         ))
@@ -345,9 +359,24 @@ def build_container(
             ),
             http_session=http,
         )
+        intent_classifier = None
+        if config.intent_classifier_enabled and config.siliconflow_api_key:
+            intent_classifier = SiliconFlowIntentClassifier(
+                config.siliconflow_api_key,
+                config.siliconflow_base_url,
+                config.intent_classifier_model,
+                cache=InMemoryCache(
+                    config.intent_classifier_cache_size,
+                    monotonic=clock.monotonic,
+                ),
+                http_session=http,
+                cache_ttl=config.intent_classifier_cache_ttl,
+                timeout=config.intent_classifier_timeout,
+            )
         query_planner = QueryPlanner(
             config,
             query_rewriter,
+            intent_classifier=intent_classifier,
             resilience=resilience,
         )
         recall = RecallCoordinator(
@@ -382,6 +411,16 @@ def build_container(
             seed_ttl_seconds=config.search_seed_ttl_seconds,
         )
         verify_service = VerifyService(verifier)
+        synthesis_gateway = (
+            SiliconFlowSynthesisGateway(
+                api_key=config.siliconflow_api_key,
+                base_url=config.siliconflow_base_url,
+                model=config.research_synthesis_model,
+                timeout=config.research_synthesis_timeout,
+                http_session=http,
+            )
+            if config.research_synthesis_enabled else None
+        )
         research_document_readers = {}
         if config.patent_fulltext_enabled:
             research_document_readers["patent"] = PatentDocumentReader(
@@ -409,6 +448,10 @@ def build_container(
                 ),
             ),
             document_readers=research_document_readers,
+            synthesis_gateway=synthesis_gateway,
+            artifact_retention_seconds=(
+                config.research_artifact_retention_seconds
+            ),
         )
         research_dispatcher = ResearchDispatcher(
             research_service.run,

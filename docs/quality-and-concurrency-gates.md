@@ -12,10 +12,11 @@
 .venv311/bin/python -m eval.run_stability_gates
 ```
 
-该命令现在只执行质量门禁。也可以直接执行：
+该命令执行 Search 排序与 Research Dossier 两组质量门禁。也可以分别执行：
 
 ```bash
 .venv311/bin/python -m eval.quality_golden_gate
+.venv311/bin/python -m eval.research_quality_gate
 ```
 
 按需观察并发性能时手工执行：
@@ -41,6 +42,12 @@
 ```
 
 该门槛使用确定性 token-overlap scorer，目的是锁定领域排序策略和特征组合的行为；线上模型效果仍由带真实 provider/模型的完整评测覆盖。
+
+Research 门禁固定使用 `eval/golden/research_quality_corpus.json` 中 50 条、覆盖四个 profile 的标注场景，检查 claim support precision、locator validity、identity、counterevidence、冲突披露、gap disclosure 和无依据事实句率。安全指标使用零容忍阈值；调整 corpus 时需显式执行并评审：
+
+```bash
+.venv311/bin/python -m eval.research_quality_gate --update-baseline
+```
 
 ## 可选 20/50 并发基准
 

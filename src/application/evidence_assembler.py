@@ -21,6 +21,7 @@ from src.domain.evidence import (
     EvidenceAccess,
     EvidenceCitation,
     EvidenceDiagnostics,
+    EvidenceLegal,
     EvidencePassage,
     EvidencePatent,
     EvidenceScores,
@@ -53,8 +54,26 @@ def _citation_label(
     return f"{title[:48]}, {year}" if year else title[:64]
 
 
+def _legal_metadata(result: SearchResult) -> EvidenceLegal | None:
+    raw = result.raw or {}
+    if result.source != "fy_law_mcp" and not any(
+        raw.get(name) for name in ("law_type", "status", "department", "item")
+    ):
+        return None
+    directory = raw.get("directory") or []
+    if not isinstance(directory, (list, tuple)):
+        directory = [directory]
+    return EvidenceLegal(
+        law_type=str(raw.get("law_type") or ""),
+        status=str(raw.get("status") or ""),
+        department=str(raw.get("department") or ""),
+        directory=[str(item) for item in directory if str(item).strip()],
+        item=str(raw.get("item") or ""),
+    )
+
+
 class EvidenceAssembler:
-    """Map ranked web, academic, and patent results into unified Evidence."""
+    """Map ranked web, academic, patent, and legal results into Evidence."""
 
     def __init__(
         self,
@@ -95,6 +114,7 @@ class EvidenceAssembler:
         ranked: Sequence[RankedDocument],
         ranked_papers: Sequence[EnrichedDocument],
         ranked_patents: Sequence[RankedDocument],
+        ranked_legal: Sequence[RankedDocument] = (),
     ) -> list[Evidence]:
         """Build and cross-domain sort Evidence without modifying inputs."""
         evidence: list[Evidence] = []
@@ -130,12 +150,57 @@ class EvidenceAssembler:
                     label=result.site or result.title[:64],
                     venue=result.site,
                 ),
+                legal=_legal_metadata(result),
                 scores=EvidenceScores(
                     relevance=relevance,
                     source_rank=rank,
                     rerank_score=result.rerank_score,
                 ),
                 access=EvidenceAccess(is_open=bool(result.url)),
+                diagnostics=EvidenceDiagnostics(
+                    warnings=warnings,
+                    partial=clipped,
+                ),
+            ))
+
+        for rank, value in enumerate(ranked_legal):
+            ranked_document = self._ranked(value, "legal")
+            result = ranked_document.to_result()
+            text, clipped = self._clip_text(
+                result.content or result.snippet or result.title
+            )
+            if not text:
+                continue
+            result_key = _short_hash(
+                "legal", result.source, result.title, result.raw.get("item", "")
+            )
+            warnings = ["TRUNCATED_EVIDENCE"] if clipped else []
+            relevance = _evidence_relevance(result, rank)
+            evidence.append(Evidence(
+                id=f"legal:{result_key}:text",
+                result_id=f"legal:{result_key}",
+                type="legal",
+                source=result.source,
+                title=result.title,
+                url="",
+                published_date=result.date,
+                passage=EvidencePassage(
+                    text=text,
+                    snippet_type="legal_text",
+                    char_start=0,
+                    char_end=len(text),
+                ),
+                citation=EvidenceCitation(
+                    label=result.site or result.title[:64],
+                    venue=result.site,
+                ),
+                legal=_legal_metadata(result) or EvidenceLegal(),
+                scores=EvidenceScores(
+                    relevance=relevance,
+                    source_rank=rank,
+                    rerank_score=result.rerank_score,
+                ),
+                access=EvidenceAccess(is_open=False),
                 diagnostics=EvidenceDiagnostics(
                     warnings=warnings,
                     partial=clipped,

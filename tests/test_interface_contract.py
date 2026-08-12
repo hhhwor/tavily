@@ -13,6 +13,7 @@ from src.domain.evidence import (
     AnswerabilityGap,
     Evidence,
     EvidenceFieldProvenance,
+    EvidenceLegal,
     EvidencePassage,
     EvidenceProvenance,
     SearchBoundary,
@@ -47,11 +48,12 @@ def test_rest_schema_maps_once_to_authoritative_search_command():
     request = SearchRequest.model_validate({
         "query": "query",
         "limit": 7,
-        "source_types": ["academic", "patent"],
+        "source_types": ["academic", "patent", "legal"],
         "filters": {
             "published_from": "2024-01-01",
             "languages": ["zh", "en"],
             "jurisdictions": ["CN"],
+            "legal_status": "现行有效",
         },
     })
 
@@ -59,16 +61,26 @@ def test_rest_schema_maps_once_to_authoritative_search_command():
 
     assert command.query == "query"
     assert command.limit == 7
-    assert command.source_types == ("academic", "patent")
+    assert command.source_types == ("academic", "patent", "legal")
     assert command.filters.languages == ("zh", "en")
     assert command.filters.jurisdictions == ("CN",)
+    assert command.filters.legal_status == "现行有效"
 
 
 def test_search_request_is_strict_and_has_no_execution_tuning_fields():
     schema = SearchRequest.model_json_schema()["properties"]
-    assert set(schema) == {"query", "limit", "source_types", "filters"}
+    assert set(schema) == {
+        "query", "limit", "source_types", "filters"
+    }
     with pytest.raises(ValidationError):
         SearchRequest.model_validate({"query": "q", "top_k": 3})
+    with pytest.raises(ValidationError):
+        SearchRequest.model_validate({"query": "q", "verticals": ["legal"]})
+    with pytest.raises(ValidationError):
+        SearchRequest.model_validate({
+            "query": "q",
+            "filters": {"legal_status": "未知状态"},
+        })
 
 
 def _response() -> SearchResponse:
@@ -102,10 +114,10 @@ def test_mcp_presenter_is_lossless_search_v1_identity_projection():
 
     assert payload["schema_version"] == "search.v1"
     assert payload["result_set"]["counts_by_stage"] == {
-        "recalled": {"web": 0, "academic": 0, "patent": 0},
-        "ranked": {"web": 0, "academic": 0, "patent": 0},
-        "assembled": {"web": 0, "academic": 0, "patent": 0},
-        "selected": {"web": 0, "academic": 0, "patent": 0},
+        "recalled": {"web": 0, "academic": 0, "patent": 0, "legal": 0},
+        "ranked": {"web": 0, "academic": 0, "patent": 0, "legal": 0},
+        "assembled": {"web": 0, "academic": 0, "patent": 0, "legal": 0},
+        "selected": {"web": 0, "academic": 0, "patent": 0, "legal": 0},
     }
     assert restored == response
 
@@ -170,7 +182,15 @@ def _provider_evidence() -> Evidence:
 
 def test_public_search_output_hides_provider_attribution_without_mutating_internal_data():
     response = _response().model_copy(update={
-        "evidence": [_provider_evidence()],
+        "evidence": [_provider_evidence().model_copy(update={
+            "legal": EvidenceLegal(
+                law_type="中央法规",
+                status="现行有效",
+                department="全国人民代表大会",
+                directory=["第一千零八十四条"],
+                item="第一千零八十四条",
+            ),
+        })],
         "retrieval_assessment": RetrievalAssessment(
             gaps=[AnswerabilityGap(
                 code="PARTIAL_FAILURE",
@@ -199,6 +219,13 @@ def test_public_search_output_hides_provider_attribution_without_mutating_intern
         "doubao": "mcp-server:test"
     }
     assert "source" not in payload["evidence"][0]
+    assert payload["evidence"][0]["legal"] == {
+        "law_type": "中央法规",
+        "status": "现行有效",
+        "department": "全国人民代表大会",
+        "directory": ["第一千零八十四条"],
+        "item": "第一千零八十四条",
+    }
     assert "retrieved_via" not in payload["evidence"][0]["provenance"]
     assert "retrieved_via" not in (
         payload["evidence"][0]["provenance"]["field_provenance"]["passage.text"]

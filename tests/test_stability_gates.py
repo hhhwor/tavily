@@ -10,6 +10,11 @@ from eval.quality_golden_gate import (
     compare_to_baseline,
     run_gate as run_quality_gate,
 )
+from eval.research_quality_gate import (
+    DEFAULT_BASELINE as DEFAULT_RESEARCH_BASELINE,
+    compare_to_baseline as compare_research_to_baseline,
+    run_gate as run_research_quality_gate,
+)
 
 
 def test_quality_golden_gate_matches_reviewed_baseline():
@@ -53,3 +58,31 @@ def test_concurrency_benchmark_is_advisory(monkeypatch):
     assert report["levels"]["1"]["advisories"] == [
         "no advisory reference for concurrency=1"
     ]
+
+
+def test_research_quality_gate_covers_fifty_reviewed_cases():
+    result = run_research_quality_gate(report_path=None)
+
+    assert result["status"] == "passed"
+    assert result["case_count"] == 50
+    assert set(result["metrics"]) == {
+        "overall",
+        "literature_review",
+        "technology_validation",
+        "prior_art_landscape",
+        "technology_landscape",
+    }
+    assert result["metrics"]["overall"]["unsupported_statement_rate"] == 0
+
+
+def test_research_quality_gate_detects_locator_regression():
+    actual = run_research_quality_gate(report_path=None)
+    baseline = json.loads(
+        DEFAULT_RESEARCH_BASELINE.read_text(encoding="utf-8")
+    )
+    regressed = copy.deepcopy(actual)
+    regressed["metrics"]["overall"]["locator_validity"] = 0.98
+
+    failures = compare_research_to_baseline(regressed, baseline)
+
+    assert any("locator_validity" in failure for failure in failures)

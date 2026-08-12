@@ -93,7 +93,8 @@ def test_registry_routes_by_descriptor_kind_and_preserves_actual_boundary():
     web = _Source("custom-web", "web")
     academic = _Source("papers-v2", "academic")
     patent = _Source("inventions-v3", "patent")
-    registry = SourceRegistry([web, academic, patent])
+    legal = _Source("statutes-v1", "legal")
+    registry = SourceRegistry([web, academic, patent, legal])
     fixed_now = datetime(2026, 7, 17, 12, 0, tzinfo=timezone.utc)
     coordinator = RecallCoordinator(
         _settings(),
@@ -115,6 +116,7 @@ def test_registry_routes_by_descriptor_kind_and_preserves_actual_boundary():
         active_provider_names=("custom-web",),
         do_academic=True,
         do_patent=True,
+        do_legal=True,
     )
 
     outcome = coordinator.recall(planned)
@@ -122,21 +124,25 @@ def test_registry_routes_by_descriptor_kind_and_preserves_actual_boundary():
     assert web.calls == [("中文 query", 4, "month")]
     assert academic.calls == [("academic query", 4, "month")]
     assert patent.calls == [("中文 query", 4, "month")]
+    assert legal.calls == [("中文 query", 4, "month")]
     assert outcome.planned_sources == (
         "custom-web",
         "papers-v2",
         "inventions-v3",
+        "statutes-v1",
     )
     assert set(outcome.providers_used) == {
         "custom-web",
         "papers-v2",
         "inventions-v3",
+        "statutes-v1",
     }
-    assert outcome.candidate_budget == 12
+    assert outcome.candidate_budget == 16
     assert {batch.source.id for batch in outcome.batches} == {
         "custom-web",
         "papers-v2",
         "inventions-v3",
+        "statutes-v1",
     }
     web_batch = next(
         batch for batch in outcome.batches if batch.source.id == "custom-web"
@@ -145,6 +151,7 @@ def test_registry_routes_by_descriptor_kind_and_preserves_actual_boundary():
     assert web_batch.snapshot == "snapshot:custom-web"
     assert web_batch.limits["requested_candidates"] == 4
     assert outcome.web[0].source == "custom-web"
+    assert outcome.legal[0].source == "statutes-v1"
     attribution = outcome.web[0].attributions[0]
     assert attribution.provider == "custom-web"
     assert attribution.snapshot == "snapshot:custom-web"

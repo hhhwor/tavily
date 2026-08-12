@@ -55,7 +55,9 @@ def build_mcp(engine: SearchEngine, settings: Optional[Settings] = None) -> Fast
     async def search(
         query: str,
         limit: int = 10,
-        source_types: Optional[list[Literal["web", "academic", "patent"]]] = None,
+        source_types: Optional[
+            list[Literal["web", "academic", "patent", "legal"]]
+        ] = None,
         filters: Optional[dict[str, Any]] = None,
     ) -> dict[str, Any]:
         request = SearchRequest.model_validate({

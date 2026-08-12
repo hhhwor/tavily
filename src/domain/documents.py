@@ -7,12 +7,13 @@ from typing import Any, Literal, Optional
 
 from src.domain.search import AcademicResult, PatentResult, SearchResult
 
-DocumentKind = Literal["web", "academic", "patent"]
+DocumentKind = Literal["web", "academic", "patent", "legal"]
 ContentKind = Literal[
     "web_content",
     "web_snippet",
     "abstract",
     "patent_abstract",
+    "legal_text",
     "title",
 ]
 
@@ -126,6 +127,8 @@ def _content_kind(result: SearchResult, kind: DocumentKind) -> ContentKind:
         return "abstract"
     if kind == "patent":
         return "patent_abstract"
+    if kind == "legal":
+        return "legal_text"
     if result.source == "serpapi" or (not result.content and result.snippet):
         return "web_snippet"
     if result.content:

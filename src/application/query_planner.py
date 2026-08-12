@@ -6,6 +6,7 @@ from typing import Callable, Protocol, Sequence
 from src.application.commands import SearchCommand
 from src.application.failures import search_failure
 from src.application.outcomes import PlannedQuery
+from src.application.ports.intent_classifier import IntentClassifier
 from src.application.ports.query_rewriter import QueryRewriter
 from src.application.ports.resilience import ResiliencePolicy
 from src.application.ports.runtime import Deadline, DeadlineExceededError
@@ -23,8 +24,11 @@ class QueryPlannerSettings(Protocol):
     siliconflow_base_url: str
     rewrite_model: str
     rewrite_cache_size: int
+    intent_classifier_enabled: bool
+    intent_classifier_min_confidence: float
     openalex_academic_detect: bool
     patent_detect: bool
+    fy_law_mcp_detect: bool
     openalex_query_rewrite: bool
 
 
@@ -37,11 +41,13 @@ class QueryPlanner:
         settings: QueryPlannerSettings,
         rewriter: QueryRewriter | None = None,
         *,
+        intent_classifier: IntentClassifier | None = None,
         plan_query_fn: PlanQuery = plan_query,
         resilience: ResiliencePolicy | None = None,
     ) -> None:
         self._settings = settings
         self._rewriter = rewriter
+        self._intent_classifier = intent_classifier
         self._plan_query = plan_query_fn
         self._resilience = resilience
 
@@ -52,6 +58,7 @@ class QueryPlanner:
         *,
         academic_available: bool,
         patent_available: bool,
+        legal_available: bool = False,
         deadline: Deadline | None = None,
         allow_external_models: bool = True,
     ) -> PlannedQuery:
@@ -63,6 +70,7 @@ class QueryPlanner:
         names = tuple(provider_names) if auto_route or "web" in requested else ()
         force_academic = None if auto_route else "academic" in requested
         force_patent = None if auto_route else "patent" in requested
+        force_legal = None if auto_route else "legal" in requested
         plan = self._plan_query(
             command.query,
             list(names),
@@ -72,9 +80,54 @@ class QueryPlanner:
             force_academic=force_academic,
             patent_detect=self._settings.patent_detect,
             force_patent=force_patent,
+            legal_detect=self._settings.fy_law_mcp_detect,
+            force_legal=force_legal,
         )
 
         failures: list[SearchFailure] = list(plan.failures)
+        if (
+            auto_route
+            and allow_external_models
+            and self._settings.intent_classifier_enabled
+            and self._settings.siliconflow_api_key
+            and self._intent_classifier is not None
+        ):
+            try:
+                decision = self._classify(
+                    plan.normalized_query,
+                    deadline=deadline,
+                )
+                if (
+                    decision.confidence
+                    >= self._settings.intent_classifier_min_confidence
+                ):
+                    model_sources = set(decision.source_types)
+                    plan = plan.model_copy(update={
+                        # Rule detections are high-precision guardrails. A model
+                        # can expand coverage, never suppress an existing route.
+                        "academic": plan.academic or "academic" in model_sources,
+                        "patent": plan.patent or "patent" in model_sources,
+                        "legal": plan.legal or "legal" in model_sources,
+                        "intent": decision.intent,
+                        "intent_confidence": decision.confidence,
+                        "legal_mode": decision.legal_mode,
+                    })
+            except DeadlineExceededError:
+                failures.append(search_failure(
+                    stage="intent_classification",
+                    source="siliconflow",
+                    code="SEARCH_DEADLINE_EXCEEDED",
+                    message="search deadline exceeded",
+                ))
+                plan = plan.model_copy(update={"failures": failures})
+            except Exception as exc:
+                failures.append(search_failure(
+                    stage="intent_classification",
+                    source="siliconflow",
+                    code="INTENT_CLASSIFICATION_FAILED",
+                    message=exc,
+                ))
+                plan = plan.model_copy(update={"failures": failures})
         if (
             allow_external_models
             and rewrite
@@ -110,6 +163,7 @@ class QueryPlanner:
         active_names = tuple(name for name in names if name in plan.providers)
         do_academic = bool(academic_available and plan.academic)
         do_patent = bool(patent_available and plan.patent)
+        do_legal = bool(legal_available and plan.legal)
         failures = list(plan.failures)
 
         if plan.academic and not academic_available:
@@ -127,6 +181,14 @@ class QueryPlanner:
                 source_type="patent",
                 code="PROVIDER_UNAVAILABLE",
                 message="专利检索被请求或自动触发,但 Patent ES provider 未启用。",
+            ))
+        if plan.legal and not legal_available:
+            failures.append(search_failure(
+                stage="routing",
+                source="fy_law_mcp",
+                source_type="legal",
+                code="PROVIDER_UNAVAILABLE",
+                message="法律法规检索被请求或自动触发,但 FY provider 未启用。",
             ))
 
         search_query = plan.rewritten_query or plan.normalized_query
@@ -168,6 +230,7 @@ class QueryPlanner:
             active_provider_names=active_names,
             do_academic=do_academic,
             do_patent=do_patent,
+            do_legal=do_legal,
             failures=tuple(failures),
         )
 
@@ -205,6 +268,29 @@ class QueryPlanner:
         return self._resilience.call(
             dependency,
             "rewrite",
+            invoke,
+            deadline=deadline,
+        )
+
+    def _classify(self, query: str, *, deadline: Deadline | None = None):
+        def invoke():
+            timeout_seconds = None
+            if deadline is not None:
+                timeout_seconds = deadline.remaining_seconds()
+                if timeout_seconds <= 0:
+                    raise DeadlineExceededError("search deadline exceeded")
+            classify_with_timeout = getattr(
+                self._intent_classifier, "classify_with_timeout", None
+            )
+            if callable(classify_with_timeout):
+                return classify_with_timeout(query, timeout_seconds=timeout_seconds)
+            return self._intent_classifier.classify(query)  # type: ignore[union-attr]
+
+        if self._resilience is None:
+            return invoke()
+        return self._resilience.call(
+            "siliconflow:intent-classification",
+            "intent_classification",
             invoke,
             deadline=deadline,
         )

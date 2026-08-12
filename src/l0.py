@@ -48,6 +48,13 @@ _PATENT_RULES = re.compile(
     r"\bUSPTO\b|\bWIPO\b|\bEPO\b",
     re.I,
 )
+_LEGAL_RULES = re.compile(
+    r"法律|法规|法条|条文|司法解释|行政法规|部门规章|规范性文件|"
+    r"条例|法典|立法|法律效力|现行有效|失效|废止|修订|"
+    r"民法典|刑法|公司法|劳动合同法|行政诉讼法|民事诉讼法|"
+    r"\b(laws?|legal|regulations?|statute|statutes)\b",
+    re.I,
+)
 
 
 def normalize(query: str) -> str:
@@ -75,6 +82,10 @@ def detect_academic(query: str) -> bool:
 
 def detect_patent(query: str) -> bool:
     return bool(_PATENT_RULES.search(query))
+
+
+def detect_legal(query: str) -> bool:
+    return bool(_LEGAL_RULES.search(query))
 
 
 def rewrite_query(
@@ -138,6 +149,8 @@ def plan_query(
     force_academic: Optional[bool] = None,
     patent_detect: bool = True,
     force_patent: Optional[bool] = None,
+    legal_detect: bool = True,
+    force_legal: Optional[bool] = None,
     http_session: Any = None,
 ) -> SearchPlan:
     """Build a route plan; external rewriting is a legacy optional hook."""
@@ -155,6 +168,11 @@ def plan_query(
         force_patent
         if force_patent is not None
         else patent_detect and detect_patent(normalized)
+    )
+    legal = (
+        force_legal
+        if force_legal is not None
+        else legal_detect and detect_legal(normalized)
     )
     failures: List[SearchFailure] = []
     rewritten = None
@@ -180,6 +198,7 @@ def plan_query(
         ),
         academic=academic,
         patent=patent,
+        legal=legal,
         providers=list(providers),
         top_k=top_k,
         failures=failures,

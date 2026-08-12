@@ -1,0 +1,68 @@
+{
+  "schema_version": "research-quality-baseline.v1",
+  "runner_version": "research-quality.v1",
+  "corpus_sha256": "41c8fdb1e96e9a013efb5cbbedfe0d069304cb29a84667d63eb58d2fe88f04d1",
+  "case_count": 50,
+  "max_drop": {
+    "status_accuracy": 0.0,
+    "claim_support_precision": 0.0,
+    "locator_validity": 0.0,
+    "identity_accuracy": 0.0,
+    "counterevidence_coverage": 0.0,
+    "conflict_disclosure_recall": 0.0,
+    "gap_disclosure_recall": 0.0,
+    "unsupported_statement_rate": 0.0
+  },
+  "metrics": {
+    "overall": {
+      "status_accuracy": 1.0,
+      "claim_support_precision": 1.0,
+      "locator_validity": 1.0,
+      "identity_accuracy": 1.0,
+      "counterevidence_coverage": 1.0,
+      "conflict_disclosure_recall": 1.0,
+      "gap_disclosure_recall": 1.0,
+      "unsupported_statement_rate": 0.0
+    },
+    "literature_review": {
+      "status_accuracy": 1.0,
+      "claim_support_precision": 1.0,
+      "locator_validity": 1.0,
+      "identity_accuracy": 1.0,
+      "counterevidence_coverage": 1.0,
+      "conflict_disclosure_recall": 1.0,
+      "gap_disclosure_recall": 1.0,
+      "unsupported_statement_rate": 0.0
+    },
+    "prior_art_landscape": {
+      "status_accuracy": 1.0,
+      "claim_support_precision": 1.0,
+      "locator_validity": 1.0,
+      "identity_accuracy": 1.0,
+      "counterevidence_coverage": 1.0,
+      "conflict_disclosure_recall": 1.0,
+      "gap_disclosure_recall": 1.0,
+      "unsupported_statement_rate": 0.0
+    },
+    "technology_landscape": {
+      "status_accuracy": 1.0,
+      "claim_support_precision": 1.0,
+      "locator_validity": 1.0,
+      "identity_accuracy": 1.0,
+      "counterevidence_coverage": 1.0,
+      "conflict_disclosure_recall": 1.0,
+      "gap_disclosure_recall": 1.0,
+      "unsupported_statement_rate": 0.0
+    },
+    "technology_validation": {
+      "status_accuracy": 1.0,
+      "claim_support_precision": 1.0,
+      "locator_validity": 1.0,
+      "identity_accuracy": 1.0,
+      "counterevidence_coverage": 1.0,
+      "conflict_disclosure_recall": 1.0,
+      "gap_disclosure_recall": 1.0,
+      "unsupported_statement_rate": 0.0
+    }
+  }
+}

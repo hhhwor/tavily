@@ -1,0 +1,14 @@
+[Unit]
+Description=Forward the existing public Tavily ingress to the Ningxia host
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+User=ec2-user
+ExecStart=/usr/bin/ssh -NT -i /home/ec2-user/ningxia-hhq.pem -o BatchMode=yes -o ExitOnForwardFailure=yes -o ServerAliveInterval=30 -o ServerAliveCountMax=3 -o StrictHostKeyChecking=yes -L 127.0.0.1:8000:127.0.0.1:8000 ec2-user@ec2-161-189-133-95.cn-northwest-1.compute.amazonaws.com.cn
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

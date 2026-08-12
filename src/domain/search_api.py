@@ -27,6 +27,9 @@ class RequestedFilters(SearchApiModel):
     published_to: date | None = None
     languages: list[str] = Field(default_factory=list)
     jurisdictions: list[str] = Field(default_factory=list)
+    legal_status: Literal[
+        "尚未生效", "现行有效", "已被修改", "失效", "待核实"
+    ] | None = None
 
 
 class SourceFilterExecution(SearchApiModel):
@@ -47,6 +50,7 @@ class SourceTypeCounts(SearchApiModel):
     web: int = Field(0, ge=0)
     academic: int = Field(0, ge=0)
     patent: int = Field(0, ge=0)
+    legal: int = Field(0, ge=0)
 
 
 class SearchStageCounts(SearchApiModel):

@@ -52,6 +52,7 @@ class DiscoveryService:
             self._source_registry.ids("web"),
             academic_available=self._source_registry.has_kind("academic"),
             patent_available=self._source_registry.has_kind("patent"),
+            legal_available=self._source_registry.has_kind("legal"),
             deadline=active_deadline,
             allow_external_models=allow_external_models,
         )

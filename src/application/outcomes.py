@@ -30,6 +30,7 @@ class PlannedQuery:
     active_provider_names: Tuple[str, ...] = ()
     do_academic: bool = False
     do_patent: bool = False
+    do_legal: bool = False
     failures: Tuple[SearchFailure, ...] = ()
 
     def __post_init__(self) -> None:
@@ -46,6 +47,7 @@ class RecallOutcome:
     web: Tuple[RetrievedDocument, ...] = ()
     academic: Tuple[RetrievedDocument, ...] = ()
     patent: Tuple[RetrievedDocument, ...] = ()
+    legal: Tuple[RetrievedDocument, ...] = ()
     batches: Tuple[RetrievalBatch, ...] = ()
     providers_used: Tuple[str, ...] = ()
     planned_sources: Tuple[str, ...] = ()
@@ -57,6 +59,7 @@ class RecallOutcome:
             "web",
             "academic",
             "patent",
+            "legal",
             "batches",
             "providers_used",
             "planned_sources",
@@ -74,10 +77,11 @@ class RankingOutcome:
     web: Tuple[RankedDocument, ...] = ()
     academic: Tuple[RankedDocument, ...] = ()
     patent: Tuple[RankedDocument, ...] = ()
+    legal: Tuple[RankedDocument, ...] = ()
     failures: Tuple[SearchFailure, ...] = ()
 
     def __post_init__(self) -> None:
-        for field_name in ("web", "academic", "patent", "failures"):
+        for field_name in ("web", "academic", "patent", "legal", "failures"):
             object.__setattr__(self, field_name, _tuple(getattr(self, field_name)))
 
 

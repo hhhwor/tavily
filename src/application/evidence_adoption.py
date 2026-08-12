@@ -214,6 +214,7 @@ class EvidenceAdoptionGate:
                 "patent_claim"
                 if locator.claim_number else "patent_specification"
             ),
+            "legal": "legal_text",
         }[candidate.type]
         patent = candidate.patent
         if patent is not None:

@@ -139,7 +139,7 @@ def test_planner_forwards_request_overrides_to_l0():
     assert planned.active_provider_names == ("baidu",)
 
 
-def test_planner_reports_unavailable_verticals_without_rewriting_academic():
+def test_planner_reports_unavailable_sources_without_rewriting_academic():
     academic_rewrite_calls = []
 
     class Rewriter:

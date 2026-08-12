@@ -113,6 +113,11 @@ class Settings:
     aliyun_web_search_region: str = "global"
     serpapi_api_key: str = field(default="", repr=False)
     serpapi_enabled: bool = False
+    fy_law_mcp_url: str = "https://api.cjbdi.com:8443/354347/mcp_law_service"
+    fy_law_mcp_token: str = field(default="", repr=False)
+    fy_law_mcp_token_file: str = ""
+    fy_law_mcp_enabled: bool = False
+    fy_law_mcp_detect: bool = True
 
     default_top_k: int = 10
     per_provider_k: int = 10
@@ -126,6 +131,10 @@ class Settings:
     research_queue_retry_after_seconds: int = 1
     research_recall_max_workers: int = 4
     research_ranking_max_workers: int = 2
+    research_synthesis_enabled: bool = False
+    research_synthesis_model: str = "Qwen/Qwen2.5-7B-Instruct"
+    research_synthesis_timeout: int = 20
+    research_artifact_retention_seconds: int = 604800
 
     ranking_profile: str = "quality"
     rerank_backend: str = "siliconflow"
@@ -138,6 +147,12 @@ class Settings:
 
     siliconflow_api_key: str = field(default="", repr=False)
     siliconflow_base_url: str = "https://api.siliconflow.cn/v1"
+    intent_classifier_enabled: bool = False
+    intent_classifier_model: str = "Qwen/Qwen3-8B"
+    intent_classifier_timeout: int = 8
+    intent_classifier_cache_size: int = 1024
+    intent_classifier_cache_ttl: int = 3600
+    intent_classifier_min_confidence: float = 0.70
     chunk_max_chars: int = 400
     chunk_overlap: int = 50
 
@@ -220,6 +235,22 @@ class Settings:
             raise ValueError(
                 "SERPAPI_ENABLED=true 时必须配置 SERPAPI_API_KEY"
             )
+        fy_law_mcp_enabled = _bool(env, "FY_LAW_MCP_ENABLED", False)
+        fy_law_mcp_url = env.get(
+            "FY_LAW_MCP_URL",
+            "https://api.cjbdi.com:8443/354347/mcp_law_service",
+        ).strip()
+        fy_law_mcp_token = env.get("FY_LAW_MCP_TOKEN", "").strip()
+        fy_law_mcp_token_file = env.get("FY_LAW_MCP_TOKEN_FILE", "").strip()
+        if fy_law_mcp_enabled and not fy_law_mcp_url:
+            raise ValueError("FY_LAW_MCP_ENABLED=true 时必须配置 FY_LAW_MCP_URL")
+        if fy_law_mcp_enabled and not (
+            fy_law_mcp_token or fy_law_mcp_token_file
+        ):
+            raise ValueError(
+                "FY_LAW_MCP_ENABLED=true 时必须配置 FY_LAW_MCP_TOKEN 或 "
+                "FY_LAW_MCP_TOKEN_FILE"
+            )
         aliyun_id = env.get("ALIBABA_CLOUD_ACCESS_KEY_ID", "")
         aliyun_secret = env.get("ALIBABA_CLOUD_ACCESS_KEY_SECRET", "")
         if bool(aliyun_id) != bool(aliyun_secret):
@@ -291,6 +322,27 @@ class Settings:
             )
 
         rewrite_model = env.get("REWRITE_MODEL", "Qwen/Qwen2.5-7B-Instruct")
+        intent_classifier_enabled = _bool(
+            env, "INTENT_CLASSIFIER_ENABLED", False
+        )
+        if intent_classifier_enabled and not env.get("SILICONFLOW_API_KEY"):
+            raise ValueError(
+                "INTENT_CLASSIFIER_ENABLED=true 时必须配置 SILICONFLOW_API_KEY"
+            )
+        intent_classifier_min_confidence = _float(
+            env, "INTENT_CLASSIFIER_MIN_CONFIDENCE", 0.70
+        )
+        if not 0.0 <= intent_classifier_min_confidence <= 1.0:
+            raise ValueError(
+                "INTENT_CLASSIFIER_MIN_CONFIDENCE 必须在 0 到 1 之间"
+            )
+        synthesis_enabled = _bool(
+            env, "RESEARCH_SYNTHESIS_ENABLED", False
+        )
+        if synthesis_enabled and not env.get("SILICONFLOW_API_KEY"):
+            raise ValueError(
+                "RESEARCH_SYNTHESIS_ENABLED=true 时必须配置 SILICONFLOW_API_KEY"
+            )
         return cls(
             qianfan_api_key=env.get("QIANFAN_API_KEY", ""),
             tencent_secret_id=env.get("TENCENT_SECRET_ID", ""),
@@ -307,6 +359,11 @@ class Settings:
             aliyun_web_search_region=aliyun_region,
             serpapi_api_key=env.get("SERPAPI_API_KEY", ""),
             serpapi_enabled=serpapi_enabled,
+            fy_law_mcp_url=fy_law_mcp_url,
+            fy_law_mcp_token=fy_law_mcp_token,
+            fy_law_mcp_token_file=fy_law_mcp_token_file,
+            fy_law_mcp_enabled=fy_law_mcp_enabled,
+            fy_law_mcp_detect=_bool(env, "FY_LAW_MCP_DETECT", True),
             default_top_k=_int(env, "SEARCH_TOP_K", 10, minimum=1),
             per_provider_k=_int(env, "SEARCH_PER_PROVIDER_K", 10, minimum=1),
             provider_timeout=_int(env, "SEARCH_PROVIDER_TIMEOUT", 15, minimum=1),
@@ -335,6 +392,19 @@ class Settings:
             research_ranking_max_workers=_int(
                 env, "RESEARCH_RANKING_MAX_WORKERS", 2, minimum=1
             ),
+            research_synthesis_enabled=synthesis_enabled,
+            research_synthesis_model=env.get(
+                "RESEARCH_SYNTHESIS_MODEL", "Qwen/Qwen2.5-7B-Instruct"
+            ),
+            research_synthesis_timeout=_int(
+                env, "RESEARCH_SYNTHESIS_TIMEOUT", 20, minimum=1
+            ),
+            research_artifact_retention_seconds=_int(
+                env,
+                "RESEARCH_ARTIFACT_RETENTION_SECONDS",
+                604800,
+                minimum=1,
+            ),
             ranking_profile=ranking.profile,
             rerank_backend=rerank_backend,
             rerank_model=env.get("RERANK_MODEL", "Qwen/Qwen3-Reranker-0.6B"),
@@ -347,6 +417,20 @@ class Settings:
             siliconflow_base_url=env.get(
                 "SILICONFLOW_BASE_URL", "https://api.siliconflow.cn/v1"
             ),
+            intent_classifier_enabled=intent_classifier_enabled,
+            intent_classifier_model=env.get(
+                "INTENT_CLASSIFIER_MODEL", "Qwen/Qwen3-8B"
+            ),
+            intent_classifier_timeout=_int(
+                env, "INTENT_CLASSIFIER_TIMEOUT", 8, minimum=1
+            ),
+            intent_classifier_cache_size=_int(
+                env, "INTENT_CLASSIFIER_CACHE_SIZE", 1024, minimum=1
+            ),
+            intent_classifier_cache_ttl=_int(
+                env, "INTENT_CLASSIFIER_CACHE_TTL", 3600, minimum=1
+            ),
+            intent_classifier_min_confidence=intent_classifier_min_confidence,
             chunk_max_chars=_int(env, "CHUNK_MAX_CHARS", 400, minimum=1),
             chunk_overlap=_int(env, "CHUNK_OVERLAP", 50, minimum=0),
             rewrite_enabled=_bool(env, "REWRITE_ENABLED", False),
@@ -464,6 +548,8 @@ class Settings:
             names.append("aliyun")
         if self.serpapi_enabled and self.serpapi_api_key:
             names.append("serpapi")
+        if self.fy_law_mcp_enabled:
+            names.append("fy_law_mcp")
         return tuple(names)
 
     @property

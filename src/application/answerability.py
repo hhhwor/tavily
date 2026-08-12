@@ -12,7 +12,7 @@ class AnswerabilityPolicy:
 
     @staticmethod
     def _type_counts(evidence: Sequence[Evidence]) -> dict[str, int]:
-        counts = {"web": 0, "academic": 0, "patent": 0}
+        counts = {"web": 0, "academic": 0, "patent": 0, "legal": 0}
         for item in evidence:
             if item.type in counts:
                 counts[item.type] += 1
@@ -27,6 +27,7 @@ class AnswerabilityPolicy:
         expected_academic: bool,
         expected_patent: bool,
         include_pdf_text: bool,
+        expected_legal: bool = False,
     ) -> Answerability:
         counts = self._type_counts(evidence)
         gaps: list[AnswerabilityGap] = []
@@ -53,6 +54,12 @@ class AnswerabilityPolicy:
                 expected_patent,
                 "NO_PATENT_EVIDENCE",
                 "查询需要专利证据,但未返回专利证据。",
+            ),
+            (
+                "legal",
+                expected_legal,
+                "NO_LEGAL_EVIDENCE",
+                "查询需要法规证据,但未返回法规证据。",
             ),
         ]
         for source_type, needed, code, message in expected:

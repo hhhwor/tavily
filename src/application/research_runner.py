@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from collections import Counter
+import hashlib
 from typing import Mapping, Sequence
 
 from src.application.commands import SearchCommand, SearchFilters
@@ -18,6 +19,8 @@ from src.application.ports.search_seed import (
     search_seed_snapshot_hash_matches,
 )
 from src.application.research_coverage import CoverageEvaluator, evidence_identity
+from src.application.research_artifacts import ResearchArtifactService
+from src.application.research_dossier_builder import StructuredDossierBuilder
 from src.application.research_execution import (
     BudgetLedger,
     CancellationToken,
@@ -26,6 +29,7 @@ from src.application.research_execution import (
 )
 from src.application.research_planner import ResearchPlanner
 from src.application.research_policy import ResearchPolicyRegistry, ResolvedPolicy
+from src.application.research_synthesis import ResearchSynthesizer
 from src.application.research_scope import filter_evidence
 from src.application.trust_annotator import TrustAnnotator
 from src.application.verify_service import VerifyService
@@ -45,6 +49,7 @@ from src.domain.research import (
     ResearchProgress,
     ResearchRoundCheckpoint,
     ResearchStop,
+    ResearchSynthesisSnapshot,
     ResearchTaskEnvelope,
     ResearchUsage,
     ResolvedResearch,
@@ -72,6 +77,9 @@ class ResearchRunner:
         coverage_evaluator: CoverageEvaluator,
         document_readers: Mapping[DocumentKind, DocumentReader],
         evidence_adoption: EvidenceAdoptionGate,
+        dossier_builder: StructuredDossierBuilder,
+        synthesizer: ResearchSynthesizer,
+        artifact_service: ResearchArtifactService,
     ) -> None:
         self._task_store = task_store
         self._discovery = discovery
@@ -85,6 +93,9 @@ class ResearchRunner:
         self._coverage = coverage_evaluator
         self._document_readers = dict(document_readers)
         self._evidence_adoption = evidence_adoption
+        self._dossier_builder = dossier_builder
+        self._synthesizer = synthesizer
+        self._artifact_service = artifact_service
 
     def run(self, research_id: str) -> None:
         try:
@@ -478,30 +489,6 @@ class ResearchRunner:
             seed_scope_reasons,
             ledger,
         )
-        dossier = ResearchDossier(
-            findings=[
-                ResearchFinding(
-                    claim=item.claim,
-                    assessment=item,
-                    limitations=list(item.gaps),
-                )
-                for item in assessments
-            ],
-            assessment=assessment,
-            evidence_funnel=EvidenceFunnel(
-                raw_candidates=raw_candidates,
-                independent_works=len(identities),
-                patent_families=len(families),
-                deep_reads=deep_reads,
-                adopted=len(evidence),
-            ),
-            coverage=coverage,
-            boundaries=boundary,
-            evidence_index={item.id: item for item in evidence},
-            query_trace=query_trace,
-            plan=plan,
-            rounds=history,
-        )
         source_failure = bool(
             source_attempts
             and source_successes == 0
@@ -535,6 +522,95 @@ class ResearchRunner:
             stop_reason = "max_rounds_reached"
         else:
             stop_reason = "information_gain_saturated"
+        dossier = ResearchDossier(
+            findings=[
+                ResearchFinding(
+                    claim=item.claim,
+                    assessment=item,
+                    limitations=list(item.gaps),
+                )
+                for item in assessments
+            ],
+            assessment=assessment,
+            evidence_funnel=EvidenceFunnel(
+                raw_candidates=raw_candidates,
+                independent_works=len(identities),
+                patent_families=len(families),
+                deep_reads=deep_reads,
+                adopted=len(evidence),
+            ),
+            coverage=coverage,
+            boundaries=boundary,
+            evidence_index={item.id: item for item in evidence},
+            query_trace=query_trace,
+            plan=plan,
+            rounds=history,
+        )
+        dossier = self._dossier_builder.build(
+            dossier,
+            resolved=resolved,
+            counterevidence_claim_refs=sorted(counterevidence_searched),
+            evidence_set_revision=evidence_set_revision,
+            stop_reason=stop_reason,
+        )
+        task = self._set_running_phase(research_id, "synthesizing")
+        context.cancellation.raise_if_cancelled()
+        dossier, synthesis_failure = self._synthesize(
+            research_id,
+            attempt=attempt,
+            dossier=dossier,
+            resolved=resolved,
+            model_route=model_route,
+            context=context,
+            evidence_set_revision=evidence_set_revision,
+        )
+        if synthesis_failure is not None:
+            failures.append(synthesis_failure)
+        artifact_failure = False
+        if (
+            dossier.citation_audit is not None
+            and dossier.citation_audit.status == "passed"
+        ):
+            try:
+                context.cancellation.raise_if_cancelled()
+                artifact_index = self._artifact_service.create_all(
+                    research_id,
+                    dossier,
+                    evidence_set_revision=evidence_set_revision,
+                )
+                dossier = dossier.model_copy(update={
+                    "artifact_index": artifact_index,
+                    "artifacts": {
+                        item.kind: item.href for item in artifact_index
+                    },
+                })
+                self._task_store.append_event(
+                    research_id,
+                    attempt=attempt,
+                    kind="artifacts_ready",
+                    payload={
+                        "count": len(artifact_index),
+                        "evidence_set_revision": evidence_set_revision,
+                    },
+                )
+            except ResearchCancelledError:
+                raise
+            except Exception as exc:
+                artifact_failure = True
+                failures.append(SearchFailure(
+                    stage="artifact",
+                    code="ARTIFACT_GENERATION_FAILED",
+                    message=public_error_message(exc),
+                    recoverable=True,
+                ))
+        else:
+            artifact_failure = True
+            failures.append(SearchFailure(
+                stage="synthesis",
+                code="SYNTHESIS_CITATION_AUDIT_FAILED",
+                message="citation coverage audit 未通过，未生成 artifact",
+                recoverable=False,
+            ))
         if stop_reason == "source_failure":
             state = "partial" if evidence else "failed"
         elif coverage.gaps and stop_reason in {
@@ -545,6 +621,8 @@ class ResearchRunner:
             state = "partial" if evidence else "failed"
         else:
             state = "completed"
+        if artifact_failure and state == "completed":
+            state = "partial"
         current = self._task_store.get(research_id)
         if current.state == "cancelled" or self._task_store.cancel_requested(
             research_id
@@ -582,6 +660,231 @@ class ResearchRunner:
             "retry_after_ms": None,
         })
         self._task_store.save(final, expected_revision=current.task_revision)
+
+    def _synthesize(
+        self,
+        research_id: str,
+        *,
+        attempt: int,
+        dossier: ResearchDossier,
+        resolved: ResolvedResearch,
+        model_route: ResolvedModelRoute,
+        context: ExecutionContext,
+        evidence_set_revision: int,
+    ) -> tuple[ResearchDossier, SearchFailure | None]:
+        operation_id = "synthesis_" + hashlib.sha256(
+            "|".join((
+                research_id,
+                str(attempt),
+                str(evidence_set_revision),
+                self._dossier_builder.version,
+                self._synthesizer.version,
+            )).encode("utf-8")
+        ).hexdigest()[:20]
+        existing = self._task_store.get_synthesis(
+            research_id,
+            operation_id=operation_id,
+        )
+        if existing is not None and existing.status == "ready":
+            if existing.model_requests:
+                context.budget.consume(
+                    "model_requests", existing.model_requests
+                )
+                context.budget.consume(
+                    "model_input_tokens", existing.model_input_tokens
+                )
+                context.budget.consume(
+                    "model_output_tokens", existing.model_output_tokens
+                )
+            restored = self._apply_synthesis_snapshot(dossier, existing)
+            restored = self._synthesizer.audit_dossier(
+                restored,
+                resolve_locator=lambda locator: (
+                    self._task_store.resolve_locator(research_id, locator)
+                ),
+                now=self._clock.now(),
+            )
+            if (
+                restored.citation_audit is None
+                or restored.citation_audit.status != "passed"
+            ):
+                fallback = self._synthesizer.synthesize(
+                    dossier,
+                    question=resolved.objective.question,
+                    profile=resolved.profile,
+                    allow_external_models=False,
+                    context=context,
+                    resolve_locator=lambda locator: (
+                        self._task_store.resolve_locator(
+                            research_id, locator
+                        )
+                    ),
+                    now=self._clock.now(),
+                ).dossier
+                if fallback.methods is not None:
+                    fallback = fallback.model_copy(update={
+                        "methods": fallback.methods.model_copy(update={
+                            "synthesis_mode": "model_fallback",
+                        }),
+                    })
+                repaired = existing.model_copy(update={
+                    "summary": fallback.summary,
+                    "statements": fallback.statements,
+                    "citation_audit": fallback.citation_audit,
+                    "mode": "model_fallback",
+                    "failure_code": "SYNTHESIS_RECOVERY_AUDIT_FAILED",
+                    "completed_at": self._clock.now(),
+                })
+                self._task_store.save_synthesis(
+                    research_id,
+                    attempt=attempt,
+                    snapshot=repaired,
+                )
+                return fallback, self._synthesis_failure(
+                    repaired.failure_code
+                )
+            return restored, self._synthesis_failure(existing.failure_code)
+
+        pending = ResearchSynthesisSnapshot(
+            operation_id=operation_id,
+            status="pending",
+            created_at=self._clock.now(),
+        )
+        started = self._task_store.begin_synthesis(
+            research_id,
+            attempt=attempt,
+            snapshot=pending,
+        )
+        recovery = not started
+        if recovery:
+            pending = self._task_store.get_synthesis(
+                research_id,
+                operation_id=operation_id,
+            ) or pending
+            if pending.model_requests:
+                context.budget.consume(
+                    "model_requests", pending.model_requests
+                )
+                context.budget.consume(
+                    "model_input_tokens", pending.model_input_tokens
+                )
+                context.budget.consume(
+                    "model_output_tokens", pending.model_output_tokens
+                )
+        allow_external = (
+            not recovery
+            and self._synthesizer.external_available
+            and model_route.allow_external_models
+            and model_route.synthesis == "configured"
+        )
+        if allow_external:
+            # Persist the charge intent before egress. A recovery may
+            # conservatively count this attempt, but will never replay it.
+            context.cancellation.raise_if_cancelled()
+            if not context.deadline.expired:
+                pending = pending.model_copy(update={"model_requests": 1})
+                self._task_store.save_synthesis(
+                    research_id,
+                    attempt=attempt,
+                    snapshot=pending,
+                )
+        outcome = self._synthesizer.synthesize(
+            dossier,
+            question=resolved.objective.question,
+            profile=resolved.profile,
+            allow_external_models=allow_external,
+            context=context,
+            resolve_locator=lambda locator: self._task_store.resolve_locator(
+                research_id, locator
+            ),
+            now=self._clock.now(),
+        )
+        failure_code = (
+            "SYNTHESIS_RECOVERY_FALLBACK"
+            if recovery else outcome.failure_code
+        )
+        ready = ResearchSynthesisSnapshot(
+            operation_id=operation_id,
+            status="ready",
+            summary=outcome.dossier.summary,
+            statements=outcome.dossier.statements,
+            citation_audit=outcome.dossier.citation_audit,
+            mode=outcome.mode,
+            model=outcome.model,
+            failure_code=failure_code,
+            model_requests=max(
+                pending.model_requests, outcome.model_requests
+            ),
+            model_input_tokens=outcome.input_tokens,
+            model_output_tokens=outcome.output_tokens,
+            created_at=pending.created_at,
+            completed_at=self._clock.now(),
+        )
+        self._task_store.save_synthesis(
+            research_id,
+            attempt=attempt,
+            snapshot=ready,
+        )
+        self._task_store.append_event(
+            research_id,
+            attempt=attempt,
+            kind="synthesis_ready",
+            payload={
+                "operation_id": operation_id,
+                "mode": ready.mode,
+                "audit": (
+                    ready.citation_audit.status
+                    if ready.citation_audit is not None else "failed"
+                ),
+                "failure_code": ready.failure_code,
+            },
+        )
+        return outcome.dossier, self._synthesis_failure(failure_code)
+
+    @staticmethod
+    def _apply_synthesis_snapshot(
+        dossier: ResearchDossier,
+        snapshot: ResearchSynthesisSnapshot,
+    ) -> ResearchDossier:
+        methods = dossier.methods
+        if methods is not None:
+            methods = methods.model_copy(update={
+                "synthesis_mode": snapshot.mode,
+            })
+        return dossier.model_copy(update={
+            "summary": snapshot.summary or dossier.summary,
+            "statements": snapshot.statements,
+            "citation_audit": snapshot.citation_audit,
+            "methods": methods,
+        })
+
+    @staticmethod
+    def _synthesis_failure(code: str | None) -> SearchFailure | None:
+        if code is None:
+            return None
+        messages = {
+            "SYNTHESIS_CITATION_AUDIT_FAILED": (
+                "模型综合未通过引用审计，已回退到确定性综合"
+            ),
+            "SYNTHESIS_MODEL_FAILED": (
+                "模型综合不可用，已回退到确定性综合"
+            ),
+            "SYNTHESIS_DEADLINE_EXCEEDED": (
+                "综合模型超出剩余 deadline，已回退到确定性综合"
+            ),
+            "SYNTHESIS_RECOVERY_FALLBACK": (
+                "检测到未完成的综合 operation，恢复时未重复外部调用"
+            ),
+            "SYNTHESIS_RECOVERY_AUDIT_FAILED": (
+                "持久化综合未通过恢复期复审，已回退到确定性综合"
+            ),
+        }
+        return SearchFailure(
+            stage="synthesis",
+            code=code,
+            message=messages.get(code, "综合阶段已使用确定性回退"),
+            recoverable=True,
+        )
 
     def _move_to_needs_input(
         self,
@@ -1049,6 +1352,7 @@ class ResearchRunner:
             outcome.ranked.web,
             outcome.ranked.academic,
             outcome.ranked.patent,
+            outcome.ranked.legal,
         )[:limit]
         trust = self._trust_annotator.annotate(
             mode="annotate",
@@ -1066,6 +1370,7 @@ class ResearchRunner:
             len(outcome.recalled.web),
             len(outcome.recalled.academic),
             len(outcome.recalled.patent),
+            len(outcome.recalled.legal),
         ))
         return (
             list(trust.evidence),
@@ -1300,7 +1605,9 @@ class ResearchRunner:
     def _mark_failed(self, research_id: str, error: Exception) -> None:
         try:
             current = self._task_store.get(research_id)
-            if current.state == "cancelled":
+            if current.state in {
+                "completed", "partial", "failed", "cancelled"
+            }:
                 return
             failed = current.model_copy(update={
                 "state": "failed",

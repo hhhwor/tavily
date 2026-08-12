@@ -47,6 +47,16 @@ class EvidencePatent(BaseModel):
     npl_citations: List[str] = Field(default_factory=list)
 
 
+class EvidenceLegal(BaseModel):
+    """法规检索返回的结构化定位与效力信息。"""
+
+    law_type: str = ""
+    status: str = ""
+    department: str = ""
+    directory: List[str] = Field(default_factory=list)
+    item: str = ""
+
+
 class EvidenceScores(BaseModel):
     relevance: Optional[float] = None
     source_rank: Optional[int] = None
@@ -139,7 +149,7 @@ class EvidenceQuality(BaseModel):
 class Evidence(BaseModel):
     id: str
     result_id: str
-    type: Literal["web", "academic", "patent"]
+    type: Literal["web", "academic", "patent", "legal"]
     source: str = ""
     title: str = ""
     url: str = ""
@@ -149,6 +159,7 @@ class Evidence(BaseModel):
     passage: EvidencePassage
     citation: EvidenceCitation = Field(default_factory=EvidenceCitation)
     patent: Optional[EvidencePatent] = None
+    legal: Optional[EvidenceLegal] = None
     scores: EvidenceScores = Field(default_factory=EvidenceScores)
     access: EvidenceAccess = Field(default_factory=EvidenceAccess)
     diagnostics: EvidenceDiagnostics = Field(default_factory=EvidenceDiagnostics)
@@ -161,7 +172,7 @@ class AnswerabilityGap(BaseModel):
     code: str
     severity: Literal["info", "warning", "blocking"] = "warning"
     message: str
-    type: Optional[Literal["web", "academic", "patent"]] = None
+    type: Optional[Literal["web", "academic", "patent", "legal"]] = None
     source: Optional[str] = None
 
 

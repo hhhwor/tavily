@@ -11,14 +11,17 @@ from src.application.ports.research_store import (
     ResearchIdempotencyConflict,
     ResearchRevisionConflict,
     ResearchTaskNotFound,
+    StoredResearchArtifact,
 )
 from src.domain.evidence import Evidence
 from src.domain.document_read import DocumentChunk, DocumentReadResult
 from src.domain.evidence import EvidenceLocator
 from src.domain.research import (
     ObjectivePlan,
+    ResearchArtifact,
     ResearchRoundCheckpoint,
     ResearchTaskEnvelope,
+    ResearchSynthesisSnapshot,
     RoundResult,
 )
 from src.domain.search_api import SearchSeedSnapshot
@@ -47,6 +50,37 @@ class SqliteResearchStore:
                 task_revision INTEGER NOT NULL,
                 cancel_requested INTEGER NOT NULL DEFAULT 0,
                 payload TEXT NOT NULL
+            )
+            """
+        )
+        self._connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS research_syntheses (
+                research_id TEXT NOT NULL,
+                operation_id TEXT NOT NULL,
+                attempt INTEGER NOT NULL,
+                status TEXT NOT NULL,
+                payload TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                completed_at TEXT,
+                PRIMARY KEY (research_id, operation_id),
+                FOREIGN KEY (research_id) REFERENCES research_tasks(research_id)
+                    ON DELETE CASCADE
+            )
+            """
+        )
+        self._connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS research_artifacts (
+                research_id TEXT NOT NULL,
+                artifact_id TEXT NOT NULL,
+                kind TEXT NOT NULL,
+                metadata TEXT NOT NULL,
+                content BLOB NOT NULL,
+                expires_at TEXT NOT NULL,
+                PRIMARY KEY (research_id, artifact_id),
+                FOREIGN KEY (research_id) REFERENCES research_tasks(research_id)
+                    ON DELETE CASCADE
             )
             """
         )
@@ -681,6 +715,146 @@ class SqliteResearchStore:
         if start < 0 or end < start or end > len(text):
             return None
         return text[start:end]
+
+    def begin_synthesis(
+        self,
+        research_id: str,
+        *,
+        attempt: int,
+        snapshot: ResearchSynthesisSnapshot,
+    ) -> bool:
+        if snapshot.status != "pending":
+            raise ValueError("begin_synthesis 只接受 pending snapshot")
+        if not self._exists(research_id):
+            raise ResearchTaskNotFound(research_id)
+        with self._lock:
+            cursor = self._connection.execute(
+                """
+                INSERT OR IGNORE INTO research_syntheses
+                    (research_id, operation_id, attempt, status, payload,
+                     created_at, completed_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    research_id,
+                    snapshot.operation_id,
+                    attempt,
+                    snapshot.status,
+                    snapshot.model_dump_json(),
+                    snapshot.created_at.isoformat(),
+                    None,
+                ),
+            )
+        return cursor.rowcount == 1
+
+    def get_synthesis(
+        self,
+        research_id: str,
+        *,
+        operation_id: str,
+    ) -> ResearchSynthesisSnapshot | None:
+        with self._lock:
+            row = self._connection.execute(
+                """
+                SELECT payload FROM research_syntheses
+                WHERE research_id = ? AND operation_id = ?
+                """,
+                (research_id, operation_id),
+            ).fetchone()
+        if row is None:
+            return None
+        return ResearchSynthesisSnapshot.model_validate_json(row["payload"])
+
+    def save_synthesis(
+        self,
+        research_id: str,
+        *,
+        attempt: int,
+        snapshot: ResearchSynthesisSnapshot,
+    ) -> None:
+        if not self._exists(research_id):
+            raise ResearchTaskNotFound(research_id)
+        with self._lock:
+            self._connection.execute(
+                """
+                INSERT INTO research_syntheses
+                    (research_id, operation_id, attempt, status, payload,
+                     created_at, completed_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(research_id, operation_id) DO UPDATE SET
+                    attempt = excluded.attempt,
+                    status = excluded.status,
+                    payload = excluded.payload,
+                    completed_at = excluded.completed_at
+                """,
+                (
+                    research_id,
+                    snapshot.operation_id,
+                    attempt,
+                    snapshot.status,
+                    snapshot.model_dump_json(),
+                    snapshot.created_at.isoformat(),
+                    (
+                        snapshot.completed_at.isoformat()
+                        if snapshot.completed_at is not None else None
+                    ),
+                ),
+            )
+
+    def save_artifact(
+        self,
+        research_id: str,
+        *,
+        metadata: ResearchArtifact,
+        content: bytes,
+    ) -> None:
+        if not self._exists(research_id):
+            raise ResearchTaskNotFound(research_id)
+        if len(content) != metadata.size_bytes:
+            raise ValueError("artifact content size 与 metadata 不一致")
+        with self._lock:
+            self._connection.execute(
+                """
+                INSERT INTO research_artifacts
+                    (research_id, artifact_id, kind, metadata, content,
+                     expires_at)
+                VALUES (?, ?, ?, ?, ?, ?)
+                ON CONFLICT(research_id, artifact_id) DO UPDATE SET
+                    kind = excluded.kind,
+                    metadata = excluded.metadata,
+                    content = excluded.content,
+                    expires_at = excluded.expires_at
+                """,
+                (
+                    research_id,
+                    metadata.artifact_id,
+                    metadata.kind,
+                    metadata.model_dump_json(),
+                    sqlite3.Binary(content),
+                    metadata.expires_at.isoformat(),
+                ),
+            )
+
+    def get_artifact(
+        self,
+        research_id: str,
+        *,
+        artifact_id: str,
+    ) -> StoredResearchArtifact | None:
+        with self._lock:
+            row = self._connection.execute(
+                """
+                SELECT metadata, content FROM research_artifacts
+                WHERE research_id = ? AND artifact_id = ?
+                """,
+                (research_id, artifact_id),
+            ).fetchone()
+        if row is None:
+            return None
+        return StoredResearchArtifact(
+            metadata=ResearchArtifact.model_validate_json(row["metadata"]),
+            content=bytes(row["content"]),
+        )
 
     def save(
         self,
