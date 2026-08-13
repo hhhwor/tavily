@@ -1,0 +1,70 @@
+{
+  "embedding_model": "Qwen/Qwen3-Embedding-0.6B",
+  "artifact_version": 1,
+  "corpus_sha256": "1156deeffacf009d6ff45aa0cf1a082d8f019b4b8d1cf6c056f132bf634b4455",
+  "dataset": {
+    "train": 256,
+    "validation": 79,
+    "holdout": 62,
+    "holdout_group_counts": {
+      "general": 16,
+      "academic": 8,
+      "patent": 8,
+      "legal": 8,
+      "academic+patent": 6,
+      "academic+legal": 6,
+      "patent+legal": 6,
+      "academic+patent+legal": 4
+    }
+  },
+  "thresholds": {
+    "academic": 0.52,
+    "patent": 0.74,
+    "legal": 0.59
+  },
+  "validation": {
+    "exact_match": 1.0,
+    "macro_group_exact_match": 1.0,
+    "macro_source_f1": 1.0
+  },
+  "holdout": {
+    "exact_match": 0.870968,
+    "macro_group_exact_match": 0.838542,
+    "macro_source_f1": 0.93617,
+    "source": {
+      "academic": {"precision": 0.956522, "recall": 0.916667, "f1": 0.93617},
+      "patent": {"precision": 0.956522, "recall": 0.916667, "f1": 0.93617},
+      "legal": {"precision": 0.956522, "recall": 0.916667, "f1": 0.93617}
+    },
+    "group_exact_match": {
+      "general": 1.0,
+      "academic": 0.75,
+      "patent": 1.0,
+      "legal": 0.875,
+      "academic+patent": 0.833333,
+      "academic+legal": 0.833333,
+      "patent+legal": 0.666667,
+      "academic+patent+legal": 0.75
+    }
+  },
+  "planner_effective_holdout": {
+    "policy": "preserve two rule routes and allow calibrated model to add the third",
+    "exact_match": 0.903226,
+    "group_exact_match": {
+      "general": 0.9375,
+      "academic": 0.75,
+      "patent": 1.0,
+      "legal": 0.875,
+      "academic+patent": 1.0,
+      "academic+legal": 1.0,
+      "patent+legal": 0.833333,
+      "academic+patent+legal": 0.75
+    }
+  },
+  "same_holdout_prototype_baseline": {
+    "exact_match": 0.483871,
+    "macro_group_exact_match": 0.380208,
+    "macro_source_f1": 0.578107,
+    "legal_recall": 0.25
+  }
+}

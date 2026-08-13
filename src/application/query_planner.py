@@ -97,8 +97,14 @@ class QueryPlanner:
                     plan.normalized_query,
                     deadline=deadline,
                 )
+                owns_thresholds = bool(getattr(
+                    self._intent_classifier,
+                    "owns_thresholds",
+                    False,
+                ))
                 if (
-                    decision.confidence
+                    owns_thresholds
+                    or decision.confidence
                     >= self._settings.intent_classifier_min_confidence
                 ):
                     model_sources = set(decision.source_types)
@@ -119,10 +125,15 @@ class QueryPlanner:
                     if authoritative:
                         # The embedding classifier includes general hard
                         # negatives and may suppress one noisy keyword rule.
-                        # Two rule hits already establish an explicit mixed
-                        # request and are safer than an extra correlated score.
+                        # Two rule hits establish an explicit mixed request.
+                        # Calibrated heads may add the missing third vertical,
+                        # but must not remove either explicit rule route.
                         effective_sources = (
-                            rule_sources
+                            (
+                                rule_sources | model_sources
+                                if owns_thresholds
+                                else rule_sources
+                            )
                             if len(rule_sources) >= 2
                             else model_sources
                         )

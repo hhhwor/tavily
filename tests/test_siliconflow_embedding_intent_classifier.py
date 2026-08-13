@@ -9,24 +9,26 @@ from src.domain.errors import ExternalServiceError
 from src.domain.intent import IntentDecision
 from src.infrastructure.cache import InMemoryCache
 from src.infrastructure.siliconflow_embedding_intent_classifier import (
-    _PROTOTYPES,
     SiliconFlowEmbeddingIntentClassifier,
 )
 
 
-_CLASS_VECTORS = {
-    "academic": [1.0, 0.0, 0.0, 0.0],
-    "patent": [0.0, 1.0, 0.0, 0.0],
-    "legal": [0.0, 0.0, 1.0, 0.0],
-    "general": [0.0, 0.0, 0.0, 1.0],
+_CALIBRATION = {
+    "artifact_version": 1,
+    "classifier": "independent_logistic_heads",
+    "embedding_model": "Qwen/Qwen3-Embedding-0.6B",
+    "embedding_dimension": 4,
+    "query_prefix": "route: ",
+    "source_order": ["academic", "patent", "legal"],
+    "thresholds": {"academic": 0.5, "patent": 0.5, "legal": 0.5},
+    "weights": {
+        "academic": [12.0, 0.0, 0.0, 0.0],
+        "patent": [0.0, 12.0, 0.0, 0.0],
+        "legal": [0.0, 0.0, 12.0, 0.0],
+    },
+    "bias": {"academic": -6.0, "patent": -6.0, "legal": -6.0},
+    "training": {"corpus_sha256": "test-artifact"},
 }
-
-
-def _prototype_class(text: str) -> str | None:
-    return next(
-        (name for name, examples in _PROTOTYPES.items() if text in examples),
-        None,
-    )
 
 
 class _Response:
@@ -40,7 +42,7 @@ class _Response:
         return self._payload
 
 
-def test_classifier_builds_prototypes_once_classifies_multilabel_and_caches():
+def test_classifier_runs_linear_heads_classifies_multilabel_and_caches():
     calls = []
 
     class Session:
@@ -49,13 +51,10 @@ def test_classifier_builds_prototypes_once_classifies_multilabel_and_caches():
             inputs = kwargs["json"]["input"]
             vectors = []
             for text in inputs:
-                prototype_class = _prototype_class(text)
-                if prototype_class is not None:
-                    vector = _CLASS_VECTORS[prototype_class]
-                elif text == "查找论文和专利":
+                if text == "route: 查找论文和专利":
                     vector = [1.0, 1.0, 0.0, 0.0]
-                elif text == "今天的普通新闻":
-                    vector = _CLASS_VECTORS["general"]
+                elif text == "route: 今天的普通新闻":
+                    vector = [0.0, 0.0, 0.0, 1.0]
                 else:  # pragma: no cover - protects test fixture evolution
                     raise AssertionError(f"unexpected embedding input: {text}")
                 vectors.append(vector)
@@ -71,6 +70,7 @@ def test_classifier_builds_prototypes_once_classifies_multilabel_and_caches():
         "https://example.test/v1",
         cache=InMemoryCache(),
         http_session=Session(),
+        calibration=_CALIBRATION,
     )
 
     mixed = classifier.classify("查找论文和专利")
@@ -79,7 +79,7 @@ def test_classifier_builds_prototypes_once_classifies_multilabel_and_caches():
 
     assert mixed.intent == "mixed_research"
     assert mixed.source_types == ("academic", "patent")
-    assert mixed.confidence > 0.99
+    assert mixed.confidence > 0.90
     assert dict(mixed.source_scores)["legal"] < 0.01
     assert cached == mixed
     assert general.intent == "general_search"
@@ -90,8 +90,8 @@ def test_classifier_builds_prototypes_once_classifies_multilabel_and_caches():
     second_payload = calls[1][1]["json"]
     assert first_payload["model"] == "Qwen/Qwen3-Embedding-0.6B"
     assert first_payload["encoding_format"] == "float"
-    assert len(first_payload["input"]) == 1 + sum(map(len, _PROTOTYPES.values()))
-    assert second_payload["input"] == ["今天的普通新闻"]
+    assert first_payload["input"] == ["route: 查找论文和专利"]
+    assert second_payload["input"] == ["route: 今天的普通新闻"]
 
 
 @pytest.mark.parametrize(
@@ -113,6 +113,7 @@ def test_classifier_rejects_malformed_embedding_responses(payload):
         "https://example.test/v1",
         cache=InMemoryCache(),
         http_session=Session(),
+        calibration=_CALIBRATION,
     )
 
     with pytest.raises(ExternalServiceError) as error:

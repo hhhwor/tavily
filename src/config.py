@@ -154,11 +154,9 @@ class Settings:
     intent_classifier_cache_size: int = 1024
     intent_classifier_cache_ttl: int = 3600
     intent_classifier_min_confidence: float = 0.70
-    intent_embedding_academic_threshold: float = 0.60
-    intent_embedding_patent_threshold: float = 0.53
-    intent_embedding_legal_threshold: float = 0.61
-    intent_embedding_general_margin: float = 0.03
-    intent_embedding_confidence_scale: float = 0.02
+    intent_embedding_academic_threshold: float = 0.52
+    intent_embedding_patent_threshold: float = 0.74
+    intent_embedding_legal_threshold: float = 0.59
     chunk_max_chars: int = 400
     chunk_overlap: int = 50
 
@@ -352,9 +350,9 @@ class Settings:
         intent_embedding_thresholds = {
             name: _float(env, variable, default)
             for name, variable, default in (
-                ("academic", "INTENT_EMBEDDING_ACADEMIC_THRESHOLD", 0.60),
-                ("patent", "INTENT_EMBEDDING_PATENT_THRESHOLD", 0.53),
-                ("legal", "INTENT_EMBEDDING_LEGAL_THRESHOLD", 0.61),
+                ("academic", "INTENT_EMBEDDING_ACADEMIC_THRESHOLD", 0.52),
+                ("patent", "INTENT_EMBEDDING_PATENT_THRESHOLD", 0.74),
+                ("legal", "INTENT_EMBEDDING_LEGAL_THRESHOLD", 0.59),
             )
         }
         if any(
@@ -362,18 +360,6 @@ class Settings:
             for value in intent_embedding_thresholds.values()
         ):
             raise ValueError("INTENT_EMBEDDING_*_THRESHOLD 必须在 0 到 1 之间")
-        intent_embedding_general_margin = _float(
-            env, "INTENT_EMBEDDING_GENERAL_MARGIN", 0.03
-        )
-        if not 0.0 <= intent_embedding_general_margin <= 1.0:
-            raise ValueError(
-                "INTENT_EMBEDDING_GENERAL_MARGIN 必须在 0 到 1 之间"
-            )
-        intent_embedding_confidence_scale = _float(
-            env, "INTENT_EMBEDDING_CONFIDENCE_SCALE", 0.02
-        )
-        if intent_embedding_confidence_scale <= 0.0:
-            raise ValueError("INTENT_EMBEDDING_CONFIDENCE_SCALE 必须大于 0")
         synthesis_enabled = _bool(
             env, "RESEARCH_SYNTHESIS_ENABLED", False
         )
@@ -482,8 +468,6 @@ class Settings:
                 intent_embedding_thresholds["patent"]
             ),
             intent_embedding_legal_threshold=intent_embedding_thresholds["legal"],
-            intent_embedding_general_margin=intent_embedding_general_margin,
-            intent_embedding_confidence_scale=intent_embedding_confidence_scale,
             chunk_max_chars=_int(env, "CHUNK_MAX_CHARS", 400, minimum=1),
             chunk_overlap=_int(env, "CHUNK_OVERLAP", 50, minimum=0),
             rewrite_enabled=_bool(env, "REWRITE_ENABLED", False),

@@ -382,11 +382,6 @@ def build_container(
                     ),
                     patent_threshold=config.intent_embedding_patent_threshold,
                     legal_threshold=config.intent_embedding_legal_threshold,
-                    general_margin=config.intent_embedding_general_margin,
-                    confidence_scale=config.intent_embedding_confidence_scale,
-                    source_min_confidence=(
-                        config.intent_classifier_min_confidence
-                    ),
                 )
             else:
                 intent_classifier = SiliconFlowIntentClassifier(

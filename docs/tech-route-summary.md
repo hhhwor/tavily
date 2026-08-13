@@ -97,7 +97,8 @@ POST /search {query, top_k, ranking_profile?, rerank_threshold_mode?, ...}
 - **规范化** `normalize()`:NFKC 全角→半角、压缩空白、去首尾标点;不改动中文正文。
 - **时效识别** `detect_recency()`:正则规则把「今天/本周/本月/今年/最新…」映射到 `day/week/month/year` bucket(顺序敏感,先具体后泛化;泛化的「最新/最近」默认 `month`)。再加 `\b20\d{2}\b` 年份探测 → `time_sensitive` 标记。
 - **学术意图识别** `detect_academic()`:正则规则(`论文/文献/综述/预印本/arxiv/survey/citation/paper/...`,英文用词边界避免 `newspaper` 误命中 `paper`)判定是否触发 OpenAlex 学术检索 → `academic` 标记。`force_academic`(来自 API 的 `include_academic`)可显式覆盖:`None`=自动 / `True`=强制开 / `False`=强制关。
-- **Embedding 多标签路由**（可选，默认关）：对未显式指定 `source_types` 的查询，使用 SiliconFlow `Qwen/Qwen3-Embedding-0.6B` 与中英双语 academic/patent/legal/general 原型中心比较。三个垂类独立过绝对阈值和 general 相对间隔；命中两类以上派生 `mixed_research`，未命中则为 `general_search`。首次请求批量建立进程内原型中心，后续每条查询只生成一个向量；结果使用 LRU+TTL 缓存。
+- **Embedding 多标签路由**（可选，默认关）：对未显式指定 `source_types` 的查询，先用 SiliconFlow `Qwen/Qwen3-Embedding-0.6B` 生成一个向量，再由 academic/patent/legal 三个独立 Logistic Regression 头判断 source。权重和 validation 联合校准阈值固化在版本化 artifact；训练集重点覆盖 legal、academic+legal、三垂类和关键词硬负例。命中两类以上派生 `mixed_research`，未命中则为 `general_search`；结果使用 LRU+TTL 缓存。同一组 62 条独立 holdout 上，raw exact-match 从旧原型方案的 `30/62=48.4%` 提升到 `54/62=87.1%`，与 L0 规则合并后的端到端 exact-match 为 `56/62=90.3%`，三类 source F1 均约 `0.94`。
+  - 可复现入口：[训练语料](../eval/intent_route_corpus.py) · [训练与阈值校准](../eval/train_embedding_intent_classifier.py) · [holdout 评测](../eval/evaluate_embedding_intent_classifier.py) · [冻结报告](../eval/intent_route_embedding_v1_report.json)。
 - **输入校验**:空查询报错;超 `MAX_QUERY_LEN=512` 截断,防滥用。
 - **LLM 改写**(可选,默认关):口语化 → 检索关键词,走 SiliconFlow `Qwen2.5-7B-Instruct`,5s 超时,失败回退原查询;`_RewriteCache`(LRU + 1h TTL)命中时零延迟。产出 `SearchPlan`,引擎用 `rewritten_query or normalized_query` 去检索。
 
@@ -187,13 +188,12 @@ POST /search {query, top_k, ranking_profile?, rerank_threshold_mode?, ...}
 | `RERANK_ENABLED` | 兼容字段 | `false → fast`；`true` 使用非 fast 默认档 | 新调用改用 `RANKING_PROFILE` |
 | `REWRITE_ENABLED` | **`false`** | L0 LLM 查询改写 | 视查询分布评测后再定 |
 | `INTENT_CLASSIFIER_ENABLED` | **`false`** | 为未显式指定 `source_types` 的查询做意图识别；失败、超时、低置信均回退 L0 规则 | 标注集评测通过后设为 `true` |
-| `INTENT_CLASSIFIER_BACKEND` | **`embedding`** | `embedding`=多标签原型分类；`chat`=保留原 Qwen JSON 分类器作对照/回退 | `embedding` |
+| `INTENT_CLASSIFIER_BACKEND` | **`embedding`** | `embedding`=冻结向量 + 三个独立线性头；`chat`=保留原 Qwen JSON 分类器作对照/回退 | `embedding` |
 | `INTENT_CLASSIFIER_MODEL` | `Qwen/Qwen3-Embedding-0.6B` | Embedding 后端默认模型；`chat` 后端未显式配置时默认 `Qwen/Qwen3-8B` | 同默认 |
 | `INTENT_CLASSIFIER_TIMEOUT` | `8` | 单次分类 HTTP 总超时秒数，仍受搜索剩余 deadline 限制 | 5–8 |
-| `INTENT_CLASSIFIER_MIN_CONFIDENCE` | `0.70` | 低于此值不采用模型路由，保留规则结果 | `0.70` 起步，按标注集校准 |
+| `INTENT_CLASSIFIER_MIN_CONFIDENCE` | `0.70` | chat 后端低于此值不采用模型路由；embedding 后端使用 artifact 内各类校准阈值 | chat 后端保持 `0.70` |
 | `INTENT_CLASSIFIER_CACHE_SIZE` / `INTENT_CLASSIFIER_CACHE_TTL` | `1024` / `3600` | 归一化查询的进程内意图缓存条数 / TTL（秒） | 同默认 |
-| `INTENT_EMBEDDING_ACADEMIC_THRESHOLD` / `PATENT_THRESHOLD` / `LEGAL_THRESHOLD` | `0.60` / `0.53` / `0.61` | 三个垂类的原始 cosine 下限；必须经标注集重新校准 | 先保持默认 |
-| `INTENT_EMBEDDING_GENERAL_MARGIN` / `CONFIDENCE_SCALE` | `0.03` / `0.02` | 垂类相对 general 中心的最大落后值 / 将边界距离映射为置信分的尺度 | 先保持默认 |
+| `INTENT_EMBEDDING_ACADEMIC_THRESHOLD` / `PATENT_THRESHOLD` / `LEGAL_THRESHOLD` | `0.52` / `0.74` / `0.59` | 三个独立线性头的 probability 阈值；默认值来自 79 条 validation 联合校准，可由环境变量临时覆盖 | 保持 artifact 同版本默认值 |
 | `FUSION_ENABLED` | 兼容字段 | 非 fast 场景中 `true → quality`、`false → semantic` | 新调用改用 `RANKING_PROFILE` |
 | `CHUNK_MAX_CHARS` / `CHUNK_OVERLAP` | `400` / `50` | 分块大小与重叠 | 同默认 |
 | `SEARCH_TOP_K` / `SEARCH_PER_PROVIDER_K` | `10` / `10` | 返回条数 / 每源召回数 | 同默认 |

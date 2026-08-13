@@ -1,9 +1,10 @@
-"""Prototype-based Qwen3 embedding classifier for multi-label search routing."""
+"""Calibrated Qwen3 embedding classifier for multi-label search routing."""
 from __future__ import annotations
 
+import json
 import math
-from threading import Lock
-from typing import Any, Iterable, Sequence
+from pathlib import Path
+from typing import Any, Iterable, Mapping, Sequence
 
 import requests
 
@@ -15,61 +16,24 @@ from src.infrastructure.http_timeout import bounded_http_timeout
 
 
 _SOURCE_ORDER: tuple[IntentSourceType, ...] = ("academic", "patent", "legal")
-_PROTOTYPES: dict[str, tuple[str, ...]] = {
-    "academic": (
-        "查找关于固态电池的学术论文和文献综述",
-        "检索 DOI、期刊文章、会议论文或预印本",
-        "有哪些同行评审研究支持这个结论",
-        "搜索 arXiv 上的机器学习论文",
-        "Find peer-reviewed papers and a literature review about this topic",
-        "Search journal articles, DOI, citations and academic publications",
-    ),
-    "patent": (
-        "查找固态电池相关专利、申请号和权利要求",
-        "检索某技术的发明专利和专利族",
-        "查询 IPC CPC 分类与专利申请人",
-        "搜索 WIPO USPTO EPO 的专利文献",
-        "Find patents, claims and publication numbers for this technology",
-        "Search patent applications, inventors, assignees and prior art",
-    ),
-    "legal": (
-        "查询中国法律法规、法条和司法解释",
-        "民法典第五百零九条如何规定",
-        "某项法规现行是否有效或已经废止",
-        "查找最高人民法院司法解释和法律依据",
-        "Find the applicable Chinese statute, regulation or judicial interpretation",
-        "What does this law require and which legal article applies",
-    ),
-    # Hard negatives are deliberately close to rule keywords. They let the
-    # relative-margin gate distinguish "legal name" and "invention history"
-    # from actual legal and patent retrieval intents.
-    "general": (
-        "搜索今天的人工智能新闻",
-        "介绍一家公司的产品和发展历史",
-        "查询天气、人物、地点或普通事实",
-        "某个词语是什么意思",
-        "公司发表声明回应市场传闻",
-        "电话是谁发明的以及发明历史",
-        "What is the legal name of this company",
-        "Read the legal notice and privacy page of this website",
-        "History of the invention of the telephone",
-        "Find recent news and general web information about this topic",
-    ),
-}
+_DEFAULT_CALIBRATION_PATH = (
+    Path(__file__).with_name("data") / "qwen3_embedding_intent_linear_v1.json"
+)
 
 
 class SiliconFlowEmbeddingIntentClassifier:
-    """Classify each vertical independently from Qwen3 embedding similarity.
+    """Run three calibrated logistic heads over a frozen Qwen3 embedding.
 
-    The first uncached request embeds the query and the static bilingual
-    prototypes together. Later requests embed only the query. A vertical is a
-    candidate when it clears both its absolute cosine threshold and a relative
-    margin against the general-search centroid and its mapped score clears the
-    configured source-confidence threshold. The application repeats that
-    threshold as the final whole-decision abstention gate.
+    Training and threshold selection are offline; production loads a versioned
+    artifact containing one independent linear head and threshold per source.
+    Each uncached classification therefore makes one embedding request for one
+    instruction-prefixed query.  ``owns_thresholds`` tells the application that
+    these validation-calibrated thresholds replace its legacy whole-decision
+    confidence gate.
     """
 
     authoritative_routes = True
+    owns_thresholds = True
 
     def __init__(
         self,
@@ -81,28 +45,33 @@ class SiliconFlowEmbeddingIntentClassifier:
         http_session: Any = None,
         cache_ttl: int = 3600,
         timeout: int = 8,
-        academic_threshold: float = 0.60,
-        patent_threshold: float = 0.53,
-        legal_threshold: float = 0.61,
-        general_margin: float = 0.03,
-        confidence_scale: float = 0.02,
-        source_min_confidence: float = 0.70,
+        academic_threshold: float | None = None,
+        patent_threshold: float | None = None,
+        legal_threshold: float | None = None,
+        calibration_path: str | Path | None = None,
+        calibration: Mapping[str, object] | None = None,
     ) -> None:
+        artifact = dict(calibration) if calibration is not None else self._load_artifact(
+            Path(calibration_path) if calibration_path else _DEFAULT_CALIBRATION_PATH
+        )
+        parsed = self._parse_artifact(artifact, model=model)
+        artifact_thresholds, weights, bias, dimension, prefix, artifact_id = parsed
+        overrides = {
+            "academic": academic_threshold,
+            "patent": patent_threshold,
+            "legal": legal_threshold,
+        }
         thresholds = {
-            "academic": float(academic_threshold),
-            "patent": float(patent_threshold),
-            "legal": float(legal_threshold),
+            source: (
+                artifact_thresholds[source]
+                if overrides[source] is None
+                else float(overrides[source])
+            )
+            for source in _SOURCE_ORDER
         }
         if any(not 0.0 <= value <= 1.0 for value in thresholds.values()):
             raise ValueError("embedding intent thresholds must be between 0 and 1")
-        if not 0.0 <= general_margin <= 1.0:
-            raise ValueError("embedding intent general margin must be between 0 and 1")
-        if confidence_scale <= 0:
-            raise ValueError("embedding intent confidence scale must be positive")
-        if not 0.0 <= source_min_confidence <= 1.0:
-            raise ValueError(
-                "embedding intent source confidence must be between 0 and 1"
-            )
+
         self._api_key = api_key
         self._url = f"{base_url.rstrip('/')}/embeddings"
         self._model = model
@@ -111,11 +80,11 @@ class SiliconFlowEmbeddingIntentClassifier:
         self._cache_ttl = cache_ttl
         self._timeout = timeout
         self._thresholds = thresholds
-        self._general_margin = float(general_margin)
-        self._confidence_scale = float(confidence_scale)
-        self._source_min_confidence = float(source_min_confidence)
-        self._centroids: dict[str, tuple[float, ...]] | None = None
-        self._prototype_lock = Lock()
+        self._weights = weights
+        self._bias = bias
+        self._dimension = dimension
+        self._query_prefix = prefix
+        self._artifact_id = artifact_id
 
     def classify(self, query: str) -> IntentDecision:
         return self.classify_with_timeout(query)
@@ -127,12 +96,10 @@ class SiliconFlowEmbeddingIntentClassifier:
         timeout_seconds: float | None = None,
     ) -> IntentDecision:
         key = "|".join((
-            "intent-embedding:v1",
+            "intent-embedding:linear:v1",
             self._model,
+            self._artifact_id,
             *(f"{source}={self._thresholds[source]:.6f}" for source in _SOURCE_ORDER),
-            f"margin={self._general_margin:.6f}",
-            f"scale={self._confidence_scale:.6f}",
-            f"source-confidence={self._source_min_confidence:.6f}",
             query,
         ))
         cached = self._cache.get(key)
@@ -141,26 +108,20 @@ class SiliconFlowEmbeddingIntentClassifier:
                 raise TypeError("intent cache value must be IntentDecision")
             return cached
 
-        query_vector = self._query_vector(query, timeout_seconds=timeout_seconds)
-        centroids = self._centroids
-        if centroids is None:  # pragma: no cover - guarded by _query_vector
-            raise RuntimeError("embedding intent prototypes were not initialized")
-        similarities = {
-            name: self._dot(query_vector, centroid)
-            for name, centroid in centroids.items()
-        }
-        general_score = similarities["general"]
-        probabilities: dict[IntentSourceType, float] = {}
-        sources: list[IntentSourceType] = []
-        for source in _SOURCE_ORDER:
-            boundary_margin = min(
-                similarities[source] - self._thresholds[source],
-                similarities[source] - general_score + self._general_margin,
+        query_vector = self._embed(
+            (self._query_prefix + query,), timeout_seconds=timeout_seconds
+        )[0]
+        probabilities: dict[IntentSourceType, float] = {
+            source: self._sigmoid(
+                self._dot(query_vector, self._weights[source])
+                + self._bias[source]
             )
-            probability = self._sigmoid(boundary_margin / self._confidence_scale)
-            probabilities[source] = probability
-            if probability >= self._source_min_confidence:
-                sources.append(source)
+            for source in _SOURCE_ORDER
+        }
+        sources = tuple(
+            source for source in _SOURCE_ORDER
+            if probabilities[source] >= self._thresholds[source]
+        )
 
         if not sources:
             intent = "general_search"
@@ -179,7 +140,7 @@ class SiliconFlowEmbeddingIntentClassifier:
 
         decision = IntentDecision(
             intent=intent,  # type: ignore[arg-type]
-            source_types=tuple(sources),
+            source_types=sources,
             confidence=confidence,
             source_scores=tuple(
                 (source, probabilities[source]) for source in _SOURCE_ORDER
@@ -188,37 +149,91 @@ class SiliconFlowEmbeddingIntentClassifier:
         self._cache.set(key, decision, self._cache_ttl)
         return decision
 
-    def _query_vector(
-        self,
-        query: str,
+    @staticmethod
+    def _load_artifact(path: Path) -> dict[str, object]:
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except Exception as exc:
+            raise ValueError(
+                f"failed to load embedding intent calibration: {path}"
+            ) from exc
+        if not isinstance(payload, dict):
+            raise ValueError("embedding intent calibration must be a JSON object")
+        return payload
+
+    @classmethod
+    def _parse_artifact(
+        cls,
+        artifact: Mapping[str, object],
         *,
-        timeout_seconds: float | None,
-    ) -> tuple[float, ...]:
-        if self._centroids is not None:
-            return self._embed((query,), timeout_seconds=timeout_seconds)[0]
-        with self._prototype_lock:
-            if self._centroids is not None:
-                return self._embed((query,), timeout_seconds=timeout_seconds)[0]
-            prototype_texts = tuple(
-                text
-                for name in (*_SOURCE_ORDER, "general")
-                for text in _PROTOTYPES[name]
+        model: str,
+    ) -> tuple[
+        dict[IntentSourceType, float],
+        dict[IntentSourceType, tuple[float, ...]],
+        dict[IntentSourceType, float],
+        int,
+        str,
+        str,
+    ]:
+        if artifact.get("artifact_version") != 1:
+            raise ValueError("unsupported embedding intent artifact version")
+        if artifact.get("classifier") != "independent_logistic_heads":
+            raise ValueError("unsupported embedding intent classifier")
+        if artifact.get("embedding_model") != model:
+            raise ValueError(
+                "embedding intent artifact model does not match configured model"
             )
-            vectors = self._embed(
-                (query, *prototype_texts),
-                timeout_seconds=timeout_seconds,
-            )
-            query_vector, prototype_vectors = vectors[0], vectors[1:]
-            centroids: dict[str, tuple[float, ...]] = {}
-            offset = 0
-            for name in (*_SOURCE_ORDER, "general"):
-                size = len(_PROTOTYPES[name])
-                centroids[name] = self._centroid(
-                    prototype_vectors[offset:offset + size]
-                )
-                offset += size
-            self._centroids = centroids
-            return query_vector
+        if artifact.get("source_order") != list(_SOURCE_ORDER):
+            raise ValueError("embedding intent artifact source order is invalid")
+        dimension = artifact.get("embedding_dimension")
+        prefix = artifact.get("query_prefix")
+        if (
+            isinstance(dimension, bool)
+            or not isinstance(dimension, int)
+            or dimension <= 0
+            or not isinstance(prefix, str)
+        ):
+            raise ValueError("embedding intent artifact metadata is invalid")
+        raw_thresholds = artifact.get("thresholds")
+        raw_weights = artifact.get("weights")
+        raw_bias = artifact.get("bias")
+        if not all(isinstance(value, Mapping) for value in (
+            raw_thresholds, raw_weights, raw_bias
+        )):
+            raise ValueError("embedding intent artifact heads are invalid")
+
+        thresholds: dict[IntentSourceType, float] = {}
+        weights: dict[IntentSourceType, tuple[float, ...]] = {}
+        bias: dict[IntentSourceType, float] = {}
+        for source in _SOURCE_ORDER:
+            threshold = cls._finite_float(raw_thresholds.get(source))
+            vector = raw_weights.get(source)
+            source_bias = cls._finite_float(raw_bias.get(source))
+            if not 0.0 <= threshold <= 1.0:
+                raise ValueError("embedding intent artifact threshold is invalid")
+            if not isinstance(vector, list) or len(vector) != dimension:
+                raise ValueError("embedding intent artifact weight dimension is invalid")
+            parsed_vector = tuple(cls._finite_float(value) for value in vector)
+            thresholds[source] = threshold
+            weights[source] = parsed_vector
+            bias[source] = source_bias
+
+        training = artifact.get("training")
+        artifact_id = "unknown"
+        if isinstance(training, Mapping):
+            corpus_hash = training.get("corpus_sha256")
+            if isinstance(corpus_hash, str) and corpus_hash:
+                artifact_id = corpus_hash[:16]
+        return thresholds, weights, bias, dimension, prefix, artifact_id
+
+    @staticmethod
+    def _finite_float(value: object) -> float:
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            raise ValueError("embedding intent artifact value must be numeric")
+        parsed = float(value)
+        if not math.isfinite(parsed):
+            raise ValueError("embedding intent artifact value must be finite")
+        return parsed
 
     def _embed(
         self,
@@ -241,7 +256,12 @@ class SiliconFlowEmbeddingIntentClassifier:
                 timeout=bounded_http_timeout(self._timeout, timeout_seconds),
             )
             response.raise_for_status()
-            return self._parse_embeddings(response.json(), expected=len(inputs))
+            vectors = self._parse_embeddings(response.json(), expected=len(inputs))
+            if any(len(vector) != self._dimension for vector in vectors):
+                raise ValueError(
+                    "embedding response dimension does not match classifier artifact"
+                )
+            return vectors
         except ExternalServiceError:
             raise
         except Exception as exc:
@@ -299,17 +319,6 @@ class SiliconFlowEmbeddingIntentClassifier:
         if magnitude <= 0.0:
             raise ValueError("embedding vector magnitude must be positive")
         return tuple(value / magnitude for value in values)
-
-    @classmethod
-    def _centroid(
-        cls,
-        vectors: Sequence[Sequence[float]],
-    ) -> tuple[float, ...]:
-        if not vectors:
-            raise ValueError("embedding prototype group must not be empty")
-        return cls._normalize(
-            sum(values) / len(vectors) for values in zip(*vectors)
-        )
 
     @staticmethod
     def _dot(left: Sequence[float], right: Sequence[float]) -> float:

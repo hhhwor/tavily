@@ -193,6 +193,34 @@ def test_planner_does_not_expand_two_rule_routes_with_a_third_model_source():
     assert planned.plan.intent == "mixed_research"
 
 
+def test_planner_calibrated_embedding_can_add_third_route_to_two_rules():
+    class Classifier:
+        authoritative_routes = True
+        owns_thresholds = True
+
+        def classify(self, query):
+            return IntentDecision(
+                intent="mixed_research",
+                source_types=("academic", "patent", "legal"),
+                confidence=0.59,
+            )
+
+    planned = QueryPlanner(
+        _settings(), intent_classifier=Classifier()
+    ).plan(
+        SearchCommand("查找算法治理相关论文和中国法规"),
+        ("web",),
+        academic_available=True,
+        patent_available=True,
+        legal_available=True,
+    )
+
+    assert planned.do_academic is True
+    assert planned.do_legal is True
+    assert planned.do_patent is True
+    assert planned.plan.intent == "mixed_research"
+
+
 def test_planner_accepts_authoritative_embedding_general_over_one_noisy_rule():
     class EmbeddingClassifier:
         authoritative_routes = True
@@ -225,6 +253,34 @@ def test_planner_accepts_authoritative_embedding_general_over_one_noisy_rule():
         assert planned.plan.intent == "general_search"
         assert planned.active_provider_names == ("web",)
         assert getattr(planned, f"do_{noisy_source}") is False
+
+
+def test_planner_uses_embedding_owned_threshold_below_chat_confidence_gate():
+    class EmbeddingClassifier:
+        authoritative_routes = True
+        owns_thresholds = True
+
+        def classify(self, query):
+            return IntentDecision(
+                intent="legal",
+                source_types=("legal",),
+                confidence=0.59,
+                source_scores=(("legal", 0.59),),
+            )
+
+    planned = QueryPlanner(
+        _settings(), intent_classifier=EmbeddingClassifier()
+    ).plan(
+        SearchCommand("比较平台治理方案"),
+        ("web",),
+        academic_available=True,
+        patent_available=True,
+        legal_available=True,
+    )
+
+    assert planned.do_legal is True
+    assert planned.plan.intent == "legal"
+    assert planned.plan.intent_confidence == 0.59
 
 
 def test_planner_skips_model_for_explicit_source_types_and_low_confidence():
