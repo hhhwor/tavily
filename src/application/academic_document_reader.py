@@ -27,9 +27,18 @@ from src.domain.search import AcademicResult
 _ADAPTER_PARSER_VERSION = "openalex-pdf-text.v1"
 _NON_RETRYABLE_INITIAL_CODES = {
     "WORK_ID_MISSING",
+    "WORK_NOT_FOUND",
     "PDF_URL_MISSING",
+    "PDF_ACCESS_DENIED",
+    "PDF_NOT_FOUND",
+    "URL_NOT_ALLOWED",
+    "LICENSE_NOT_ALLOWED",
     "ACADEMIC_PDF_LICENSE_UNVERIFIED",
     "PDF_TOTAL_BUDGET_EXCEEDED",
+    "PDF_TOO_LARGE",
+    "NOT_A_PDF",
+    "TEXT_TOO_SPARSE",
+    "EXTRACT_FAILED",
 }
 
 
@@ -142,8 +151,11 @@ class AcademicDocumentReader:
         cursor = paper.pdf_next_cursor
         seen_cursors: set[str] = set()
         warnings: list[str] = list(initial_warnings)
-        failure_code: str | None = None
-        retryable = True
+        failure_code: str | None = paper.pdf_error_code
+        retryable = (
+            failure_code not in _NON_RETRYABLE_INITIAL_CODES
+            if failure_code else True
+        )
         total_bytes = len(paper.pdf_text.encode("utf-8"))
 
         while cursor and len(pages) < self._max_chunks:

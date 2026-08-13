@@ -49,6 +49,44 @@ class _TextResp:
         }
 
 
+class _LegacyExtractResp:
+    def raise_for_status(self):
+        return None
+
+    def json(self):
+        return {
+            "work_id": "W123",
+            "status": "ready",
+            "pages": 5,
+            "text_length": 42,
+            "text": "legacy transport text without a locator",
+            "next_cursor": "legacy-cursor",
+            "error_code": None,
+            "error_message": None,
+        }
+
+
+class _FailedResp:
+    def __init__(self, code, message):
+        self.code = code
+        self.message = message
+
+    def raise_for_status(self):
+        return None
+
+    def json(self):
+        return {
+            "work_id": "W123",
+            "status": "failed",
+            "pages": None,
+            "text_length": 0,
+            "text": None,
+            "next_cursor": None,
+            "error_code": self.code,
+            "error_message": self.message,
+        }
+
+
 class _InlineExecutor:
     def submit(self, fn, *args, **kwargs):
         future = Future()
@@ -150,3 +188,77 @@ def test_get_pdf_text_reads_next_page(monkeypatch):
     assert resp.returned_chars == len("continued pdf text")
     assert resp.next_cursor == "cursor2"
     assert resp.partial is True
+
+
+def test_legacy_extract_recovers_first_page_locator_from_cached_text(monkeypatch):
+    calls = []
+
+    def fake_post(url, json, headers, timeout):
+        return _LegacyExtractResp()
+
+    def fake_get(url, params, headers, timeout):
+        calls.append((url, params, headers, timeout))
+        return _TextResp()
+
+    monkeypatch.setattr("src.infrastructure.openalex_pdf.requests.post", fake_post)
+    monkeypatch.setattr("src.infrastructure.openalex_pdf.requests.get", fake_get)
+    paper = AcademicResult(
+        url="https://doi.org/10.1/example",
+        title="Paper",
+        content="abstract",
+        work_id="W123",
+        oa_pdf_url="https://example.org/paper.pdf",
+    )
+
+    outcome = _gateway().enrich(
+        [paper],
+        include_pdf_text=True,
+        pdf_text_mode="sync",
+        pdf_max_results=1,
+        pdf_max_chars_per_result=500,
+        pdf_timeout_ms=3000,
+    )
+    enriched = outcome.academic[0].to_result()
+
+    assert calls
+    assert calls[0][1] == {"max_chars": 500}
+    assert enriched.pdf_text == "continued pdf text"
+    assert enriched.pdf_chunk_index == 2
+    assert enriched.pdf_page_from == 4
+    assert enriched.pdf_page_to == 5
+    assert enriched.pdf_next_cursor == "cursor2"
+
+
+def test_pdf_enrichment_classifies_permanent_http_failures(monkeypatch):
+    responses = iter([
+        _FailedResp("DOWNLOAD_FAILED", "HTTP 403"),
+        _FailedResp("DOWNLOAD_FAILED", "HTTP 404"),
+    ])
+
+    def fake_post(url, json, headers, timeout):
+        return next(responses)
+
+    monkeypatch.setattr("src.infrastructure.openalex_pdf.requests.post", fake_post)
+    papers = [
+        AcademicResult(
+            url=f"https://doi.org/10.1/{index}",
+            title=f"Paper {index}",
+            content="abstract",
+            work_id=f"W{index}",
+            oa_pdf_url=f"https://example.org/{index}.pdf",
+        )
+        for index in range(2)
+    ]
+
+    outcome = _gateway().enrich(
+        papers,
+        include_pdf_text=True,
+        pdf_text_mode="sync",
+        pdf_max_results=2,
+        pdf_timeout_ms=3000,
+    )
+
+    assert [item.to_result().pdf_error_code for item in outcome.academic] == [
+        "PDF_ACCESS_DENIED",
+        "PDF_NOT_FOUND",
+    ]

@@ -153,6 +153,7 @@ def create_app(
         settings = current.settings
         engine = current.engine
         classifier = getattr(engine.claim_verifier, "classifier", None)
+        verifier_status = getattr(classifier, "runtime_status", None)
         registry = getattr(engine, "source_registry", None)
         legal_provider = registry.get("fy_law_mcp") if registry is not None else None
         legal_status = getattr(legal_provider, "runtime_status", None)
@@ -167,6 +168,11 @@ def create_app(
             "patent": engine.patent_provider is not None,
             "reranker": getattr(engine.text_scorer, "name", "unknown"),
             "research_verifier": getattr(classifier, "name", "unknown"),
+            "research_verifier_availability": (
+                verifier_status()
+                if callable(verifier_status)
+                else {"status": "unknown"}
+            ),
             "auth": settings.auth_enabled,
             "mcp": current.mcp_available,
             "cache": engine.cache.stats() if engine.cache else {"enabled": False},

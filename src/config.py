@@ -161,7 +161,7 @@ class Settings:
     rewrite_cache_size: int = 512
 
     trust_verify_backend: str = "auto"
-    trust_verify_model: str = "Qwen/Qwen2.5-7B-Instruct"
+    trust_verify_model: str = "Qwen/Qwen3-8B"
     trust_verify_timeout: int = 15
     trust_verify_max_claims: int = 20
     trust_verify_max_evidence: int = 5
@@ -437,7 +437,7 @@ class Settings:
             rewrite_model=rewrite_model,
             rewrite_cache_size=_int(env, "REWRITE_CACHE_SIZE", 512, minimum=1),
             trust_verify_backend=env.get("TRUST_VERIFY_BACKEND", "auto").lower(),
-            trust_verify_model=env.get("TRUST_VERIFY_MODEL", rewrite_model),
+            trust_verify_model=env.get("TRUST_VERIFY_MODEL", "Qwen/Qwen3-8B"),
             trust_verify_timeout=_int(env, "TRUST_VERIFY_TIMEOUT", 15, minimum=1),
             trust_verify_max_claims=_int(env, "TRUST_VERIFY_MAX_CLAIMS", 20, minimum=1),
             trust_verify_max_evidence=_int(env, "TRUST_VERIFY_MAX_EVIDENCE", 5, minimum=1),

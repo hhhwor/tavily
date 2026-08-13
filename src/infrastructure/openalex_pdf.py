@@ -32,6 +32,27 @@ def _external_error_message(code: str) -> str:
     return f"openalex_pdf external service failed ({code})"
 
 
+def _pdf_error_code(data: dict[str, Any]) -> str | None:
+    """Normalize upstream download failures without exposing its response body.
+
+    The OpenAlex helper historically collapsed every non-redirect HTTP error into
+    ``DOWNLOAD_FAILED``.  Authentication/authorization and missing-document
+    responses will not recover when the Research runner retries the same URL, so
+    retain those distinctions as stable public codes.
+    """
+    value = data.get("error_code")
+    if not value:
+        return None
+    code = _stable_error_code(value, "PDF_ENRICH_FAILED")
+    message = str(data.get("error_message") or "").strip().upper()
+    if code == "DOWNLOAD_FAILED":
+        if re.search(r"\bHTTP\s+(?:401|403)\b", message):
+            return "PDF_ACCESS_DENIED"
+        if re.search(r"\bHTTP\s+(?:404|410)\b", message):
+            return "PDF_NOT_FOUND"
+    return code
+
+
 class OpenAlexPdfGateway(PdfTextGateway):
     """通过 OpenAlex 辅助服务富化和分页读取 PDF 正文。"""
 
@@ -196,16 +217,72 @@ class OpenAlexPdfGateway(PdfTextGateway):
             paper.pdf_content_hash = data.get("content_hash")
             paper.pdf_parser_version = data.get("parser_version")
             paper.pdf_version_id = data.get("version_id")
-            paper.pdf_error_code = (
-                _stable_error_code(data.get("error_code"), "PDF_ENRICH_FAILED")
-                if data.get("error_code")
-                else None
-            )
+            paper.pdf_error_code = _pdf_error_code(data)
             paper.pdf_error_message = (
                 _external_error_message(paper.pdf_error_code)
                 if paper.pdf_error_code
                 else None
             )
+
+            # Older OpenAlex helpers return text from /pdf/extract but omit the
+            # first chunk's page range and chunk index.  If that transport text is
+            # used directly, the document reader observes only the continuation
+            # pages and incorrectly marks a complete PDF as truncated.  Re-read
+            # the already cached first page through the canonical cursor endpoint;
+            # this is local cache I/O and does not download the PDF again.
+            if (
+                paper.pdf_text
+                and (
+                    paper.pdf_chunk_index is None
+                    or paper.pdf_page_from is None
+                    or paper.pdf_page_to is None
+                )
+            ):
+                remaining = local_deadline - self._monotonic()
+                if remaining <= 0:
+                    paper.pdf_status = "partial"
+                    paper.pdf_error_code = "PDF_FIRST_PAGE_METADATA_UNAVAILABLE"
+                    paper.pdf_error_message = _external_error_message(
+                        paper.pdf_error_code
+                    )
+                    return
+                first_page = self._read_page(
+                    paper.work_id,
+                    cursor=None,
+                    max_chars=max_chars,
+                    timeout_seconds=remaining,
+                )
+                if (
+                    first_page.status != "ready"
+                    or not first_page.text
+                    or first_page.chunk_index is None
+                    or first_page.page_from is None
+                    or first_page.page_to is None
+                ):
+                    paper.pdf_status = "partial"
+                    paper.pdf_error_code = (
+                        first_page.error_code
+                        or "PDF_FIRST_PAGE_METADATA_UNAVAILABLE"
+                    )
+                    paper.pdf_error_message = _external_error_message(
+                        paper.pdf_error_code
+                    )
+                    return
+                paper.pdf_text = first_page.text
+                paper.pdf_returned_chars = len(first_page.text)
+                paper.pdf_chunk_index = first_page.chunk_index
+                paper.pdf_page_from = first_page.page_from
+                paper.pdf_page_to = first_page.page_to
+                paper.pdf_next_cursor = first_page.next_cursor
+                paper.pdf_content_hash = (
+                    first_page.content_hash or paper.pdf_content_hash
+                )
+                paper.pdf_parser_version = (
+                    first_page.parser_version or paper.pdf_parser_version
+                )
+                paper.pdf_version_id = (
+                    first_page.source_version_id or paper.pdf_version_id
+                )
 
         futures = {
             self._executor.submit(enrich_one, paper): paper for paper in candidates
@@ -248,16 +325,6 @@ class OpenAlexPdfGateway(PdfTextGateway):
             else max_chars
         )
         chars = max(1, min(int(chars), 30000))
-        endpoint = (
-            f"{self._settings.openalex_api_url.rstrip('/')}/openalex/pdf/text/"
-            f"{quote(work_id, safe='')}"
-        )
-        params: dict[str, object] = {"max_chars": chars}
-        if cursor:
-            params["cursor"] = cursor
-        headers = {}
-        if self._settings.openalex_api_key:
-            headers["X-API-Key"] = self._settings.openalex_api_key
         timeout = max(1.0, float(self._settings.provider_timeout))
         if deadline is not None:
             remaining = deadline.remaining_seconds()
@@ -269,12 +336,38 @@ class OpenAlexPdfGateway(PdfTextGateway):
                     error_message="PDF text read deadline exceeded",
                 )
             timeout = max(0.1, min(timeout, remaining))
+        return self._read_page(
+            work_id,
+            cursor=cursor,
+            max_chars=chars,
+            timeout_seconds=timeout,
+        )
+
+    def _read_page(
+        self,
+        work_id: str,
+        *,
+        cursor: str | None,
+        max_chars: int,
+        timeout_seconds: float,
+    ) -> PdfTextPage:
+        """Read one cached page with an explicit local timeout budget."""
+        endpoint = (
+            f"{self._settings.openalex_api_url.rstrip('/')}/openalex/pdf/text/"
+            f"{quote(work_id, safe='')}"
+        )
+        params: dict[str, object] = {"max_chars": max_chars}
+        if cursor:
+            params["cursor"] = cursor
+        headers = {}
+        if self._settings.openalex_api_key:
+            headers["X-API-Key"] = self._settings.openalex_api_key
         try:
             response = self._http.get(
                 endpoint,
                 params=params,
                 headers=headers or None,
-                timeout=timeout,
+                timeout=max(0.1, timeout_seconds),
             )
             response.raise_for_status()
             data = response.json()
@@ -294,11 +387,7 @@ class OpenAlexPdfGateway(PdfTextGateway):
             )
 
         text = data.get("text")
-        error_code = (
-            _stable_error_code(data.get("error_code"), "PDF_TEXT_READ_FAILED")
-            if data.get("error_code")
-            else None
-        )
+        error_code = _pdf_error_code(data)
         return PdfTextPage(
             work_id=data.get("work_id") or work_id,
             status=data.get("status") or "failed",

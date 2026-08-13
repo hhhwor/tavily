@@ -260,8 +260,12 @@ Research 状态为 `partial` 不代表 PDF 获取失败。本案例使用 `quick
 | 没有 `research_seed` | 搜索结果未生成可继续研究的快照 | 搜索是否返回证据、状态库是否可写 |
 | 没有 `deep_read` 动作 | Planner 没有发现需要正文补强的 Academic 证据 | 论文是否仍是 `abstract` / `discovery_only`，是否提供待验证主张 |
 | `PDF_URL_MISSING` | 命中论文没有可用的 OA PDF 直链 | 更换开放获取论文，或检查 OpenAlex OA 字段 |
+| `PDF_ACCESS_DENIED` | 出版方拒绝 PDF 下载（通常为 HTTP 401/403） | 不要重试同一 URL；改选其他 OA 版本或其他论文 |
+| `PDF_NOT_FOUND` | OA PDF 链接已失效（HTTP 404/410） | 刷新 OpenAlex 元数据，或改选其他 OA 版本 |
+| `URL_NOT_ALLOWED` | PDF URL 未通过上游安全策略或重定向校验 | 检查目标域名、重定向链和上游 allowlist |
 | `PDF_TEXT_TIMEOUT` / `DOWNLOAD_TIMEOUT` | PDF 下载或分页读取超时 | OpenAlex PDF 服务、外网连接和 PDF 超时预算 |
 | `PDF_TEXT_READ_FAILED` | 已解析正文分页读取失败 | `/openalex/pdf/text/{work_id}` 服务和缓存状态 |
+| `PDF_FIRST_PAGE_METADATA_UNAVAILABLE` | 旧版首次解析响应没有页码，且无法从缓存补回首段定位 | 升级 OpenAlex PDF 服务，或检查 `/openalex/pdf/text/{work_id}` 缓存读取 |
 | `PDF_TEXT_TRUNCATED` / `PDF_PAGE_COUNT_MISMATCH` | 已取到部分文本，但总字符数或页数显示不完整 | 检查 `access.fulltext`、cursor 续读及 OpenAlex PDF 服务返回的 totals |
 | 没有 `pdf_text` 证据 | PDF 未解析，或正文未被 Research 采纳 | Research failures、coverage gaps、PDF parser 日志 |
 | locator 解引用结果不一致 | 正文版本或持久化索引不一致 | `version_id`、`chunk_index`、页码和 SQLite document read 记录 |

@@ -162,6 +162,21 @@ class _RetryPdfGateway(_PdfGateway):
         return super().enrich(papers, **kwargs)
 
 
+class _PermanentFailurePdfGateway(_PdfGateway):
+    def enrich(self, papers, **kwargs):
+        self.enrich_calls += 1
+        ranked = papers[0]
+        paper = ranked.to_result()
+        assert isinstance(paper, AcademicResult)
+        paper = paper.model_copy(update={
+            "pdf_status": "failed",
+            "pdf_error_code": "PDF_ACCESS_DENIED",
+        })
+        return PdfEnrichmentOutcome(
+            academic=(EnrichedDocument.from_result(ranked, paper),),
+        )
+
+
 def _candidate() -> Evidence:
     return Evidence(
         id="academic:W123:abstract",
@@ -413,6 +428,23 @@ def test_reader_retries_a_transient_initial_pdf_failure_once():
     assert result.diagnostics.retried is True
     assert "PDF_INITIAL_READ_RETRY" in result.diagnostics.warnings
     assert gateway.enrich_calls == 2
+
+
+def test_reader_does_not_retry_permanent_pdf_access_failure():
+    clock = _Clock()
+    gateway = _PermanentFailurePdfGateway()
+
+    result = AcademicDocumentReader(
+        gateway,
+        now=clock.now,
+    ).read(_candidate(), context=_context(clock))
+
+    assert result.status == "unavailable"
+    assert result.diagnostics.failure_code == "PDF_ACCESS_DENIED"
+    assert result.diagnostics.retryable is False
+    assert result.diagnostics.attempts == 1
+    assert result.diagnostics.retried is False
+    assert gateway.enrich_calls == 1
 
 
 def test_document_chunks_are_stored_outside_task_and_locator_resolves(tmp_path):

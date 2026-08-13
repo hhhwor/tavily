@@ -312,13 +312,15 @@ def test_siliconflow_classifier_validates_structured_labels(monkeypatch):
             return None
 
         def json(self):
-            return {"choices": [{"message": {"content": json.dumps([{
-                "id": pair_id,
-                "relation": "supports",
-                "confidence": "high",
-                "reason": "原文直接支持",
-                "quote": "材料循环寿命达到 1000 次。",
-            }], ensure_ascii=False)}}]}
+            return {"choices": [{"message": {"content": json.dumps({
+                "decisions": [{
+                    "id": pair_id,
+                    "relation": "supports",
+                    "confidence": "high",
+                    "reason": "原文直接支持",
+                    "quote": "材料循环寿命达到 1000 次。",
+                }],
+            }, ensure_ascii=False)}}]}
 
     calls = []
 
@@ -328,13 +330,20 @@ def test_siliconflow_classifier_validates_structured_labels(monkeypatch):
 
     monkeypatch.setattr("src.trust.entailment.requests.post", fake_post)
     classifier = SiliconFlowEntailmentClassifier(
-        "token", "https://example.invalid/v1", "test-model", timeout=3
+        "token", "https://example.invalid/v1", "Qwen/Qwen3-8B", timeout=3
     )
     decisions = classifier.classify_pairs([(pair_id, claim, evidence)])
 
     assert calls
     assert decisions[pair_id].relation == "supports"
     assert decisions[pair_id].quote == "材料循环寿命达到 1000 次。"
+    request_payload = calls[0][1]["json"]
+    assert request_payload["response_format"] == {"type": "json_object"}
+    assert request_payload["enable_thinking"] is False
+    assert [item["role"] for item in request_payload["messages"]] == [
+        "system", "user"
+    ]
+    assert classifier.runtime_status()["status"] == "available"
 
 
 def test_siliconflow_classifier_retries_only_missing_pairs(monkeypatch):
@@ -380,8 +389,8 @@ def test_siliconflow_classifier_retries_only_missing_pairs(monkeypatch):
 
     assert set(decisions) == {pairs[0][0], pairs[1][0]}
     assert len(calls) == 2
-    first_payload = calls[0]["json"]["messages"][0]["content"]
-    second_payload = calls[1]["json"]["messages"][0]["content"]
+    first_payload = calls[0]["json"]["messages"][-1]["content"]
+    second_payload = calls[1]["json"]["messages"][-1]["content"]
     assert pairs[0][0] in first_payload and pairs[1][0] in first_payload
     assert pairs[0][0] not in second_payload and pairs[1][0] in second_payload
 
@@ -437,6 +446,9 @@ def test_siliconflow_classifier_preserves_successful_batches_on_failure(monkeypa
     assert failure.total_batches == 2
     assert failure.error_codes == ("ENTAILMENT_INVALID_RESPONSE",)
     assert len(calls) == 3
+    status = classifier.runtime_status()
+    assert status["status"] == "degraded"
+    assert status["last_failure_codes"] == ["ENTAILMENT_INVALID_RESPONSE"]
 
 
 def test_verify_is_internal_and_research_routes_are_public():

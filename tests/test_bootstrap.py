@@ -102,6 +102,17 @@ def test_intent_classifier_has_opt_in_qwen3_8b_defaults_and_validates_key():
         Settings.from_env({"INTENT_CLASSIFIER_MIN_CONFIDENCE": "1.01"})
 
 
+def test_claim_verifier_defaults_to_structured_qwen3_model():
+    defaults = Settings.from_env({})
+    overridden = Settings.from_env({
+        "TRUST_VERIFY_MODEL": "vendor/custom-verifier",
+    })
+
+    assert Settings().trust_verify_model == "Qwen/Qwen3-8B"
+    assert defaults.trust_verify_model == "Qwen/Qwen3-8B"
+    assert overridden.trust_verify_model == "vendor/custom-verifier"
+
+
 def test_doubao_credentials_enable_provider_without_leaking_from_repr():
     configured = Settings.from_env({
         "ASK_ECHO_SEARCH_INFINITY_API_KEY": "doubao-test-key",
@@ -329,6 +340,14 @@ def test_create_app_defers_factory_and_closes_runtime():
         health = client.get("/health")
         assert health.status_code == 200
         assert health.json()["mcp"] is False
+        assert health.json()["research_verifier_availability"] == {
+            "status": "available",
+            "backend": "rules",
+            "model": "rules:v1",
+            "last_success_at": None,
+            "last_failure_at": None,
+            "last_failure_codes": [],
+        }
         assert health.json()["resilience"] == {
             "max_attempts": 2,
             "dependencies": {},
