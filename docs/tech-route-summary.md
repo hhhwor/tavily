@@ -77,7 +77,7 @@ POST /search {query, top_k, ranking_profile?, rerank_threshold_mode?, ...}
 | **API** | FastAPI 应用工厂:`POST /search` · `GET /health` · `GET /`;导入无配置/模型副作用 | [api.py](../src/api.py) · [static/index.html](../src/static/index.html) | ✅ |
 | **组合根/生命周期** | 冻结 `Settings.from_env()` + `Container`;lifespan 统一创建/关闭 Engine、HTTP Session、Executor、MCP | [bootstrap.py](../src/bootstrap.py) · [config.py](../src/config.py) | ✅ |
 | **应用用例** | `SearchCommand` + `SearchService`;规划、召回、排序、PDF、Evidence、Trust、Answerability 通过不可变阶段 Outcome 协作 | [application/](../src/application/) · [domain/documents.py](../src/domain/documents.py) · [engine.py](../src/engine.py) | ✅ |
-| **L0 查询理解** | 规则版(NFKC 规范化 + 时效识别 + 学术意图识别 + 专利意图识别 + 输入校验)+ 可选 LLM 改写(SiliconFlow Qwen2.5-7B,LRU+TTL 缓存) | [l0.py](../src/l0.py) | ✅ 规则;LLM 改写默认关 |
+| **L0 查询理解** | NFKC 规范化 + 时效/学术/专利/法律规则 + 可选 Qwen3-Embedding-0.6B 多标签意图路由 + 可选 LLM 改写 | [l0.py](../src/l0.py) · [siliconflow_embedding_intent_classifier.py](../src/infrastructure/siliconflow_embedding_intent_classifier.py) | ✅ 规则；Embedding/改写默认关 |
 | **L1 搜索源** | `SourceDescriptor + RetrievalRequest/Batch + SourceRegistry`;默认腾讯 SearchPro + 百度千帆 + 豆包 Search Infinity；SerpAPI 保留为显式 opt-in 来源 | [application/ports/retrieval.py](../src/application/ports/retrieval.py) · [application/source_registry.py](../src/application/source_registry.py) · [providers/](../src/providers/) | ✅ |
 | **L1′ 学术源** | OpenAlex `/works`(独立能力支线;摘要倒排索引重建;凭证驱动启用) | [providers/openalex.py](../src/providers/openalex.py) | ✅ 需 `OPENALEX_API_KEY` |
 | **L1″ 专利源** | houdutech 只读 ES `/{index}/_search`(独立能力支线;multi_match 中文检索;URL 驱动启用) | [providers/patent_es.py](../src/providers/patent_es.py) | ✅ 需 `PATENT_ES_URL` |
@@ -97,6 +97,7 @@ POST /search {query, top_k, ranking_profile?, rerank_threshold_mode?, ...}
 - **规范化** `normalize()`:NFKC 全角→半角、压缩空白、去首尾标点;不改动中文正文。
 - **时效识别** `detect_recency()`:正则规则把「今天/本周/本月/今年/最新…」映射到 `day/week/month/year` bucket(顺序敏感,先具体后泛化;泛化的「最新/最近」默认 `month`)。再加 `\b20\d{2}\b` 年份探测 → `time_sensitive` 标记。
 - **学术意图识别** `detect_academic()`:正则规则(`论文/文献/综述/预印本/arxiv/survey/citation/paper/...`,英文用词边界避免 `newspaper` 误命中 `paper`)判定是否触发 OpenAlex 学术检索 → `academic` 标记。`force_academic`(来自 API 的 `include_academic`)可显式覆盖:`None`=自动 / `True`=强制开 / `False`=强制关。
+- **Embedding 多标签路由**（可选，默认关）：对未显式指定 `source_types` 的查询，使用 SiliconFlow `Qwen/Qwen3-Embedding-0.6B` 与中英双语 academic/patent/legal/general 原型中心比较。三个垂类独立过绝对阈值和 general 相对间隔；命中两类以上派生 `mixed_research`，未命中则为 `general_search`。首次请求批量建立进程内原型中心，后续每条查询只生成一个向量；结果使用 LRU+TTL 缓存。
 - **输入校验**:空查询报错;超 `MAX_QUERY_LEN=512` 截断,防滥用。
 - **LLM 改写**(可选,默认关):口语化 → 检索关键词,走 SiliconFlow `Qwen2.5-7B-Instruct`,5s 超时,失败回退原查询;`_RewriteCache`(LRU + 1h TTL)命中时零延迟。产出 `SearchPlan`,引擎用 `rewritten_query or normalized_query` 去检索。
 
@@ -185,11 +186,14 @@ POST /search {query, top_k, ranking_profile?, rerank_threshold_mode?, ...}
 | `RERANK_THRESHOLD_MODE` | **`prefer`** | `off`=关闭；`prefer`=达标优先并回填；`strict`=硬过滤 | `prefer`；只在确需空结果时使用 `strict` |
 | `RERANK_ENABLED` | 兼容字段 | `false → fast`；`true` 使用非 fast 默认档 | 新调用改用 `RANKING_PROFILE` |
 | `REWRITE_ENABLED` | **`false`** | L0 LLM 查询改写 | 视查询分布评测后再定 |
-| `INTENT_CLASSIFIER_ENABLED` | **`false`** | 用 Qwen3-8B 为未显式指定 `source_types` 的查询做结构化意图识别；失败、超时、低置信均回退 L0 规则 | 小流量评测通过后设为 `true` |
-| `INTENT_CLASSIFIER_MODEL` | `Qwen/Qwen3-8B` | SiliconFlow 意图识别模型；Qwen3 请求固定关闭思考模式 | 同默认 |
+| `INTENT_CLASSIFIER_ENABLED` | **`false`** | 为未显式指定 `source_types` 的查询做意图识别；失败、超时、低置信均回退 L0 规则 | 标注集评测通过后设为 `true` |
+| `INTENT_CLASSIFIER_BACKEND` | **`embedding`** | `embedding`=多标签原型分类；`chat`=保留原 Qwen JSON 分类器作对照/回退 | `embedding` |
+| `INTENT_CLASSIFIER_MODEL` | `Qwen/Qwen3-Embedding-0.6B` | Embedding 后端默认模型；`chat` 后端未显式配置时默认 `Qwen/Qwen3-8B` | 同默认 |
 | `INTENT_CLASSIFIER_TIMEOUT` | `8` | 单次分类 HTTP 总超时秒数，仍受搜索剩余 deadline 限制 | 5–8 |
 | `INTENT_CLASSIFIER_MIN_CONFIDENCE` | `0.70` | 低于此值不采用模型路由，保留规则结果 | `0.70` 起步，按标注集校准 |
 | `INTENT_CLASSIFIER_CACHE_SIZE` / `INTENT_CLASSIFIER_CACHE_TTL` | `1024` / `3600` | 归一化查询的进程内意图缓存条数 / TTL（秒） | 同默认 |
+| `INTENT_EMBEDDING_ACADEMIC_THRESHOLD` / `PATENT_THRESHOLD` / `LEGAL_THRESHOLD` | `0.60` / `0.53` / `0.61` | 三个垂类的原始 cosine 下限；必须经标注集重新校准 | 先保持默认 |
+| `INTENT_EMBEDDING_GENERAL_MARGIN` / `CONFIDENCE_SCALE` | `0.03` / `0.02` | 垂类相对 general 中心的最大落后值 / 将边界距离映射为置信分的尺度 | 先保持默认 |
 | `FUSION_ENABLED` | 兼容字段 | 非 fast 场景中 `true → quality`、`false → semantic` | 新调用改用 `RANKING_PROFILE` |
 | `CHUNK_MAX_CHARS` / `CHUNK_OVERLAP` | `400` / `50` | 分块大小与重叠 | 同默认 |
 | `SEARCH_TOP_K` / `SEARCH_PER_PROVIDER_K` | `10` / `10` | 返回条数 / 每源召回数 | 同默认 |

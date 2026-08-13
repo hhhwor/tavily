@@ -138,6 +138,95 @@ def test_planner_uses_high_confidence_model_sources_and_keeps_rule_routes():
     assert planned.plan.intent_confidence == 0.91
 
 
+def test_planner_derives_effective_intent_after_merging_rule_and_model_routes():
+    class Classifier:
+        def classify(self, query):
+            return IntentDecision(
+                intent="academic_literature",
+                source_types=("academic",),
+                confidence=0.91,
+                source_scores=(("academic", 0.91), ("legal", 0.2)),
+            )
+
+    planned = QueryPlanner(
+        _settings(), intent_classifier=Classifier()
+    ).plan(
+        SearchCommand("民法典相关学术观点"),
+        ("web",),
+        academic_available=True,
+        patent_available=True,
+        legal_available=True,
+    )
+
+    assert planned.do_academic is True
+    assert planned.do_legal is True
+    assert planned.plan.intent == "mixed_research"
+    assert planned.plan.intent_confidence is None
+    assert planned.plan.intent_source_scores == (
+        ("academic", 0.91),
+        ("legal", 0.2),
+    )
+
+
+def test_planner_does_not_expand_two_rule_routes_with_a_third_model_source():
+    class Classifier:
+        def classify(self, query):
+            return IntentDecision(
+                intent="mixed_research",
+                source_types=("academic", "patent", "legal"),
+                confidence=0.9,
+            )
+
+    planned = QueryPlanner(
+        _settings(), intent_classifier=Classifier()
+    ).plan(
+        SearchCommand("查找算法治理相关论文和中国法规"),
+        ("web",),
+        academic_available=True,
+        patent_available=True,
+        legal_available=True,
+    )
+
+    assert planned.do_academic is True
+    assert planned.do_legal is True
+    assert planned.do_patent is False
+    assert planned.plan.intent == "mixed_research"
+
+
+def test_planner_accepts_authoritative_embedding_general_over_one_noisy_rule():
+    class EmbeddingClassifier:
+        authoritative_routes = True
+
+        def classify(self, query):
+            return IntentDecision(
+                intent="general_search",
+                source_types=(),
+                confidence=0.99,
+            )
+
+    planner = QueryPlanner(
+        _settings(), intent_classifier=EmbeddingClassifier()
+    )
+    cases = (
+        ("公司发表声明", "academic"),
+        ("history of the invention of the telephone", "patent"),
+        ("What is the legal name of OpenAI?", "legal"),
+    )
+
+    for query, noisy_source in cases:
+        planned = planner.plan(
+            SearchCommand(query),
+            ("web",),
+            academic_available=True,
+            patent_available=True,
+            legal_available=True,
+        )
+
+        assert planned.plan.intent == "general_search"
+        assert planned.active_provider_names == ("web",)
+        assert getattr(planned, f"do_{noisy_source}") is False
+
+
 def test_planner_skips_model_for_explicit_source_types_and_low_confidence():
     class Classifier:
         def __init__(self):

@@ -84,7 +84,7 @@ def test_qwen3_0_6b_is_the_default_rerank_model():
     assert Settings.from_env({}).rerank_model == expected
 
 
-def test_intent_classifier_has_opt_in_qwen3_8b_defaults_and_validates_key():
+def test_intent_classifier_has_opt_in_embedding_defaults_and_validates_key():
     defaults = Settings.from_env({})
     configured = Settings.from_env({
         "SILICONFLOW_API_KEY": "test-key",
@@ -93,13 +93,21 @@ def test_intent_classifier_has_opt_in_qwen3_8b_defaults_and_validates_key():
     })
 
     assert defaults.intent_classifier_enabled is False
-    assert defaults.intent_classifier_model == "Qwen/Qwen3-8B"
+    assert defaults.intent_classifier_backend == "embedding"
+    assert defaults.intent_classifier_model == "Qwen/Qwen3-Embedding-0.6B"
     assert configured.intent_classifier_enabled is True
     assert configured.intent_classifier_min_confidence == 0.75
     with pytest.raises(ValueError, match="SILICONFLOW_API_KEY"):
         Settings.from_env({"INTENT_CLASSIFIER_ENABLED": "true"})
     with pytest.raises(ValueError, match="INTENT_CLASSIFIER_MIN_CONFIDENCE"):
         Settings.from_env({"INTENT_CLASSIFIER_MIN_CONFIDENCE": "1.01"})
+    with pytest.raises(ValueError, match="INTENT_CLASSIFIER_BACKEND"):
+        Settings.from_env({"INTENT_CLASSIFIER_BACKEND": "unknown"})
+    with pytest.raises(ValueError, match=r"INTENT_EMBEDDING_\*_THRESHOLD"):
+        Settings.from_env({"INTENT_EMBEDDING_PATENT_THRESHOLD": "1.01"})
+
+    chat = Settings.from_env({"INTENT_CLASSIFIER_BACKEND": "chat"})
+    assert chat.intent_classifier_model == "Qwen/Qwen3-8B"
 
 
 def test_claim_verifier_defaults_to_structured_qwen3_model():
@@ -315,7 +323,7 @@ def test_container_injects_enabled_intent_classifier_with_shared_session():
         classifier = container.engine._search_service._discovery._query_planner._intent_classifier
         assert classifier is not None
         assert classifier._http is container.http_session
-        assert classifier._model == "Qwen/Qwen3-8B"
+        assert classifier._model == "Qwen/Qwen3-Embedding-0.6B"
     finally:
         container.close()
 

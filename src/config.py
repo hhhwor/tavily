@@ -148,11 +148,17 @@ class Settings:
     siliconflow_api_key: str = field(default="", repr=False)
     siliconflow_base_url: str = "https://api.siliconflow.cn/v1"
     intent_classifier_enabled: bool = False
-    intent_classifier_model: str = "Qwen/Qwen3-8B"
+    intent_classifier_backend: str = "embedding"
+    intent_classifier_model: str = "Qwen/Qwen3-Embedding-0.6B"
     intent_classifier_timeout: int = 8
     intent_classifier_cache_size: int = 1024
     intent_classifier_cache_ttl: int = 3600
     intent_classifier_min_confidence: float = 0.70
+    intent_embedding_academic_threshold: float = 0.60
+    intent_embedding_patent_threshold: float = 0.53
+    intent_embedding_legal_threshold: float = 0.61
+    intent_embedding_general_margin: float = 0.03
+    intent_embedding_confidence_scale: float = 0.02
     chunk_max_chars: int = 400
     chunk_overlap: int = 50
 
@@ -322,6 +328,13 @@ class Settings:
             )
 
         rewrite_model = env.get("REWRITE_MODEL", "Qwen/Qwen2.5-7B-Instruct")
+        intent_classifier_backend = env.get(
+            "INTENT_CLASSIFIER_BACKEND", "embedding"
+        ).strip().lower()
+        if intent_classifier_backend not in {"embedding", "chat"}:
+            raise ValueError(
+                "INTENT_CLASSIFIER_BACKEND 仅支持 embedding / chat"
+            )
         intent_classifier_enabled = _bool(
             env, "INTENT_CLASSIFIER_ENABLED", False
         )
@@ -336,6 +349,31 @@ class Settings:
             raise ValueError(
                 "INTENT_CLASSIFIER_MIN_CONFIDENCE 必须在 0 到 1 之间"
             )
+        intent_embedding_thresholds = {
+            name: _float(env, variable, default)
+            for name, variable, default in (
+                ("academic", "INTENT_EMBEDDING_ACADEMIC_THRESHOLD", 0.60),
+                ("patent", "INTENT_EMBEDDING_PATENT_THRESHOLD", 0.53),
+                ("legal", "INTENT_EMBEDDING_LEGAL_THRESHOLD", 0.61),
+            )
+        }
+        if any(
+            not 0.0 <= value <= 1.0
+            for value in intent_embedding_thresholds.values()
+        ):
+            raise ValueError("INTENT_EMBEDDING_*_THRESHOLD 必须在 0 到 1 之间")
+        intent_embedding_general_margin = _float(
+            env, "INTENT_EMBEDDING_GENERAL_MARGIN", 0.03
+        )
+        if not 0.0 <= intent_embedding_general_margin <= 1.0:
+            raise ValueError(
+                "INTENT_EMBEDDING_GENERAL_MARGIN 必须在 0 到 1 之间"
+            )
+        intent_embedding_confidence_scale = _float(
+            env, "INTENT_EMBEDDING_CONFIDENCE_SCALE", 0.02
+        )
+        if intent_embedding_confidence_scale <= 0.0:
+            raise ValueError("INTENT_EMBEDDING_CONFIDENCE_SCALE 必须大于 0")
         synthesis_enabled = _bool(
             env, "RESEARCH_SYNTHESIS_ENABLED", False
         )
@@ -418,8 +456,14 @@ class Settings:
                 "SILICONFLOW_BASE_URL", "https://api.siliconflow.cn/v1"
             ),
             intent_classifier_enabled=intent_classifier_enabled,
+            intent_classifier_backend=intent_classifier_backend,
             intent_classifier_model=env.get(
-                "INTENT_CLASSIFIER_MODEL", "Qwen/Qwen3-8B"
+                "INTENT_CLASSIFIER_MODEL",
+                (
+                    "Qwen/Qwen3-Embedding-0.6B"
+                    if intent_classifier_backend == "embedding"
+                    else "Qwen/Qwen3-8B"
+                ),
             ),
             intent_classifier_timeout=_int(
                 env, "INTENT_CLASSIFIER_TIMEOUT", 8, minimum=1
@@ -431,6 +475,15 @@ class Settings:
                 env, "INTENT_CLASSIFIER_CACHE_TTL", 3600, minimum=1
             ),
             intent_classifier_min_confidence=intent_classifier_min_confidence,
+            intent_embedding_academic_threshold=(
+                intent_embedding_thresholds["academic"]
+            ),
+            intent_embedding_patent_threshold=(
+                intent_embedding_thresholds["patent"]
+            ),
+            intent_embedding_legal_threshold=intent_embedding_thresholds["legal"],
+            intent_embedding_general_margin=intent_embedding_general_margin,
+            intent_embedding_confidence_scale=intent_embedding_confidence_scale,
             chunk_max_chars=_int(env, "CHUNK_MAX_CHARS", 400, minimum=1),
             chunk_overlap=_int(env, "CHUNK_OVERLAP", 50, minimum=0),
             rewrite_enabled=_bool(env, "REWRITE_ENABLED", False),

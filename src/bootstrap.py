@@ -28,6 +28,9 @@ from src.infrastructure.cache import InMemoryCache, build_cache
 from src.infrastructure.openalex_pdf import OpenAlexPdfGateway
 from src.infrastructure.patent_es_fulltext import PatentEsFullTextGateway
 from src.infrastructure.query_rewriter import SiliconFlowQueryRewriter
+from src.infrastructure.siliconflow_embedding_intent_classifier import (
+    SiliconFlowEmbeddingIntentClassifier,
+)
 from src.infrastructure.siliconflow_intent_classifier import (
     SiliconFlowIntentClassifier,
 )
@@ -361,18 +364,40 @@ def build_container(
         )
         intent_classifier = None
         if config.intent_classifier_enabled and config.siliconflow_api_key:
-            intent_classifier = SiliconFlowIntentClassifier(
-                config.siliconflow_api_key,
-                config.siliconflow_base_url,
-                config.intent_classifier_model,
-                cache=InMemoryCache(
-                    config.intent_classifier_cache_size,
-                    monotonic=clock.monotonic,
-                ),
-                http_session=http,
-                cache_ttl=config.intent_classifier_cache_ttl,
-                timeout=config.intent_classifier_timeout,
+            intent_cache = InMemoryCache(
+                config.intent_classifier_cache_size,
+                monotonic=clock.monotonic,
             )
+            if config.intent_classifier_backend == "embedding":
+                intent_classifier = SiliconFlowEmbeddingIntentClassifier(
+                    config.siliconflow_api_key,
+                    config.siliconflow_base_url,
+                    config.intent_classifier_model,
+                    cache=intent_cache,
+                    http_session=http,
+                    cache_ttl=config.intent_classifier_cache_ttl,
+                    timeout=config.intent_classifier_timeout,
+                    academic_threshold=(
+                        config.intent_embedding_academic_threshold
+                    ),
+                    patent_threshold=config.intent_embedding_patent_threshold,
+                    legal_threshold=config.intent_embedding_legal_threshold,
+                    general_margin=config.intent_embedding_general_margin,
+                    confidence_scale=config.intent_embedding_confidence_scale,
+                    source_min_confidence=(
+                        config.intent_classifier_min_confidence
+                    ),
+                )
+            else:
+                intent_classifier = SiliconFlowIntentClassifier(
+                    config.siliconflow_api_key,
+                    config.siliconflow_base_url,
+                    config.intent_classifier_model,
+                    cache=intent_cache,
+                    http_session=http,
+                    cache_ttl=config.intent_classifier_cache_ttl,
+                    timeout=config.intent_classifier_timeout,
+                )
         query_planner = QueryPlanner(
             config,
             query_rewriter,

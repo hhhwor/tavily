@@ -102,15 +102,51 @@ class QueryPlanner:
                     >= self._settings.intent_classifier_min_confidence
                 ):
                     model_sources = set(decision.source_types)
+                    rule_sources = {
+                        source
+                        for source, enabled in (
+                            ("academic", plan.academic),
+                            ("patent", plan.patent),
+                            ("legal", plan.legal),
+                        )
+                        if enabled
+                    }
+                    authoritative = bool(getattr(
+                        self._intent_classifier,
+                        "authoritative_routes",
+                        False,
+                    ))
+                    if authoritative:
+                        # The embedding classifier includes general hard
+                        # negatives and may suppress one noisy keyword rule.
+                        # Two rule hits already establish an explicit mixed
+                        # request and are safer than an extra correlated score.
+                        effective_sources = (
+                            rule_sources
+                            if len(rule_sources) >= 2
+                            else model_sources
+                        )
+                    else:
+                        # The legacy chat classifier only expands rule routes.
+                        if len(rule_sources) >= 2:
+                            model_sources &= rule_sources
+                        effective_sources = rule_sources | model_sources
                     plan = plan.model_copy(update={
-                        # Rule detections are high-precision guardrails. A model
-                        # can expand coverage, never suppress an existing route.
-                        "academic": plan.academic or "academic" in model_sources,
-                        "patent": plan.patent or "patent" in model_sources,
-                        "legal": plan.legal or "legal" in model_sources,
-                        "intent": decision.intent,
-                        "intent_confidence": decision.confidence,
-                        "legal_mode": decision.legal_mode,
+                        "academic": "academic" in effective_sources,
+                        "patent": "patent" in effective_sources,
+                        "legal": "legal" in effective_sources,
+                        "intent": self._effective_intent(effective_sources),
+                        "intent_confidence": (
+                            decision.confidence
+                            if effective_sources == model_sources
+                            else None
+                        ),
+                        "intent_source_scores": decision.source_scores,
+                        "legal_mode": (
+                            decision.legal_mode
+                            if "legal" in effective_sources
+                            else None
+                        ),
                     })
             except DeadlineExceededError:
                 failures.append(search_failure(
@@ -233,6 +269,18 @@ class QueryPlanner:
             do_legal=do_legal,
             failures=tuple(failures),
         )
+
+    @staticmethod
+    def _effective_intent(sources: set[str]) -> str:
+        if len(sources) > 1:
+            return "mixed_research"
+        if not sources:
+            return "general_search"
+        return {
+            "academic": "academic_literature",
+            "patent": "patent",
+            "legal": "legal",
+        }[next(iter(sources))]
 
     def _rewrite(
         self,

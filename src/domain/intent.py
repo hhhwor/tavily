@@ -1,6 +1,7 @@
 """Immutable model-assisted query intent contract."""
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 from typing import Literal
 
@@ -47,6 +48,7 @@ class IntentDecision:
     source_types: tuple[IntentSourceType, ...]
     confidence: float
     legal_mode: LegalMode | None = None
+    source_scores: tuple[tuple[IntentSourceType, float], ...] = ()
 
     def __post_init__(self) -> None:
         if self.intent not in _VALID_INTENTS:
@@ -66,4 +68,27 @@ class IntentDecision:
             raise ValueError("legal_mode 不受支持")
         if "legal" not in sources and self.legal_mode is not None:
             raise ValueError("非法律意图不能设置 legal_mode")
+        scores: dict[IntentSourceType, float] = {}
+        for source, score in self.source_scores:
+            if source not in _VALID_SOURCES:
+                raise ValueError("source_scores 包含不受支持的来源")
+            if source in scores:
+                raise ValueError("source_scores 不能包含重复来源")
+            if (
+                isinstance(score, bool)
+                or not isinstance(score, (int, float))
+                or not math.isfinite(float(score))
+                or not 0.0 <= float(score) <= 1.0
+            ):
+                raise ValueError("source_scores 必须在 0 到 1 之间")
+            scores[source] = float(score)
         object.__setattr__(self, "source_types", sources)
+        object.__setattr__(
+            self,
+            "source_scores",
+            tuple(
+                (source, scores[source])
+                for source in _SOURCE_ORDER
+                if source in scores
+            ),
+        )
