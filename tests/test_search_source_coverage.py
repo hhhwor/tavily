@@ -52,13 +52,28 @@ def _documents(
     return tuple(retrieved), tuple(ranked)
 
 
-def _execute(limit: int):
+def _execute(
+    limit: int,
+    *,
+    source_types: tuple[DocumentKind, ...] | None = (
+        "web", "academic", "patent", "legal"
+    ),
+    planned_verticals: tuple[DocumentKind, ...] = (
+        "academic", "patent", "legal"
+    ),
+):
     recalled_web, ranked_web = _documents("web", 6, first_score=0.99)
     recalled_academic, ranked_academic = _documents(
         "academic", 1, first_score=0.20
     )
     recalled_patent, ranked_patent = _documents("patent", 1, first_score=0.10)
     recalled_legal, ranked_legal = _documents("legal", 1, first_score=0.15)
+    if "academic" not in planned_verticals:
+        recalled_academic, ranked_academic = (), ()
+    if "patent" not in planned_verticals:
+        recalled_patent, ranked_patent = (), ()
+    if "legal" not in planned_verticals:
+        recalled_legal, ranked_legal = (), ()
     planned = PlannedQuery(
         plan=SearchPlan(
             raw_query="mixed query",
@@ -68,9 +83,9 @@ def _execute(limit: int):
         search_query="mixed query",
         academic_query="academic mixed query",
         active_provider_names=("web-source",),
-        do_academic=True,
-        do_patent=True,
-        do_legal=True,
+        do_academic="academic" in planned_verticals,
+        do_patent="patent" in planned_verticals,
+        do_legal="legal" in planned_verticals,
     )
     options = resolve_ranking_options(
         default_profile="quality",
@@ -132,7 +147,7 @@ def _execute(limit: int):
     return service.execute(SearchCommand(
         "mixed query",
         limit=limit,
-        source_types=("web", "academic", "patent", "legal"),
+        source_types=source_types,
     ))
 
 
@@ -173,3 +188,76 @@ def test_limit_smaller_than_available_source_types_reports_dropped_coverage():
         if gap.code == "SOURCE_TYPE_DROPPED_BY_LIMIT"
     ]
     assert [gap.type for gap in dropped] == ["academic", "patent", "legal"]
+
+
+def test_auto_legal_route_reserves_legal_evidence_before_web_fill():
+    response = _execute(
+        limit=6,
+        source_types=None,
+        planned_verticals=("legal",),
+    )
+
+    assert response.result_set.counts_by_type == {"web": 5, "legal": 1}
+    assert response.result_set.counts_by_stage.selected.model_dump() == {
+        "web": 5,
+        "academic": 0,
+        "patent": 0,
+        "legal": 1,
+    }
+    assert not any(
+        gap.code == "SOURCE_TYPE_DROPPED_BY_LIMIT"
+        for gap in response.retrieval_assessment.gaps
+    )
+
+
+def test_auto_academic_legal_route_reserves_both_verticals():
+    response = _execute(
+        limit=6,
+        source_types=None,
+        planned_verticals=("academic", "legal"),
+    )
+
+    assert response.result_set.counts_by_type == {
+        "web": 4,
+        "academic": 1,
+        "legal": 1,
+    }
+    assert response.result_set.counts_by_stage.selected.model_dump() == {
+        "web": 4,
+        "academic": 1,
+        "patent": 0,
+        "legal": 1,
+    }
+
+
+def test_auto_three_vertical_route_uses_small_limit_for_verticals():
+    response = _execute(
+        limit=3,
+        source_types=None,
+        planned_verticals=("academic", "patent", "legal"),
+    )
+
+    assert [item.type for item in response.evidence] == [
+        "academic", "legal", "patent"
+    ]
+    assert response.result_set.counts_by_stage.selected.model_dump() == {
+        "web": 0,
+        "academic": 1,
+        "patent": 1,
+        "legal": 1,
+    }
+
+
+def test_auto_three_vertical_route_reports_impossible_limit_coverage():
+    response = _execute(
+        limit=2,
+        source_types=None,
+        planned_verticals=("academic", "patent", "legal"),
+    )
+
+    assert response.result_set.counts_by_type == {"web": 2}
+    dropped = [
+        gap.type for gap in response.retrieval_assessment.gaps
+        if gap.code == "SOURCE_TYPE_DROPPED_BY_LIMIT"
+    ]
+    assert dropped == ["academic", "patent", "legal"]

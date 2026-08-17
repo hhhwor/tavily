@@ -1,4 +1,4 @@
-"""Pure final evidence selection with explicit source-coverage preservation."""
+"""Pure final evidence selection with required source-coverage preservation."""
 from __future__ import annotations
 
 from typing import Sequence
@@ -13,12 +13,12 @@ def select_evidence(
     limit: int,
     required_source_types: Sequence[DocumentKind] = (),
 ) -> list[Evidence]:
-    """Select globally ranked evidence while reserving explicit source coverage.
+    """Select globally ranked evidence while reserving required source coverage.
 
-    When the response has enough slots, the best candidate from every explicitly
-    requested source type is retained. Remaining slots follow the existing global
-    order. If there are fewer slots than represented source types, global order
-    remains the deterministic fallback.
+    When the response has enough slots, the best candidate from every required
+    source type is retained. Remaining slots follow the existing global order.
+    If there are fewer slots than represented source types, global order remains
+    the deterministic fallback.
     """
     ranked = list(evidence)
     if len(ranked) <= limit or not required_source_types:

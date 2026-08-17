@@ -11,6 +11,7 @@ from src.application.degradation import degradation_for
 from src.application.discovery_service import DiscoveryService
 from src.application.evidence_assembler import EvidenceAssembler
 from src.application.evidence_selection import select_evidence
+from src.application.outcomes import PlannedQuery
 from src.application.ports.runtime import Clock
 from src.application.ports.search_seed import SearchSeedStore
 from src.application.trust_annotator import TrustAnnotator
@@ -148,6 +149,29 @@ class SearchService:
         })
 
     @staticmethod
+    def _required_evidence_types(
+        command: SearchCommand,
+        planned: PlannedQuery,
+    ) -> tuple[DocumentKind, ...]:
+        """Preserve explicit sources or auto-routed vertical coverage.
+
+        Web remains globally ranked for automatic routing. Reserving it as
+        well would make a small result limit crowd out the vertical evidence
+        that triggered the additional retrieval in the first place.
+        """
+        if command.source_types is not None:
+            return command.source_types
+        return tuple(
+            source_type
+            for source_type, enabled in (
+                ("academic", planned.do_academic),
+                ("patent", planned.do_patent),
+                ("legal", planned.do_legal),
+            )
+            if enabled
+        )
+
+    @staticmethod
     def _stage_gaps(
         *,
         expected_types: list[DocumentKind],
@@ -203,7 +227,10 @@ class SearchService:
         selected = select_evidence(
             assembled,
             limit=command.limit,
-            required_source_types=command.source_types or (),
+            required_source_types=self._required_evidence_types(
+                command,
+                outcome.planned,
+            ),
         )
         trust = self._trust_annotator.annotate(
             mode="annotate",
